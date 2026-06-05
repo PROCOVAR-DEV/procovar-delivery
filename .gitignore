@@ -33,8 +33,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# database
-*.db
-*.db-journal
+# database (local dev only — production uses Postgres in docker)
 prisma/dev.db
 prisma/dev.db-journal

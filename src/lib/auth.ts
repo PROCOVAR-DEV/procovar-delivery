@@ -8,19 +8,21 @@ export interface AuthUser {
   role: string
 }
 
-if (!process.env.JWT_SECRET) {
-  throw new Error('JWT_SECRET environment variable is not set')
+function getSecret(): string {
+  const secret = process.env.JWT_SECRET
+  if (!secret) {
+    throw new Error('JWT_SECRET environment variable is not set')
+  }
+  return secret
 }
 
-const JWT_SECRET = process.env.JWT_SECRET as string
-
 export function signToken(payload: object): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: '7d' })
+  return jwt.sign(payload, getSecret(), { expiresIn: '7d' })
 }
 
 export function verifyToken(token: string): Record<string, unknown> | null {
   try {
-    return jwt.verify(token, JWT_SECRET) as Record<string, unknown>
+    return jwt.verify(token, getSecret()) as Record<string, unknown>
   } catch {
     return null
   }
