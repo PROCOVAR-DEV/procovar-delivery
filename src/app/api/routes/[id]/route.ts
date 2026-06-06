@@ -1,9 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
-import { greedyRouteOptimization, calculateRouteSegments, calculateClientDistances, calculateOrderPrice } from '@/lib/pricing'
+import {
+  greedyRouteOptimization,
+  calculateRouteSegments,
+  calculateClientDistances,
+  calculateOrderPrice,
+  haversineDistance,
+} from '@/lib/pricing'
 
 export const dynamic = 'force-dynamic'
+
+interface StopInput {
+  customerName: string
+  weight: number
+  address: string
+  lat: number
+  lng: number
+  operationNumber?: string | null
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -34,8 +49,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   })
   if (!route) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 
-  const routeOrders = route.orders
-
   // --- Vehicle assignment (auto-enable/disable) ---
   if (data.vehicleId !== undefined) {
     if (route.vehicleId && route.vehicleId !== data.vehicleId) {
@@ -59,11 +72,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json(simpleUpdate)
   }
 
-  // --- Add outbound or return orders with full re-optimization ---
-  const addOutboundIds: string[] = data.addOutboundOrderIds ?? []
-  const addReturnIds: string[] = data.addReturnOrderIds ?? []
+  // --- Add new client stops (inline order creation) with full re-optimization ---
+  const newStops: StopInput[] = Array.isArray(data.stops) ? data.stops : []
 
-  if (addOutboundIds.length > 0 || addReturnIds.length > 0) {
+  if (newStops.length > 0) {
+    for (const s of newStops) {
+      if (!s.customerName || s.lat == null || s.lng == null) {
+        return NextResponse.json({ error: 'Cada pedido requiere nombre de cliente y ubicación' }, { status: 400 })
+      }
+    }
+
     let settings = await prisma.settings.findFirst()
     if (!settings) {
       settings = await prisma.settings.create({ data: { baseFee: 5.0, costPerKm: 1.5, costPerKg: 0.5 } })
@@ -71,121 +89,78 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const config = { baseFee: settings.baseFee, costPerKm: settings.costPerKm, costPerKg: settings.costPerKg }
     const origin = { lat: route.originLat ?? 0, lng: route.originLng ?? 0 }
 
-    const allNewIds = [...addOutboundIds, ...addReturnIds]
-    if (allNewIds.length > 0) {
-      const newOrders = await prisma.order.findMany({
-        where: { id: { in: allNewIds }, userId: user.id as string }
-      })
-      if (newOrders.length !== allNewIds.length) {
-        return NextResponse.json({ error: 'Uno o más pedidos no encontrados' }, { status: 404 })
-      }
-
-      // Validate capacity if vehicle assigned
-      const assignedVehicle = route.vehicle
-      if (route.vehicleId && assignedVehicle) {
-        const newWeight = newOrders.reduce((sum, o) => sum + o.weight, 0)
-        const existingWeight = route.orders.reduce((sum, o) => sum + o.weight, 0)
-        const totalWeight = existingWeight + newWeight
-        if (totalWeight > assignedVehicle.capacity) {
-          return NextResponse.json({
-            error: `Peso total (${totalWeight.toFixed(1)} kg) supera la capacidad del vehículo (${assignedVehicle.capacity} kg)`
-          }, { status: 400 })
-        }
+    // Capacity validation (existing + new)
+    if (route.vehicleId && route.vehicle) {
+      const existingWeight = route.orders.reduce((sum, o) => sum + o.weight, 0)
+      const newWeight = newStops.reduce((sum, s) => sum + (s.weight || 0), 0)
+      const totalWeight = existingWeight + newWeight
+      if (totalWeight > route.vehicle.capacity) {
+        return NextResponse.json({
+          error: `Peso total (${totalWeight.toFixed(1)} kg) supera la capacidad del vehículo (${route.vehicle.capacity} kg)`
+        }, { status: 400 })
       }
     }
 
-    async function reOptimizeLeg(
-      existingOrders: typeof routeOrders,
-      newOrderIds: string[],
-      leg: string,
-      stopOffset: number
-    ) {
-      const newDbOrders = newOrderIds.length > 0
-        ? await prisma.order.findMany({ where: { id: { in: newOrderIds } } })
-        : []
-
-      const allOrders = [...existingOrders, ...newDbOrders]
-      if (allOrders.length === 0) return { distance: 0, weight: 0, price: 0, count: 0 }
-
-      const ordersWithCoords = allOrders.filter((o) => (o.endLat ?? o.lat) && (o.endLng ?? o.lng))
-      let optimizedIds = allOrders.map((o) => o.id)
-
-      if (ordersWithCoords.length === allOrders.length && allOrders.length > 1) {
-        const stops = allOrders.map((o) => ({ id: o.id, lat: (o.endLat ?? o.lat)!, lng: (o.endLng ?? o.lng)! }))
-        optimizedIds = greedyRouteOptimization(origin, stops)
-      }
-
-      const ordersMap = Object.fromEntries(allOrders.map((o) => [o.id, o]))
-      const orderedStops = optimizedIds.map((oid) => {
-        const o = ordersMap[oid]
-        return { id: o.id, lat: (o.endLat ?? o.lat)!, lng: (o.endLng ?? o.lng)! }
-      })
-
-      const drivingSegments = calculateRouteSegments(origin, orderedStops)
-      const clientDistances = calculateClientDistances(origin, orderedStops)
-
-      let distance = 0, weight = 0, totalPriceLocal = 0
-
-      for (let i = 0; i < optimizedIds.length; i++) {
-        const oid = optimizedIds[i]
-        const order = ordersMap[oid]
-        const segmentKm = clientDistances[i] ?? 0
-        const price = calculateOrderPrice(segmentKm, order.weight, config)
-        distance += drivingSegments[i] ?? 0
-        weight += order.weight
-        totalPriceLocal += price
-
-        await prisma.order.update({
-          where: { id: oid },
-          data: { routeId: id, stopOrder: stopOffset + i + 1, tripLeg: leg, price, segmentKm }
+    // Create the new orders
+    await Promise.all(
+      newStops.map((s) =>
+        prisma.order.create({
+          data: {
+            customerName: s.customerName,
+            operationNumber: s.operationNumber || null,
+            address: s.address || s.customerName,
+            endAddress: s.address || null,
+            endLat: s.lat,
+            endLng: s.lng,
+            lat: s.lat,
+            lng: s.lng,
+            weight: s.weight || 1,
+            tripLeg: 'outbound',
+            routeId: id,
+            userId: user.id as string,
+          }
         })
-      }
+      )
+    )
 
-      return { distance, weight, price: totalPriceLocal, count: optimizedIds.length }
-    }
+    // Re-optimize and re-price the full stop list
+    const allOrders = await prisma.order.findMany({ where: { routeId: id } })
+    const stopsForOpt = allOrders.map((o) => ({ id: o.id, lat: (o.endLat ?? o.lat)!, lng: (o.endLng ?? o.lng)! }))
+    const optimizedIds =
+      stopsForOpt.length > 1 ? greedyRouteOptimization(origin, stopsForOpt) : stopsForOpt.map((s) => s.id)
 
-    const existingOutbound = addOutboundIds.length > 0
-      ? route.orders.filter((o) => o.tripLeg !== 'return')
-      : []
-    const existingReturn = addReturnIds.length > 0
-      ? route.orders.filter((o) => o.tripLeg === 'return')
-      : []
+    const ordersMap = Object.fromEntries(allOrders.map((o) => [o.id, o]))
+    const orderedStops = optimizedIds.map((oid) => {
+      const o = ordersMap[oid]
+      return { id: o.id, lat: (o.endLat ?? o.lat)!, lng: (o.endLng ?? o.lng)! }
+    })
+
+    const drivingSegments = calculateRouteSegments(origin, orderedStops)
+    const clientDistances = calculateClientDistances(origin, orderedStops)
 
     let totalDistance = 0
     let totalWeight = 0
     let totalPrice = 0
 
-    if (addOutboundIds.length > 0) {
-      const result = await reOptimizeLeg(existingOutbound, addOutboundIds, 'outbound', 0)
-      totalDistance += result.distance
-      totalWeight += result.weight
-      totalPrice += result.price
-      route.orders
-        .filter((o) => o.tripLeg === 'return')
-        .forEach((o) => {
-          totalDistance += o.segmentKm ?? 0
-          totalWeight += o.weight
-          totalPrice += o.price ?? 0
-        })
-      const newOutboundCount = existingOutbound.length + addOutboundIds.length
-      let returnIdx = 0
-      for (const o of route.orders.filter((x) => x.tripLeg === 'return').sort((a, b) => (a.stopOrder ?? 0) - (b.stopOrder ?? 0))) {
-        await prisma.order.update({ where: { id: o.id }, data: { stopOrder: newOutboundCount + returnIdx + 1 } })
-        returnIdx++
-      }
-    } else {
-      route.orders
-        .filter((o) => o.tripLeg !== 'return')
-        .forEach((o) => {
-          totalDistance += o.segmentKm ?? 0
-          totalWeight += o.weight
-          totalPrice += o.price ?? 0
-        })
-      const outboundCount = route.orders.filter((o) => o.tripLeg !== 'return').length
-      const result = await reOptimizeLeg(existingReturn, addReturnIds, 'return', outboundCount)
-      totalDistance += result.distance
-      totalWeight += result.weight
-      totalPrice += result.price
+    for (let i = 0; i < optimizedIds.length; i++) {
+      const oid = optimizedIds[i]
+      const order = ordersMap[oid]
+      const segmentKm = clientDistances[i] ?? 0
+      const price = calculateOrderPrice(segmentKm, order.weight, config)
+      totalDistance += drivingSegments[i] ?? 0
+      totalWeight += order.weight
+      totalPrice += price
+
+      await prisma.order.update({
+        where: { id: oid },
+        data: { stopOrder: i + 1, tripLeg: 'outbound', price, segmentKm }
+      })
+    }
+
+    // Return leg back to depot
+    if (orderedStops.length > 0) {
+      const last = orderedStops[orderedStops.length - 1]
+      totalDistance += haversineDistance(last.lat, last.lng, origin.lat, origin.lng)
     }
 
     const updated = await prisma.route.update({
@@ -202,6 +177,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   // --- Simple field updates ---
+  // Completing a route frees its vehicle.
+  if (data.status === 'completed' && route.vehicleId) {
+    const vehicle = await prisma.vehicle.findFirst({ where: { id: route.vehicleId } })
+    if (vehicle?.status === 'in_use') {
+      await prisma.vehicle.update({ where: { id: route.vehicleId }, data: { status: 'available' } })
+    }
+  }
+
   const updated = await prisma.route.update({
     where: { id },
     data: {
@@ -230,11 +213,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
   }
 
-  await prisma.order.updateMany({
-    where: { routeId: id },
-    data: { routeId: null, stopOrder: null, tripLeg: 'outbound', price: null, segmentKm: null }
-  })
-
+  // Orders were created for this route inline; remove them with the route.
+  await prisma.order.deleteMany({ where: { routeId: id } })
   await prisma.route.delete({ where: { id } })
   return NextResponse.json({ success: true })
 }

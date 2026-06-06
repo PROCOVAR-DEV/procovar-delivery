@@ -1,56 +1,61 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Navbar from '@/components/Navbar'
 import PricingSummaryCard from '@/components/PricingSummaryCard'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
+import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
+import { CurrencyDef } from '@/lib/useCurrency'
 
 export default function SettingsPage() {
   const { token } = useAppStore()
+  const t = useT()
   const queryClient = useQueryClient()
   const [form, setForm] = useState({
     baseFee: '5.0',
     costPerKm: '1.5',
     costPerKg: '0.5',
-    currency: 'USD',
   })
-  const [cupRate, setCupRate] = useState('320')
-  const [cupRateUpdatedAt, setCupRateUpdatedAt] = useState<string | null>(null)
+  const [currencies, setCurrencies] = useState<CurrencyDef[]>([])
   const [saved, setSaved] = useState(false)
-  const [cupSaved, setCupSaved] = useState(false)
+  const [curSaved, setCurSaved] = useState(false)
+  // Initialize local form state from the server only ONCE. Re-syncing on every
+  // refetch (e.g. window focus) would wipe edits the user hasn't saved yet.
+  const inited = useRef(false)
 
   const { data: settings } = useQuery({
     queryKey: ['settings'],
     queryFn: async () => {
-      const res = await axios.get('/api/settings', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const res = await axios.get('/api/settings', { headers: { Authorization: `Bearer ${token}` } })
       return res.data
     },
     enabled: !!token
   })
 
   useEffect(() => {
-    if (settings) {
+    if (settings && !inited.current) {
+      inited.current = true
       setForm({
         baseFee: settings.baseFee.toString(),
         costPerKm: settings.costPerKm.toString(),
         costPerKg: settings.costPerKg.toString(),
-        currency: settings.currency || 'USD',
       })
-      setCupRate(settings.cupRate?.toString() ?? '320')
-      setCupRateUpdatedAt(settings.cupRateUpdatedAt ?? null)
+      const list: CurrencyDef[] = Array.isArray(settings.currencies) ? settings.currencies : []
+      // Seed with legacy CUP rate the first time so existing setup is preserved.
+      if (list.length === 0 && settings.cupRate) {
+        setCurrencies([{ code: 'CUP', rate: settings.cupRate }])
+      } else {
+        setCurrencies(list)
+      }
     }
   }, [settings])
 
   const updateSettings = useMutation({
     mutationFn: async (data: unknown) => {
-      const res = await axios.put('/api/settings', data, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const res = await axios.put('/api/settings', data, { headers: { Authorization: `Bearer ${token}` } })
       return res.data
     },
     onSuccess: () => {
@@ -60,112 +65,143 @@ export default function SettingsPage() {
     }
   })
 
-  const updateCupRate = useMutation({
-    mutationFn: async (rate: number) => {
-      const res = await axios.put('/api/settings', { cupRate: rate }, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+  const updateCurrencies = useMutation({
+    mutationFn: async (payload: unknown) => {
+      const res = await axios.put('/api/settings', payload, { headers: { Authorization: `Bearer ${token}` } })
       return res.data
     },
-    onSuccess: (data) => {
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
-      setCupRateUpdatedAt(data.cupRateUpdatedAt)
-      setCupSaved(true)
-      setTimeout(() => setCupSaved(false), 3000)
+      setCurSaved(true)
+      setTimeout(() => setCurSaved(false), 3000)
     }
+  })
+
+  // Always persist pricing + currencies together so editing one and saving the
+  // other doesn't silently drop the change.
+  const cleanList = (list: CurrencyDef[]) =>
+    list
+      .map((c) => ({ code: c.code.trim().toUpperCase(), rate: Number(c.rate) }))
+      .filter((c) => c.code && c.code !== 'USD' && c.rate > 0)
+
+  const cleanCurrencies = () => cleanList(currencies)
+
+  // Delete a row and persist immediately.
+  const deleteCurrencyRow = (i: number) => {
+    const next = currencies.filter((_, idx) => idx !== i)
+    setCurrencies(next)
+    updateCurrencies.mutate({ ...pricingPayload(), currencies: cleanList(next) })
+  }
+
+  const pricingPayload = () => ({
+    baseFee: parseFloat(form.baseFee),
+    costPerKm: parseFloat(form.costPerKm),
+    costPerKg: parseFloat(form.costPerKg),
   })
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    updateSettings.mutate({
-      baseFee: parseFloat(form.baseFee),
-      costPerKm: parseFloat(form.costPerKm),
-      costPerKg: parseFloat(form.costPerKg),
-      currency: form.currency,
-    })
+    updateSettings.mutate({ ...pricingPayload(), currencies: cleanCurrencies() })
   }
 
-  const handleCupRateSave = () => {
-    const rate = parseFloat(cupRate)
-    if (!isNaN(rate) && rate > 0) {
-      updateCupRate.mutate(rate)
-    }
+  const saveCurrencies = () => {
+    const clean = cleanCurrencies()
+    setCurrencies(clean)
+    updateCurrencies.mutate({ ...pricingPayload(), currencies: clean })
   }
 
   const baseFee = parseFloat(form.baseFee) || 0
   const costPerKm = parseFloat(form.costPerKm) || 0
   const costPerKg = parseFloat(form.costPerKg) || 0
-  const cupRateNum = parseFloat(cupRate) || 320
   const exampleKm = 10
   const exampleKg = 5
   const exampleUSD = baseFee + exampleKm * 2 * costPerKm + exampleKg * costPerKg
-  const exampleCUP = exampleUSD * cupRateNum
-
-  const formatCupDate = (iso: string | null) => {
-    if (!iso) return 'nunca'
-    const d = new Date(iso)
-    return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-  }
 
   return (
     <div className="flex flex-col">
-      <Navbar title="Configuración" />
+      <Navbar title={t('set.title')} />
       <div className="p-6 space-y-6">
 
-        {/* Tasa de cambio CUP — bloque prominente arriba */}
+        {/* Monedas — bloque prominente arriba */}
         <div className="bg-white rounded-2xl shadow-md p-6 border-l-4 border-yellow-400">
           <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
-            <Icon icon="mdi:currency-usd" className="text-xl text-yellow-500" />
-            Tasa de Cambio USD → CUP
+            <Icon icon="mdi:cash-multiple" className="text-xl text-yellow-500" />
+            {t('set.currenciesTitle')}
           </h3>
-          <p className="text-xs text-gray-500 mb-4">
-            Actualizar a diario según el valor del mercado informal. Última actualización: <span className="font-medium">{formatCupDate(cupRateUpdatedAt)}</span>
-          </p>
+          <p className="text-xs text-gray-500 mb-4">{t('set.currenciesHelp')}</p>
 
-          <div className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                CUP por cada 1 USD
-              </label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm font-medium">CUP</span>
+          <div className="space-y-2">
+            <div className="grid grid-cols-[100px_1fr_auto] gap-3 text-xs font-medium text-gray-500 px-1">
+              <span>{t('set.code')}</span>
+              <span>{t('set.unitsPerUsd')}</span>
+              <span></span>
+            </div>
+            {currencies.map((c, i) => (
+              <div key={i} className="grid grid-cols-[100px_1fr_auto] gap-3 items-center">
+                <input
+                  type="text"
+                  value={c.code}
+                  onChange={(e) => setCurrencies(currencies.map((x, idx) => idx === i ? { ...x, code: e.target.value.toUpperCase() } : x))}
+                  placeholder="CUP"
+                  maxLength={5}
+                  className="px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-400 text-sm font-mono uppercase"
+                />
                 <input
                   type="number"
-                  step="1"
-                  min="1"
-                  value={cupRate}
-                  onChange={(e) => setCupRate(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleCupRateSave() }}
-                  className="w-full pl-14 pr-4 py-3 border-2 border-yellow-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-400 text-lg font-semibold"
+                  step="0.0001"
+                  min="0"
+                  value={c.rate}
+                  onChange={(e) => setCurrencies(currencies.map((x, idx) => idx === i ? { ...x, rate: parseFloat(e.target.value) || 0 } : x))}
+                  placeholder="320"
+                  className="px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-400 text-sm"
                 />
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={saveCurrencies}
+                    disabled={updateCurrencies.isPending}
+                    className="text-green-600 hover:text-green-700 px-2 disabled:opacity-50"
+                    title={t('common.save')}
+                  >
+                    <Icon icon="mdi:content-save-outline" className="text-lg" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteCurrencyRow(i)}
+                    disabled={updateCurrencies.isPending}
+                    className="text-red-400 hover:text-red-600 px-2 disabled:opacity-50"
+                    title={t('common.delete')}
+                  >
+                    <Icon icon="mdi:trash-can-outline" className="text-lg" />
+                  </button>
+                </div>
               </div>
-            </div>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-3 mt-4">
             <button
-              onClick={handleCupRateSave}
-              disabled={updateCupRate.isPending}
-              className="px-5 py-3 bg-yellow-400 text-gray-900 rounded-xl font-semibold hover:bg-yellow-500 disabled:opacity-50 whitespace-nowrap"
+              type="button"
+              onClick={() => setCurrencies([...currencies, { code: '', rate: 0 }])}
+              className="text-sm text-blue-600 hover:underline"
             >
-              {updateCupRate.isPending ? 'Guardando...' : 'Actualizar tasa'}
+              {t('set.addCurrency')}
+            </button>
+            <button
+              type="button"
+              onClick={saveCurrencies}
+              disabled={updateCurrencies.isPending}
+              className="ml-auto px-5 py-2.5 bg-yellow-400 text-gray-900 rounded-xl font-semibold hover:bg-yellow-500 disabled:opacity-50"
+            >
+              {updateCurrencies.isPending ? t('set.saving') : t('set.saveCurrencies')}
             </button>
           </div>
 
-          {cupSaved && (
+          {curSaved && (
             <div className="mt-3 bg-green-50 text-green-700 px-4 py-2 rounded-xl text-sm flex items-center gap-2">
-              <Icon icon="mdi:check-circle" className="text-lg" /> Tasa actualizada correctamente
+              <Icon icon="mdi:check-circle" className="text-lg" /> {t('set.currenciesSaved')}
             </div>
           )}
-
-          <div className="mt-4 bg-yellow-50 rounded-xl p-3 flex items-center gap-4 text-sm">
-            <div className="text-center">
-              <p className="text-xs text-gray-500">1 USD</p>
-              <p className="font-bold text-gray-800 text-lg">$1.00</p>
-            </div>
-            <Icon icon="mdi:arrow-right-bold" className="text-yellow-500 text-xl shrink-0" />
-            <div className="text-center">
-              <p className="text-xs text-gray-500">Equivale a</p>
-              <p className="font-bold text-yellow-700 text-lg">{cupRateNum.toLocaleString('es-ES')} CUP</p>
-            </div>
-          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -173,12 +209,12 @@ export default function SettingsPage() {
           <div className="bg-white rounded-2xl shadow-md p-6">
             <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
               <Icon icon="mdi:cog-outline" className="text-xl text-primary" />
-              Configuración de Precios (USD)
+              {t('set.pricingTitle')}
             </h3>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tarifa base (por entrega)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.baseFee')}</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                   <input
@@ -192,8 +228,8 @@ export default function SettingsPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Costo por kilómetro
-                  <span className="ml-1 text-xs text-gray-400">(se aplica ×2 por ida y vuelta)</span>
+                  {t('set.costPerKm')}
+                  <span className="ml-1 text-xs text-gray-400">{t('set.costPerKmHint')}</span>
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
@@ -207,7 +243,7 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Costo por kilogramo</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.costPerKg')}</label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                   <input
@@ -219,23 +255,10 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Moneda base</label>
-                <select
-                  value={form.currency}
-                  onChange={(e) => setForm({ ...form, currency: e.target.value })}
-                  className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="USD">USD - Dólar estadounidense</option>
-                  <option value="EUR">EUR - Euro</option>
-                  <option value="MLC">MLC - Moneda libremente convertible</option>
-                </select>
-              </div>
-
               <div className="pt-2">
                 {saved && (
                   <div className="bg-green-50 text-green-600 px-4 py-3 rounded-xl text-sm mb-3 flex items-center gap-2">
-                    <Icon icon="mdi:check-circle" className="text-lg" /> Configuración guardada
+                    <Icon icon="mdi:check-circle" className="text-lg" /> {t('set.configSaved')}
                   </div>
                 )}
                 <button
@@ -243,7 +266,7 @@ export default function SettingsPage() {
                   disabled={updateSettings.isPending}
                   className="w-full bg-primary text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {updateSettings.isPending ? 'Guardando...' : 'Guardar configuración'}
+                  {updateSettings.isPending ? t('set.saving') : t('set.saveConfig')}
                 </button>
               </div>
             </form>
@@ -261,7 +284,7 @@ export default function SettingsPage() {
             <div className="bg-white rounded-2xl shadow-md p-6">
               <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
                 <Icon icon="mdi:function-variant" className="text-xl text-primary" />
-                Fórmula de cálculo por cliente
+                {t('set.formulaTitle')}
               </h3>
               <div className="bg-gray-50 p-4 rounded-xl font-mono text-sm space-y-1">
                 <p className="text-gray-700">precio = tarifa_base</p>
@@ -269,17 +292,12 @@ export default function SettingsPage() {
                 <p className="text-gray-700 pl-4">+ (peso_kg × costo_kg)</p>
               </div>
               <div className="mt-3 bg-blue-50 rounded-xl p-3 text-xs text-blue-700 space-y-1">
-                <p className="font-medium">Ejemplo con {exampleKm} km y {exampleKg} kg:</p>
+                <p className="font-medium">{t('set.example', { km: exampleKm, kg: exampleKg })}</p>
                 <p className="font-mono">
                   {baseFee.toFixed(2)} + ({exampleKm}×2×{costPerKm.toFixed(2)}) + ({exampleKg}×{costPerKg.toFixed(2)}) = <span className="font-bold">${exampleUSD.toFixed(2)} USD</span>
                 </p>
-                <p className="font-mono text-yellow-700">
-                  ≈ <span className="font-bold">{Math.round(exampleCUP).toLocaleString('es-ES')} CUP</span> (a {cupRateNum} CUP/USD)
-                </p>
               </div>
-              <p className="text-xs text-gray-500 mt-3">
-                El <span className="font-semibold text-blue-600">×2</span> cubre ida y vuelta. Cada cliente paga según su distancia al punto de origen, no a la parada anterior.
-              </p>
+              <p className="text-xs text-gray-500 mt-3">{t('set.formulaNote')}</p>
             </div>
           </div>
         </div>

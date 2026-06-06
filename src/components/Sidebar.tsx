@@ -4,22 +4,25 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAppStore } from '@/store/useAppStore'
 import { useRouter } from 'next/navigation'
+import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 
 const navItems = [
-  { href: '/dashboard', icon: 'mdi:view-dashboard-outline', label: 'Dashboard' },
-  { href: '/orders', icon: 'mdi:package-variant-closed', label: 'Órdenes' },
-  { href: '/vehicles', icon: 'mdi:truck-outline', label: 'Vehículos' },
-  { href: '/reports', icon: 'mdi:chart-bar', label: 'Reportes' },
+  { href: '/dashboard', icon: 'mdi:view-dashboard-outline', key: 'nav.dashboard' },
+  { href: '/routes', icon: 'mdi:map-marker-path', key: 'nav.routes' },
+  { href: '/vehicles', icon: 'mdi:truck-outline', key: 'nav.vehicles' },
+  { href: '/reports', icon: 'mdi:chart-bar', key: 'nav.reports' },
+  { href: '/settings', icon: 'mdi:cog-outline', key: 'nav.settings' },
 ]
 
 export default function Sidebar() {
   const pathname = usePathname()
   const { logout, user } = useAppStore()
   const router = useRouter()
+  const t = useT()
 
   const items = user?.role === 'admin'
-    ? [...navItems, { href: '/users', icon: 'mdi:account-group-outline', label: 'Usuarios' }]
+    ? [...navItems, { href: '/users', icon: 'mdi:account-group-outline', key: 'nav.users' }]
     : navItems
 
   const handleLogout = () => {
@@ -34,7 +37,7 @@ export default function Sidebar() {
           <Icon icon="mdi:truck-delivery" className="text-2xl" />
           ProCovar
         </h1>
-        <p className="text-xs text-gray-500 mt-1">Delivery Platform</p>
+        <p className="text-xs text-gray-500 mt-1">{t('nav.platform')}</p>
       </div>
       <nav className="flex-1 p-4 space-y-1">
         {items.map((item) => (
@@ -48,7 +51,7 @@ export default function Sidebar() {
             }`}
           >
             <Icon icon={item.icon} className="text-xl" />
-            <span>{item.label}</span>
+            <span>{t(item.key)}</span>
           </Link>
         ))}
       </nav>
@@ -58,7 +61,7 @@ export default function Sidebar() {
           className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 transition-colors"
         >
           <Icon icon="mdi:logout" className="text-xl" />
-          <span>Cerrar sesión</span>
+          <span>{t('nav.logout')}</span>
         </button>
       </div>
     </div>

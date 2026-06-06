@@ -4,6 +4,7 @@ import { useState } from 'react'
 import axios from 'axios'
 import { useRouter } from 'next/navigation'
 import { useAppStore } from '@/store/useAppStore'
+import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 
 export default function LoginPage() {
@@ -12,6 +13,7 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { setUser, setToken } = useAppStore()
+  const t = useT()
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -26,7 +28,7 @@ export default function LoginPage() {
       router.push('/dashboard')
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { error?: string } } }
-      setError(axiosErr.response?.data?.error || 'Login failed')
+      setError(axiosErr.response?.data?.error || t('login.failed'))
     } finally {
       setLoading(false)
     }
@@ -37,7 +39,7 @@ export default function LoginPage() {
       <div className="bg-white rounded-2xl shadow-md p-8 w-full max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-800 flex items-center justify-center gap-2"><Icon icon="mdi:truck-delivery" className="text-primary" /> ProCovar</h1>
-          <p className="text-gray-500 mt-2">Delivery Route Optimization</p>
+          <p className="text-gray-500 mt-2">{t('login.subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -48,7 +50,7 @@ export default function LoginPage() {
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('login.email')}</label>
             <input
               type="email"
               value={email}
@@ -60,7 +62,7 @@ export default function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('login.password')}</label>
             <input
               type="password"
               value={password}
@@ -76,12 +78,12 @@ export default function LoginPage() {
             disabled={loading}
             className="w-full bg-primary text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? t('login.signingIn') : t('login.signIn')}
           </button>
         </form>
 
         <p className="text-center text-sm text-gray-500 mt-6">
-          User accounts are managed by an administrator.
+          {t('login.adminNote')}
         </p>
       </div>
     </div>

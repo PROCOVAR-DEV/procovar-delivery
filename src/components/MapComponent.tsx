@@ -8,6 +8,8 @@ interface Stop {
   lat: number
   lng: number
   label: string
+  /** Formatted price the client pays (already in selected currency). Shown in the popup. */
+  priceLabel?: string
   status?: string
   stopType?: 'start' | 'end' | 'waypoint'
   tripLeg?: 'outbound' | 'return'
@@ -20,11 +22,13 @@ interface MapComponentProps {
   selectable?: boolean
   selectedPoint?: { lat: number; lng: number } | null
   onMapClick?: (point: { lat: number; lng: number }) => void
+  /** Map height (CSS value). Use '100%' to fill a flex parent. Default '400px'. */
+  height?: string
 }
 
 type MapLayer = Marker | Polyline
 
-export default function MapComponent({ stops, onStopClick, selectable = false, selectedPoint = null, onMapClick }: MapComponentProps) {
+export default function MapComponent({ stops, onStopClick, selectable = false, selectedPoint = null, onMapClick, height = '400px' }: MapComponentProps) {
   const mapRef = useRef<HTMLDivElement>(null)
   const mapInstanceRef = useRef<Map | null>(null)
   const markersRef = useRef<MapLayer[]>([])
@@ -100,9 +104,12 @@ export default function MapComponent({ stops, onStopClick, selectable = false, s
           className: '',
         })
 
+        const priceHtml = stop.priceLabel
+          ? `<br/><span style="display:inline-block;margin-top:4px;font-weight:700;color:#16a34a;">${stop.priceLabel}</span>`
+          : ''
         const marker = L.marker([stop.lat, stop.lng], { icon: pinIcon })
           .addTo(mapInstanceRef.current!)
-          .bindPopup(`<b>${stop.label}</b>`)
+          .bindPopup(`<b>${stop.label}</b>${priceHtml}`)
 
         if (onStopClick) {
           marker.on('click', () => onStopClick(stop.id))
@@ -128,10 +135,12 @@ export default function MapComponent({ stops, onStopClick, selectable = false, s
       // Helper: draw OSRM route or fallback straight line; returns the drawn polyline
       const drawRouteLine = async (
         waypoints: Array<{ lat: number; lng: number }>,
-        color: string
+        color: string,
+        dashed = false
       ): Promise<Polyline | null> => {
         if (waypoints.length < 2) return null
         const coords = waypoints.map((w) => `${w.lng},${w.lat}`).join(';')
+        const dashOpts = dashed ? { dashArray: '8 10' } : {}
         try {
           const res = await fetch(
             `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`
@@ -141,7 +150,7 @@ export default function MapComponent({ stops, onStopClick, selectable = false, s
             const geojsonCoords: [number, number][] = json.routes[0].geometry.coordinates.map(
               ([lng, lat]: [number, number]) => [lat, lng]
             )
-            const polyline = L.polyline(geojsonCoords, { color, weight: 4, opacity: 0.85 })
+            const polyline = L.polyline(geojsonCoords, { color, weight: 4, opacity: 0.85, ...dashOpts })
               .addTo(mapInstanceRef.current!)
             markersRef.current.push(polyline)
             return polyline
@@ -149,7 +158,7 @@ export default function MapComponent({ stops, onStopClick, selectable = false, s
         } catch { /* ignore */ }
         // fallback straight line
         const latlngs = waypoints.map((w) => [w.lat, w.lng] as [number, number])
-        const polyline = L.polyline(latlngs, { color, weight: 3, opacity: 0.7 })
+        const polyline = L.polyline(latlngs, { color, weight: 3, opacity: 0.7, ...dashOpts })
           .addTo(mapInstanceRef.current!)
         markersRef.current.push(polyline)
         return polyline
@@ -165,6 +174,17 @@ export default function MapComponent({ stops, onStopClick, selectable = false, s
             : outboundStops
           const pl = await drawRouteLine(waypoints, '#2563EB')
           if (pl) drawnPolylines.push(pl)
+
+          // Return leg: dashed line from the last stop back to the depot.
+          if (originStop) {
+            const last = outboundStops[outboundStops.length - 1]
+            const pl2 = await drawRouteLine(
+              [{ lat: last.lat, lng: last.lng }, { lat: originStop.lat, lng: originStop.lng }],
+              '#f97316',
+              true
+            )
+            if (pl2) drawnPolylines.push(pl2)
+          }
         }
         if (returnStops.length > 0) {
           const waypoints = originStop
@@ -206,14 +226,14 @@ export default function MapComponent({ stops, onStopClick, selectable = false, s
   }, [stops, onStopClick, selectable, selectedPoint, onMapClick])
 
   return (
-    <div className="relative">
+    <div className="relative" style={{ height }}>
       <link
         rel="stylesheet"
         href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/leaflet.min.css"
       />
       <div
         ref={mapRef}
-        style={{ height: '400px', width: '100%', borderRadius: '12px', zIndex: 0 }}
+        style={{ height: '100%', minHeight: '240px', width: '100%', borderRadius: '12px', zIndex: 0 }}
       />
     </div>
   )

@@ -4,6 +4,8 @@ import Navbar from '@/components/Navbar'
 import { useQuery } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
+import { useCurrency } from '@/lib/useCurrency'
+import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import Link from 'next/link'
 
@@ -24,6 +26,8 @@ function StatCard({ label, value, icon, color, sub }: { label: string; value: st
 
 export default function DashboardPage() {
   const { token } = useAppStore()
+  const { format } = useCurrency()
+  const t = useT()
 
   const { data: stats } = useQuery({
     queryKey: ['dashboard'],
@@ -38,51 +42,51 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col">
-      <Navbar title="Dashboard" />
+      <Navbar title={t('dash.title')} />
       <div className="p-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <StatCard
-            label="Total de Órdenes"
+            label={t('dash.totalOrders')}
             value={stats?.totalOrders || 0}
             icon="mdi:package-variant-closed"
             color="border-blue-500"
           />
           <StatCard
-            label="Ingresos Totales"
-            value={`$${(stats?.totalRevenue || 0).toFixed(2)}`}
+            label={t('dash.totalRevenue')}
+            value={format(stats?.totalRevenue || 0)}
             icon="mdi:currency-usd"
             color="border-green-500"
-            sub={stats?.totalOrders > 0 ? `Promedio $${(stats.avgPrice || 0).toFixed(2)} por orden` : undefined}
+            sub={stats?.totalOrders > 0 ? t('dash.avgPerOrder', { v: format(stats.avgPrice || 0) }) : undefined}
           />
           <StatCard
-            label="Vehículos Registrados"
+            label={t('dash.vehiclesRegistered')}
             value={stats?.totalVehicles || 0}
             icon="mdi:truck-outline"
             color="border-purple-500"
-            sub={`${(stats?.totalWeight || 0).toFixed(0)} kg peso total entregado`}
+            sub={t('dash.totalWeightDelivered', { v: (stats?.totalWeight || 0).toFixed(0) })}
           />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white rounded-2xl shadow-md p-6">
             <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <Icon icon="mdi:chart-bar" className="text-xl text-primary" /> Resumen
+              <Icon icon="mdi:chart-bar" className="text-xl text-primary" /> {t('dash.summary')}
             </h3>
             <div className="space-y-3">
               <div className="flex justify-between items-center py-2 border-b">
-                <span className="text-gray-600">Total órdenes</span>
+                <span className="text-gray-600">{t('dash.rowOrders')}</span>
                 <span className="font-semibold">{stats?.totalOrders || 0}</span>
               </div>
               <div className="flex justify-between items-center py-2 border-b">
-                <span className="text-gray-600">Ingresos totales</span>
-                <span className="font-semibold text-green-600">${(stats?.totalRevenue || 0).toFixed(2)}</span>
+                <span className="text-gray-600">{t('dash.rowRevenue')}</span>
+                <span className="font-semibold text-green-600">{format(stats?.totalRevenue || 0)}</span>
               </div>
               <div className="flex justify-between items-center py-2 border-b">
-                <span className="text-gray-600">Precio promedio por orden</span>
-                <span className="font-semibold text-blue-600">${(stats?.avgPrice || 0).toFixed(2)}</span>
+                <span className="text-gray-600">{t('dash.rowAvg')}</span>
+                <span className="font-semibold text-blue-600">{format(stats?.avgPrice || 0)}</span>
               </div>
               <div className="flex justify-between items-center py-2">
-                <span className="text-gray-600">Peso total entregado</span>
+                <span className="text-gray-600">{t('dash.rowWeight')}</span>
                 <span className="font-semibold">{(stats?.totalWeight || 0).toFixed(1)} kg</span>
               </div>
             </div>
@@ -90,20 +94,20 @@ export default function DashboardPage() {
 
           <div className="bg-white rounded-2xl shadow-md p-6">
             <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <Icon icon="mdi:lightning-bolt" className="text-xl text-primary" /> Acciones Rápidas
+              <Icon icon="mdi:lightning-bolt" className="text-xl text-primary" /> {t('dash.quickActions')}
             </h3>
             <div className="space-y-3">
-              <Link href="/orders" className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors">
-                <Icon icon="mdi:package-variant-closed" className="text-xl text-blue-600" />
-                <span className="text-sm font-medium text-blue-700">Gestionar Órdenes</span>
+              <Link href="/routes" className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl hover:bg-blue-100 transition-colors">
+                <Icon icon="mdi:map-marker-path" className="text-xl text-blue-600" />
+                <span className="text-sm font-medium text-blue-700">{t('dash.planRoutes')}</span>
               </Link>
               <Link href="/reports" className="flex items-center gap-3 p-3 bg-green-50 rounded-xl hover:bg-green-100 transition-colors">
                 <Icon icon="mdi:chart-bar" className="text-xl text-green-600" />
-                <span className="text-sm font-medium text-green-700">Ver Reportes</span>
+                <span className="text-sm font-medium text-green-700">{t('dash.viewReports')}</span>
               </Link>
               <Link href="/vehicles" className="flex items-center gap-3 p-3 bg-yellow-50 rounded-xl hover:bg-yellow-100 transition-colors">
                 <Icon icon="mdi:truck-cargo-container" className="text-xl text-yellow-600" />
-                <span className="text-sm font-medium text-yellow-700">Gestionar Flota</span>
+                <span className="text-sm font-medium text-yellow-700">{t('dash.manageFleet')}</span>
               </Link>
             </div>
           </div>

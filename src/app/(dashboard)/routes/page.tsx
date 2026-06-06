@@ -3,9 +3,13 @@
 import { useState } from 'react'
 import dynamic from 'next/dynamic'
 import Navbar from '@/components/Navbar'
+import LocationInput, { LocationValue } from '@/components/LocationInput'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
+import { useCurrency } from '@/lib/useCurrency'
+import { useT } from '@/lib/i18n'
+import { Icon } from '@iconify/react'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false })
 
@@ -23,7 +27,6 @@ interface RouteOrder {
   weight: number
   price?: number | null
   stopOrder?: number | null
-  tripLeg?: string | null
   segmentKm?: number | null
 }
 
@@ -41,6 +44,7 @@ interface Route {
   orders: RouteOrder[]
   vehicleId?: string | null
   vehicle?: { id: string; name: string; type: string; plate: string | null; capacity: number } | null
+  createdAt?: string
 }
 
 interface Vehicle {
@@ -52,16 +56,6 @@ interface Vehicle {
   status: string
 }
 
-interface UnassignedOrder {
-  id: string
-  customerName: string
-  operationNumber?: string | null
-  address: string
-  endAddress?: string | null
-  weight: number
-  routeId?: string | null
-}
-
 interface SavedOrigin {
   id: string
   name: string
@@ -70,7 +64,92 @@ interface SavedOrigin {
   lng: number
 }
 
-type NominatimResult = { lat: string; lon: string; display_name: string }
+interface PendingStop {
+  customerName: string
+  weight: number
+  address: string
+  lat: number
+  lng: number
+}
+
+const emptyLoc: LocationValue = { address: '', lat: null, lng: null }
+
+// ---- Inline pedido (client order) draft form ----
+function PedidoForm({
+  onAdd,
+  markerColor = '#2563eb',
+}: {
+  onAdd: (stop: PendingStop) => void
+  markerColor?: string
+}) {
+  const t = useT()
+  const [name, setName] = useState('')
+  const [weight, setWeight] = useState('1')
+  const [loc, setLoc] = useState<LocationValue>(emptyLoc)
+
+  const canAdd = name.trim() !== '' && loc.lat != null && loc.lng != null
+
+  const reset = () => {
+    setName('')
+    setWeight('1')
+    setLoc(emptyLoc)
+  }
+
+  return (
+    <div className="border rounded-xl p-4 space-y-3 bg-gray-50">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('pedido.customer')}</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            placeholder={t('pedido.customerPh')}
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('pedido.weight')}</label>
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={weight}
+            onChange={(e) => setWeight(e.target.value)}
+            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+          />
+        </div>
+      </div>
+
+      <LocationInput
+        value={loc}
+        onChange={setLoc}
+        label={t('pedido.address')}
+        markerColor={markerColor}
+      />
+
+      <div className="flex justify-end">
+        <button
+          type="button"
+          disabled={!canAdd}
+          onClick={() => {
+            onAdd({
+              customerName: name.trim(),
+              weight: parseFloat(weight) || 1,
+              address: loc.address,
+              lat: loc.lat!,
+              lng: loc.lng!,
+            })
+            reset()
+          }}
+          className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+        >
+          {t('pedido.addThis')}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function RoutesPage() {
   const { token } = useAppStore()
@@ -79,32 +158,30 @@ export default function RoutesPage() {
   const [showModal, setShowModal] = useState(false)
   const [routeName, setRouteName] = useState('')
   const [selectedVehicleId, setSelectedVehicleId] = useState('')
-  const [outboundOrderIds, setOutboundOrderIds] = useState<string[]>([])
-  const [returnOrderIds, setReturnOrderIds] = useState<string[]>([])
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
-  const [originAddress, setOriginAddress] = useState('')
-  const [originPoint, setOriginPoint] = useState<{ lat: number; lng: number } | null>(null)
-  const [isGeocodingOrigin, setIsGeocodingOrigin] = useState(false)
-  const [geocodeError, setGeocodeError] = useState('')
-  const [selectedOriginId, setSelectedOriginId] = useState<string>('')
+  const [apiError, setApiError] = useState('')
+
+  // Depot (punto de partida)
+  const [depot, setDepot] = useState<LocationValue>(emptyLoc)
+  const [selectedOriginId, setSelectedOriginId] = useState('')
   const [showSaveOrigin, setShowSaveOrigin] = useState(false)
   const [newOriginName, setNewOriginName] = useState('')
 
-  const [showAddOrders, setShowAddOrders] = useState(false)
-  const [addOutboundIds, setAddOutboundIds] = useState<string[]>([])
-  const [addReturnIds, setAddReturnIds] = useState<string[]>([])
-  const [historyTab, setHistoryTab] = useState<'active' | 'history'>('active')
-  const [apiError, setApiError] = useState('')
+  // Pending client stops to create with the route
+  const [pendingStops, setPendingStops] = useState<PendingStop[]>([])
+  const [showPedidoForm, setShowPedidoForm] = useState(false)
+  // Accordion: which step of the create modal is expanded (1=depot, 2=vehicle, 3=orders)
+  const [expandedStep, setExpandedStep] = useState(1)
+  const [showStopsModal, setShowStopsModal] = useState(false)
+  // Route list filters (apply to both Active and History tabs)
+  const [search, setSearch] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
-  const { data: settings } = useQuery({
-    queryKey: ['settings'],
-    queryFn: async () => {
-      const res = await axios.get('/api/settings', { headers: { Authorization: `Bearer ${token}` } })
-      return res.data as { cupRate: number }
-    },
-    enabled: !!token,
-  })
-  const cupRate: number = settings?.cupRate ?? 320
+  const [historyTab, setHistoryTab] = useState<'active' | 'history'>('active')
+
+  const { format } = useCurrency()
+  const t = useT()
 
   const { data: routes = [] } = useQuery({
     queryKey: ['routes'],
@@ -120,15 +197,6 @@ export default function RoutesPage() {
     queryFn: async () => {
       const res = await axios.get('/api/vehicles', { headers: { Authorization: `Bearer ${token}` } })
       return res.data as Vehicle[]
-    },
-    enabled: !!token,
-  })
-
-  const { data: unassignedOrders = [] } = useQuery({
-    queryKey: ['orders-unassigned'],
-    queryFn: async () => {
-      const res = await axios.get('/api/orders', { headers: { Authorization: `Bearer ${token}` } })
-      return (res.data as UnassignedOrder[]).filter((o) => !o.routeId)
     },
     enabled: !!token,
   })
@@ -149,7 +217,6 @@ export default function RoutesPage() {
     },
     onSuccess: (data: Route) => {
       queryClient.invalidateQueries({ queryKey: ['routes'] })
-      queryClient.invalidateQueries({ queryKey: ['orders-unassigned'] })
       resetModal()
       setSelectedRouteId(data.id)
     },
@@ -178,33 +245,25 @@ export default function RoutesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['origins'] })
-      if (selectedOriginId) {
-        setSelectedOriginId('')
-        setOriginAddress('')
-        setOriginPoint(null)
-      }
+      setSelectedOriginId('')
+      setDepot(emptyLoc)
     },
   })
 
-  const addOrdersToRoute = useMutation({
-    mutationFn: async ({ routeId, outboundIds, returnIds }: { routeId: string; outboundIds: string[]; returnIds: string[] }) => {
-      const res = await axios.patch(
-        `/api/routes/${routeId}`,
-        { addOutboundOrderIds: outboundIds, addReturnOrderIds: returnIds },
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
+  const completeRoute = useMutation({
+    mutationFn: async (routeId: string) => {
+      const res = await axios.patch(`/api/routes/${routeId}`, { status: 'completed' }, { headers: { Authorization: `Bearer ${token}` } })
       return res.data
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routes'] })
-      queryClient.invalidateQueries({ queryKey: ['orders-unassigned'] })
-      setShowAddOrders(false)
-      setAddOutboundIds([])
-      setAddReturnIds([])
+      queryClient.invalidateQueries({ queryKey: ['vehicles'] })
+      setSelectedRouteId(null)
+      setHistoryTab('history')
     },
     onError: (err: unknown) => {
-      const msg = axios.isAxiosError(err) ? err.response?.data?.error : 'Error al agregar pedidos'
-      setApiError(msg || 'Error al agregar pedidos')
+      const msg = axios.isAxiosError(err) ? err.response?.data?.error : 'Error al completar la ruta'
+      setApiError(msg || 'Error al completar la ruta')
     },
   })
 
@@ -214,11 +273,7 @@ export default function RoutesPage() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['routes'] })
-      queryClient.invalidateQueries({ queryKey: ['orders-unassigned'] })
       setSelectedRouteId(null)
-      setShowAddOrders(false)
-      setAddOutboundIds([])
-      setAddReturnIds([])
     },
   })
 
@@ -226,88 +281,73 @@ export default function RoutesPage() {
     setShowModal(false)
     setRouteName('')
     setSelectedVehicleId('')
-    setOutboundOrderIds([])
-    setReturnOrderIds([])
-    setOriginAddress('')
-    setOriginPoint(null)
-    setGeocodeError('')
+    setDepot(emptyLoc)
     setSelectedOriginId('')
     setShowSaveOrigin(false)
     setNewOriginName('')
+    setPendingStops([])
+    setShowPedidoForm(false)
+    setExpandedStep(1)
     setApiError('')
   }
 
   const handleSelectSavedOrigin = (originId: string) => {
     setSelectedOriginId(originId)
     if (!originId) {
-      setOriginAddress('')
-      setOriginPoint(null)
+      setDepot(emptyLoc)
       return
     }
     const found = (savedOrigins as SavedOrigin[]).find((o) => o.id === originId)
     if (found) {
-      setOriginAddress(found.address)
-      setOriginPoint({ lat: found.lat, lng: found.lng })
-      setGeocodeError('')
+      setDepot({ address: found.address, lat: found.lat, lng: found.lng })
     }
   }
 
-  const geocodeOrigin = async () => {
-    if (!originAddress.trim()) return
-    setIsGeocodingOrigin(true)
-    setGeocodeError('')
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(originAddress)}&limit=1`,
-        { headers: { 'Accept-Language': 'es' } }
-      )
-      const data = (await res.json()) as NominatimResult[]
-      if (data.length > 0) {
-        setOriginPoint({ lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) })
-        setSelectedOriginId('')
-      } else {
-        setGeocodeError('No se encontró la dirección. Intenta ser más específico.')
-      }
-    } catch {
-      setGeocodeError('Error al geocodificar. Verifica tu conexión.')
-    } finally {
-      setIsGeocodingOrigin(false)
-    }
-  }
+  const depotSet = depot.lat != null && depot.lng != null
+  const pendingWeight = pendingStops.reduce((s, p) => s + p.weight, 0)
+  const selectedVehicle = (vehicles as Vehicle[]).find((v) => v.id === selectedVehicleId)
+  const pendingOverCapacity = selectedVehicle != null && pendingWeight > selectedVehicle.capacity
 
   const handleCreateRoute = () => {
-    if (!originPoint) return
-    const totalSelectedWeight = [...outboundOrderIds, ...returnOrderIds].reduce((sum, id) => {
-      const order = (unassignedOrders as UnassignedOrder[]).find((o) => o.id === id)
-      return sum + (order?.weight ?? 0)
-    }, 0)
-    const vehicle = (vehicles as Vehicle[]).find((v) => v.id === selectedVehicleId)
-    if (vehicle && totalSelectedWeight > vehicle.capacity) {
-      setApiError(`Peso total (${totalSelectedWeight.toFixed(1)} kg) supera la capacidad del vehículo (${vehicle.capacity} kg)`)
+    if (!depotSet || !selectedVehicleId || pendingStops.length === 0) return
+    if (pendingOverCapacity) {
+      setApiError(`Peso total (${pendingWeight.toFixed(1)} kg) supera la capacidad del vehículo (${selectedVehicle!.capacity} kg)`)
       return
     }
     setApiError('')
     createRoute.mutate({
       name: routeName || undefined,
       vehicleId: selectedVehicleId || undefined,
-      originAddress: originAddress || undefined,
-      originLat: originPoint.lat,
-      originLng: originPoint.lng,
-      outboundOrderIds,
-      returnOrderIds,
+      originAddress: depot.address || undefined,
+      originLat: depot.lat,
+      originLng: depot.lng,
+      stops: pendingStops,
     })
   }
 
   const selectedRoute = (routes as Route[]).find((r) => r.id === selectedRouteId) ?? null
   const activeRoutes = (routes as Route[]).filter((r) => r.status !== 'completed')
   const historyRoutes = (routes as Route[]).filter((r) => r.status === 'completed')
-  const visibleRoutes = historyTab === 'active' ? activeRoutes : historyRoutes
+  const tabRoutes = historyTab === 'active' ? activeRoutes : historyRoutes
+  const q = search.trim().toLowerCase()
+  const visibleRoutes = tabRoutes.filter((r) => {
+    const matchName = !q
+      || (r.routeCode || '').toLowerCase().includes(q)
+      || (r.name || '').toLowerCase().includes(q)
+      || (r.originAddress || '').toLowerCase().includes(q)
+      || (r.vehicle?.name || '').toLowerCase().includes(q)
+    const created = r.createdAt ? new Date(r.createdAt) : null
+    const matchFrom = !dateFrom || (created != null && created >= new Date(dateFrom))
+    const matchTo = !dateTo || (created != null && created <= new Date(dateTo + 'T23:59:59.999'))
+    return matchName && matchFrom && matchTo
+  })
 
   const mapStops: Array<{
     id: string
     lat: number
     lng: number
     label: string
+    priceLabel?: string
     status?: string
     tripLeg?: 'outbound' | 'return'
     isOrigin?: boolean
@@ -319,12 +359,12 @@ export default function RoutesPage() {
         id: 'origin',
         lat: selectedRoute.originLat,
         lng: selectedRoute.originLng,
-        label: selectedRoute.originAddress || 'Origen',
+        label: selectedRoute.originAddress || 'Punto de partida',
         isOrigin: true,
       })
     }
     selectedRoute.orders
-      .filter((o) => o.tripLeg !== 'return')
+      .slice()
       .sort((a, b) => (a.stopOrder ?? 0) - (b.stopOrder ?? 0))
       .forEach((o) => {
         const lat = o.endLat ?? o.lat
@@ -334,37 +374,17 @@ export default function RoutesPage() {
             id: o.id,
             lat,
             lng,
-            label: `${o.customerName}${o.operationNumber ? ` · Op.${o.operationNumber}` : ''} · ${o.endAddress || o.address}`,
+            label: `${o.customerName} · ${o.endAddress || o.address}`,
+            priceLabel: o.price != null ? format(o.price) : undefined,
             status: o.status,
             tripLeg: 'outbound',
           })
         }
       })
-    selectedRoute.orders
-      .filter((o) => o.tripLeg === 'return')
-      .sort((a, b) => (a.stopOrder ?? 0) - (b.stopOrder ?? 0))
-      .forEach((o) => {
-        const lat = o.endLat ?? o.lat
-        const lng = o.endLng ?? o.lng
-        if (lat && lng) {
-          mapStops.push({
-            id: o.id,
-            lat,
-            lng,
-            label: `[Retorno] ${o.customerName}${o.operationNumber ? ` · Op.${o.operationNumber}` : ''} · ${o.endAddress || o.address}`,
-            status: o.status,
-            tripLeg: 'return',
-          })
-        }
-      })
   }
 
-  const outboundStops = selectedRoute?.orders
-    .filter((o) => o.tripLeg !== 'return')
-    .sort((a, b) => (a.stopOrder ?? 0) - (b.stopOrder ?? 0)) ?? []
-
-  const returnStops = selectedRoute?.orders
-    .filter((o) => o.tripLeg === 'return')
+  const orderedStops = selectedRoute?.orders
+    .slice()
     .sort((a, b) => (a.stopOrder ?? 0) - (b.stopOrder ?? 0)) ?? []
 
   const isOverCapacity = (route: Route) =>
@@ -376,37 +396,31 @@ export default function RoutesPage() {
       in_transit: 'bg-blue-100 text-blue-700',
       delivered: 'bg-green-100 text-green-700',
       active: 'bg-blue-100 text-blue-700',
+      planned: 'bg-yellow-100 text-yellow-700',
       completed: 'bg-green-100 text-green-700',
     }
     return map[status] ?? 'bg-gray-100 text-gray-600'
   }
 
-  const routeLabel = (route: Route) =>
-    route.routeCode
-      ? route.name
-        ? `${route.routeCode} · ${route.name}`
-        : route.routeCode
-      : route.name ?? '—'
-
   return (
-    <div className="flex flex-col">
-      <Navbar title="Rutas" />
-      <div className="p-6">
-        <div className="flex justify-between items-center mb-6">
+    <div className="flex flex-col h-screen overflow-hidden">
+      <Navbar title={t('routes.title')} />
+      <div className="p-6 flex-1 flex flex-col overflow-hidden min-h-0">
+        <div className="flex justify-between items-center mb-6 shrink-0">
           <div className="flex items-center gap-3">
-            <h3 className="text-lg font-semibold text-gray-700">Planificador de Rutas</h3>
+            <h3 className="text-lg font-semibold text-gray-700">{t('routes.planner')}</h3>
             <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
               <button
                 onClick={() => { setHistoryTab('active'); setSelectedRouteId(null) }}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${historyTab === 'active' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                Activas <span className="ml-1 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{activeRoutes.length}</span>
+                {t('routes.active')} <span className="ml-1 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{activeRoutes.length}</span>
               </button>
               <button
                 onClick={() => { setHistoryTab('history'); setSelectedRouteId(null) }}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${historyTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
-                Historial <span className="ml-1 text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">{historyRoutes.length}</span>
+                {t('routes.history')} <span className="ml-1 text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">{historyRoutes.length}</span>
               </button>
             </div>
           </div>
@@ -414,16 +428,54 @@ export default function RoutesPage() {
             onClick={() => setShowModal(true)}
             className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700 transition-colors"
           >
-            + Nueva Ruta
+            {t('routes.new')}
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left: route list */}
-          <div className="lg:col-span-1 space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
+          {/* Left: filters (fixed) + route list (internal scroll) */}
+          <div className="lg:col-span-1 min-h-0 flex flex-col gap-3">
+            <div className="shrink-0 space-y-2">
+              <div className="relative">
+                <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t('routes.searchPlaceholder')}
+                  className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="flex-1 px-2 py-1.5 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  title={t('common.from')}
+                />
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="flex-1 px-2 py-1.5 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  title={t('common.to')}
+                />
+                {(search || dateFrom || dateTo) && (
+                  <button
+                    onClick={() => { setSearch(''); setDateFrom(''); setDateTo('') }}
+                    className="px-2 text-gray-400 hover:text-gray-600"
+                    title={t('common.clear')}
+                  >
+                    <Icon icon="mdi:close" />
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="space-y-3 overflow-y-auto min-h-0 pr-1">
             {visibleRoutes.length === 0 ? (
               <div className="bg-white rounded-2xl p-8 text-center text-gray-500 shadow-md">
-                {historyTab === 'active' ? 'Sin rutas activas. Crea la primera.' : 'Sin rutas completadas aún.'}
+                {historyTab === 'active' ? t('routes.noActive') : t('routes.noCompleted')}
               </div>
             ) : (
               visibleRoutes.map((route) => (
@@ -434,15 +486,12 @@ export default function RoutesPage() {
                   }`}
                   onClick={() => {
                     setSelectedRouteId(route.id)
-                    setShowAddOrders(false)
-                    setAddOutboundIds([])
-                    setAddReturnIds([])
+                    setShowStopsModal(false)
                     setApiError('')
                   }}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      {/* Route code badge — primary identifier */}
                       {route.routeCode && (
                         <span className="inline-block font-mono text-xs font-bold bg-blue-600 text-white px-2 py-0.5 rounded-lg mb-1 tracking-wide">
                           {route.routeCode}
@@ -452,18 +501,18 @@ export default function RoutesPage() {
                         <p className="font-medium text-gray-800 text-sm truncate">{route.name}</p>
                       )}
                       {!route.routeCode && !route.name && (
-                        <p className="font-semibold text-gray-800 truncate">Sin código</p>
+                        <p className="font-semibold text-gray-800 truncate">{t('routes.noCode')}</p>
                       )}
                       <p className="text-xs text-gray-500 mt-0.5">
-                        {route.orders.length} paradas · {route.totalDistance.toFixed(1)} km
+                        {t('routes.stopsKm', { n: route.orders.length, km: route.totalDistance.toFixed(1) })}
                       </p>
                       {route.vehicle && (
                         <p className="text-xs text-gray-500 mt-0.5 truncate">
-                          🚛 {route.vehicle.name}{route.vehicle.plate ? ` (${route.vehicle.plate})` : ''}
+                          <Icon icon="mdi:truck-outline" className="inline align-text-bottom mr-1" />{route.vehicle.name}{route.vehicle.plate ? ` (${route.vehicle.plate})` : ''}
                         </p>
                       )}
                       {route.originAddress && (
-                        <p className="text-xs text-gray-400 mt-0.5 truncate">📍 {route.originAddress}</p>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate"><Icon icon="mdi:map-marker-outline" className="inline align-text-bottom mr-1" />{route.originAddress}</p>
                       )}
                     </div>
                     <div className="flex flex-col items-end gap-1 shrink-0">
@@ -472,551 +521,374 @@ export default function RoutesPage() {
                       </span>
                       {isOverCapacity(route) && (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
-                          ⚠️ Sobrepeso
+                          <Icon icon="mdi:alert-outline" className="inline align-text-bottom mr-0.5" />{t('routes.overweight')}
                         </span>
                       )}
                     </div>
                   </div>
                   <div className="flex items-center justify-between mt-3">
                     <div>
-                      <span className="text-sm font-bold text-primary">${route.totalPrice.toFixed(2)} USD</span>
-                      <p className="text-xs text-yellow-600 font-medium">{Math.round(route.totalPrice * cupRate).toLocaleString('es-ES')} CUP</p>
+                      <span className="text-sm font-bold text-primary">{format(route.totalPrice)}</span>
                     </div>
-                    <div className="flex gap-3">
-                      {route.status !== 'completed' && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); deleteRoute.mutate(route.id) }}
-                          className="text-xs text-red-500 hover:underline"
-                          disabled={deleteRoute.isPending}
-                        >
-                          Eliminar
-                        </button>
-                      )}
-                    </div>
+                    {route.status !== 'completed' && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); deleteRoute.mutate(route.id) }}
+                        className="text-xs text-red-500 hover:underline"
+                        disabled={deleteRoute.isPending}
+                      >
+                        {t('common.delete')}
+                      </button>
+                    )}
                   </div>
                 </div>
               ))
             )}
+            </div>
           </div>
 
-          {/* Right: selected route detail */}
-          <div className="lg:col-span-2 space-y-4">
+          {/* Right: selected route detail (fills height, no page scroll) */}
+          <div className="lg:col-span-2 min-h-0 flex flex-col">
             {selectedRoute ? (
               <>
-                {/* Map card */}
-                <div className="bg-white rounded-2xl shadow-md p-4">
-                  <div className="flex items-start justify-between mb-2">
-                    <div>
+                <div className="bg-white rounded-2xl shadow-md p-4 flex-1 flex flex-col min-h-0">
+                  <div className="flex items-start justify-between mb-2 shrink-0 gap-2">
+                    <div className="min-w-0">
                       {selectedRoute.routeCode && (
                         <span className="inline-block font-mono text-xs font-bold bg-blue-600 text-white px-2 py-0.5 rounded-lg mb-1 tracking-wide">
                           {selectedRoute.routeCode}
                         </span>
                       )}
-                      <h3 className="font-bold text-gray-800">
-                        {selectedRoute.name || routeLabel(selectedRoute)}
+                      <h3 className="font-bold text-gray-800 truncate">
+                        {selectedRoute.name || selectedRoute.routeCode || 'Ruta'}
                       </h3>
                     </div>
-                    {isOverCapacity(selectedRoute) && (
-                      <span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-medium shrink-0">
-                        ⚠️ Peso total ({selectedRoute.totalWeight.toFixed(1)} kg) supera capacidad ({selectedRoute.vehicle!.capacity} kg)
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-4 text-sm text-gray-600 mb-3">
-                    <span>🛣️ {selectedRoute.totalDistance.toFixed(1)} km</span>
-                    <span>⚖️ {selectedRoute.totalWeight.toFixed(1)} kg</span>
-                    <span className="font-semibold text-primary">💰 ${selectedRoute.totalPrice.toFixed(2)} USD</span>
-                    <span className="font-semibold text-yellow-600">≈ {Math.round(selectedRoute.totalPrice * cupRate).toLocaleString('es-ES')} CUP</span>
-                    {selectedRoute.vehicle && (
-                      <span>🚛 {selectedRoute.vehicle.name}{selectedRoute.vehicle.plate ? ` · ${selectedRoute.vehicle.plate}` : ''}</span>
-                    )}
-                  </div>
-                  {mapStops.length > 0 ? (
-                    <MapComponent stops={mapStops} />
-                  ) : (
-                    <div className="h-64 bg-gray-100 rounded-xl flex items-center justify-center text-gray-500 text-sm">
-                      Sin coordenadas GPS para esta ruta
-                    </div>
-                  )}
-                  <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                    <span className="flex items-center gap-1">
-                      <span className="w-3 h-3 rounded-full bg-green-600 inline-block" /> Origen
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-3 h-3 rounded-full bg-blue-600 inline-block" /> Salida
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <span className="w-3 h-3 rounded-full bg-orange-500 inline-block" /> Retorno
-                    </span>
-                  </div>
-                </div>
-
-                {/* Outbound stops */}
-                {outboundStops.length > 0 && (
-                  <div className="bg-white rounded-2xl shadow-md p-4">
-                    <h4 className="font-semibold text-blue-700 mb-3 flex items-center gap-2">
-                      <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs">→</span>
-                      Tramo Salida ({outboundStops.length} paradas)
-                    </h4>
-                    <div className="space-y-2">
-                      {outboundStops.map((order, idx) => (
-                        <div key={order.id} className="flex items-center gap-3 p-3 bg-blue-50 rounded-xl">
-                          <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
-                            {idx + 1}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{order.customerName}</p>
-                            {order.operationNumber && (
-                              <p className="text-xs text-blue-600">Op. {order.operationNumber}</p>
-                            )}
-                            <p className="text-xs text-gray-500 truncate">{order.endAddress || order.address}</p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            {order.segmentKm != null && (
-                              <p className="text-xs text-gray-500">{order.segmentKm.toFixed(1)} km desde origen</p>
-                            )}
-                            {order.price != null && (
-                              <>
-                                <p className="text-xs font-semibold text-blue-700">${order.price.toFixed(2)} USD</p>
-                                <p className="text-xs text-yellow-600">{Math.round(order.price * cupRate).toLocaleString('es-ES')} CUP</p>
-                              </>
-                            )}
-                          </div>
-                          <span className={`text-xs px-2 py-1 rounded-full shrink-0 ${statusBadge(order.status)}`}>
-                            {order.status}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Return stops */}
-                {returnStops.length > 0 && (
-                  <div className="bg-white rounded-2xl shadow-md p-4">
-                    <h4 className="font-semibold text-orange-600 mb-3 flex items-center gap-2">
-                      <span className="w-5 h-5 bg-orange-500 text-white rounded-full flex items-center justify-center text-xs">←</span>
-                      Tramo Retorno ({returnStops.length} paradas)
-                    </h4>
-                    <div className="space-y-2">
-                      {returnStops.map((order, idx) => (
-                        <div key={order.id} className="flex items-center gap-3 p-3 bg-orange-50 rounded-xl">
-                          <span className="w-6 h-6 bg-orange-500 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">
-                            {idx + 1}
-                          </span>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{order.customerName}</p>
-                            {order.operationNumber && (
-                              <p className="text-xs text-orange-600">Op. {order.operationNumber}</p>
-                            )}
-                            <p className="text-xs text-gray-500 truncate">{order.endAddress || order.address}</p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            {order.segmentKm != null && (
-                              <p className="text-xs text-gray-500">{order.segmentKm.toFixed(1)} km desde origen</p>
-                            )}
-                            {order.price != null && (
-                              <>
-                                <p className="text-xs font-semibold text-orange-700">${order.price.toFixed(2)} USD</p>
-                                <p className="text-xs text-yellow-600">{Math.round(order.price * cupRate).toLocaleString('es-ES')} CUP</p>
-                              </>
-                            )}
-                          </div>
-                          <span className={`text-xs px-2 py-1 rounded-full shrink-0 ${statusBadge(order.status)}`}>
-                            {order.status}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Add Orders to existing route */}
-                {selectedRoute.status !== 'completed' && (
-                  <div className="bg-white rounded-2xl shadow-md p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h4 className="font-semibold text-gray-700">Agregar pedidos a la ruta</h4>
-                      <button
-                        onClick={() => { setShowAddOrders(!showAddOrders); setAddOutboundIds([]); setAddReturnIds([]); setApiError('') }}
-                        className="text-sm text-blue-600 hover:underline"
-                      >
-                        {showAddOrders ? 'Cancelar' : '+ Agregar pedidos'}
-                      </button>
-                    </div>
-
-                    {showAddOrders && (
-                      <div className="space-y-4">
-                        {apiError && (
-                          <div className="bg-red-50 text-red-600 px-3 py-2 rounded-xl text-sm">{apiError}</div>
-                        )}
-                        <div>
-                          <p className="text-sm font-medium text-blue-700 mb-1">Salida ({addOutboundIds.length} seleccionados)</p>
-                          <div className="max-h-40 overflow-y-auto border rounded-xl">
-                            {(unassignedOrders as UnassignedOrder[]).length === 0 ? (
-                              <div className="p-3 text-center text-gray-500 text-sm">Sin pedidos disponibles</div>
-                            ) : (
-                              (unassignedOrders as UnassignedOrder[]).map((order) => {
-                                const inReturn = addReturnIds.includes(order.id)
-                                return (
-                                  <label
-                                    key={order.id}
-                                    className={`flex items-center gap-3 p-2.5 border-b last:border-0 ${inReturn ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-50 cursor-pointer'}`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={addOutboundIds.includes(order.id)}
-                                      disabled={inReturn}
-                                      onChange={(e) => {
-                                        if (e.target.checked) setAddOutboundIds([...addOutboundIds, order.id])
-                                        else setAddOutboundIds(addOutboundIds.filter((x) => x !== order.id))
-                                      }}
-                                      className="rounded accent-blue-600"
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium truncate">{order.customerName}</p>
-                                      {order.operationNumber && <p className="text-xs text-blue-600">Op. {order.operationNumber}</p>}
-                                      <p className="text-xs text-gray-500 truncate">{order.endAddress || order.address}</p>
-                                    </div>
-                                    <span className="text-xs text-gray-500 shrink-0">{order.weight} kg</span>
-                                  </label>
-                                )
-                              })
-                            )}
-                          </div>
-                        </div>
-
-                        <div>
-                          <p className="text-sm font-medium text-orange-600 mb-1">Retorno ({addReturnIds.length} seleccionados)</p>
-                          <div className="max-h-40 overflow-y-auto border rounded-xl">
-                            {(unassignedOrders as UnassignedOrder[]).length === 0 ? (
-                              <div className="p-3 text-center text-gray-500 text-sm">Sin pedidos disponibles</div>
-                            ) : (
-                              (unassignedOrders as UnassignedOrder[]).map((order) => {
-                                const inOutbound = addOutboundIds.includes(order.id)
-                                return (
-                                  <label
-                                    key={order.id}
-                                    className={`flex items-center gap-3 p-2.5 border-b last:border-0 ${inOutbound ? 'opacity-40 cursor-not-allowed' : 'hover:bg-orange-50 cursor-pointer'}`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={addReturnIds.includes(order.id)}
-                                      disabled={inOutbound}
-                                      onChange={(e) => {
-                                        if (e.target.checked) setAddReturnIds([...addReturnIds, order.id])
-                                        else setAddReturnIds(addReturnIds.filter((x) => x !== order.id))
-                                      }}
-                                      className="rounded accent-orange-500"
-                                    />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-sm font-medium truncate">{order.customerName}</p>
-                                      {order.operationNumber && <p className="text-xs text-orange-600">Op. {order.operationNumber}</p>}
-                                      <p className="text-xs text-gray-500 truncate">{order.endAddress || order.address}</p>
-                                    </div>
-                                    <span className="text-xs text-gray-500 shrink-0">{order.weight} kg</span>
-                                  </label>
-                                )
-                              })
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex justify-end">
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                      {orderedStops.length > 0 && (
+                        <div className="relative">
                           <button
-                            onClick={() => {
-                              if (selectedRouteId && (addOutboundIds.length > 0 || addReturnIds.length > 0)) {
-                                addOrdersToRoute.mutate({
-                                  routeId: selectedRouteId,
-                                  outboundIds: addOutboundIds,
-                                  returnIds: addReturnIds,
-                                })
-                              }
-                            }}
-                            disabled={
-                              (addOutboundIds.length === 0 && addReturnIds.length === 0) ||
-                              addOrdersToRoute.isPending
-                            }
-                            className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                            onClick={() => setShowStopsModal((v) => !v)}
+                            className="text-xs px-3 py-1.5 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-700 inline-flex items-center gap-1 whitespace-nowrap"
                           >
-                            {addOrdersToRoute.isPending ? 'Optimizando...' : 'Agregar y reoptimizar ruta'}
+                            <Icon icon="mdi:format-list-numbered" />{t('routes.viewStops', { n: orderedStops.length })}
                           </button>
+                          {showStopsModal && (
+                            <>
+                              <div className="fixed inset-0 z-20" onClick={() => setShowStopsModal(false)} />
+                              <div className="absolute right-0 top-full mt-2 w-80 max-h-[60vh] overflow-y-auto bg-white rounded-xl shadow-xl border z-30 p-2 space-y-2">
+                                <p className="text-xs font-semibold text-gray-500 px-1 pt-1">{t('routes.stopsAndPrice', { n: orderedStops.length })}</p>
+                                {orderedStops.map((order, idx) => (
+                                  <div key={order.id} className="flex items-center gap-2 p-2 bg-blue-50 rounded-lg">
+                                    <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold shrink-0">{idx + 1}</span>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-xs font-medium truncate">{order.customerName}</p>
+                                      <p className="text-[11px] text-gray-500 truncate">{order.endAddress || order.address}</p>
+                                      <p className="text-[11px] text-gray-400">{order.weight} kg{order.segmentKm != null ? ` · ${t('routes.kmFromStart', { km: order.segmentKm.toFixed(1) })}` : ''}</p>
+                                    </div>
+                                    {order.price != null && (
+                                      <p className="text-xs font-semibold text-blue-700 shrink-0">{format(order.price)}</p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
                         </div>
+                      )}
+                      {selectedRoute.status !== 'completed' && (
+                        <button
+                          onClick={() => completeRoute.mutate(selectedRoute.id)}
+                          disabled={completeRoute.isPending}
+                          className="text-xs px-3 py-1.5 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700 disabled:opacity-50 whitespace-nowrap inline-flex items-center gap-1"
+                        >
+                          <Icon icon="mdi:check-circle-outline" />{completeRoute.isPending ? t('routes.completing') : t('routes.markComplete')}
+                        </button>
+                      )}
+                      {isOverCapacity(selectedRoute) && (
+                        <span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-medium flex items-center gap-1">
+                          <Icon icon="mdi:alert-outline" />{t('routes.overweightFull', { w: selectedRoute.totalWeight.toFixed(1), c: selectedRoute.vehicle!.capacity })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-4 text-sm text-gray-600 mb-3 shrink-0">
+                    <span className="flex items-center gap-1"><Icon icon="mdi:road-variant" />{t('routes.kmInclReturn', { km: selectedRoute.totalDistance.toFixed(1) })}</span>
+                    <span className="flex items-center gap-1"><Icon icon="mdi:weight" />{selectedRoute.totalWeight.toFixed(1)} kg</span>
+                    <span className="font-semibold text-primary flex items-center gap-1"><Icon icon="mdi:cash" />{format(selectedRoute.totalPrice)}</span>
+                    {selectedRoute.vehicle && (
+                      <span className="flex items-center gap-1"><Icon icon="mdi:truck-outline" />{selectedRoute.vehicle.name}{selectedRoute.vehicle.plate ? ` · ${selectedRoute.vehicle.plate}` : ''}</span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-h-0">
+                    {mapStops.length > 0 ? (
+                      <MapComponent stops={mapStops} height="100%" />
+                    ) : (
+                      <div className="h-full min-h-[240px] bg-gray-100 rounded-xl flex items-center justify-center text-gray-500 text-sm">
+                        {t('routes.noGps')}
                       </div>
                     )}
                   </div>
-                )}
+                  <div className="flex gap-4 mt-2 text-xs text-gray-500 shrink-0">
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 h-3 rounded-full bg-green-600 inline-block" /> {t('routes.legendStart')}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 h-3 rounded-full bg-blue-600 inline-block" /> {t('routes.legendStops')}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="w-3 h-1 bg-orange-500 inline-block" /> {t('routes.legendReturn')}
+                    </span>
+                  </div>
+                </div>
               </>
             ) : (
               <div className="bg-white rounded-2xl shadow-md p-12 text-center text-gray-500">
-                Selecciona una ruta para ver el detalle
+                {t('routes.selectToView')}
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Create Route Modal */}
+      {/* Create Route Modal — stepped flow */}
       {showModal && (
         <div
           className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
           onClick={(e) => { if (e.target === e.currentTarget) resetModal() }}
         >
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold mb-5">Nueva Ruta</h3>
-            <div className="space-y-5">
+            <h3 className="text-lg font-bold mb-5">{t('routes.modalTitle')}</h3>
+            <div className="space-y-6">
 
               {apiError && (
                 <div className="bg-red-50 text-red-600 px-3 py-2 rounded-xl text-sm">{apiError}</div>
               )}
 
-              {/* Route name (optional) */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Nombre de la ruta <span className="text-gray-400 font-normal">(opcional)</span>
-                </label>
-                <input
-                  type="text"
-                  value={routeName}
-                  onChange={(e) => setRouteName(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="El código se genera automáticamente (ej: RT-20260601-001)"
-                />
-              </div>
-
-              {/* Vehicle (optional) */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Vehículo (opcional)</label>
-                <select
-                  value={selectedVehicleId}
-                  onChange={(e) => setSelectedVehicleId(e.target.value)}
-                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              {/* Step 1 — depot (accordion) */}
+              <div className="border rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setExpandedStep(1)}
+                  className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50"
                 >
-                  <option value="">— Sin asignar —</option>
-                  {(vehicles as Vehicle[])
-                    .filter((v) => v.status === 'available')
-                    .map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name}{v.plate ? ` (${v.plate})` : ''} · cap. {v.capacity} kg
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              {/* Origin selector */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Punto de origen *</label>
-
-                {/* Saved origins dropdown */}
-                {(savedOrigins as SavedOrigin[]).length > 0 && (
-                  <div className="mb-2">
-                    <select
-                      value={selectedOriginId}
-                      onChange={(e) => handleSelectSavedOrigin(e.target.value)}
-                      className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    >
-                      <option value="">— Seleccionar origen guardado —</option>
-                      {(savedOrigins as SavedOrigin[]).map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {o.name} · {o.address}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedOriginId && (
-                      <div className="flex items-center justify-between mt-1">
-                        <p className="text-xs text-green-600">
-                          ✓ Origen seleccionado: {originPoint?.lat.toFixed(5)}, {originPoint?.lng.toFixed(5)}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => deleteOriginMutation.mutate(selectedOriginId)}
-                          className="text-xs text-red-400 hover:text-red-600"
+                  <span className="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</span>
+                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step1')}</h4>
+                  {expandedStep !== 1 && (
+                    <span className="ml-auto flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-gray-500 truncate max-w-[240px]">
+                        {depotSet ? (depot.address || `${depot.lat!.toFixed(4)}, ${depot.lng!.toFixed(4)}`) : t('routes.notSet')}
+                      </span>
+                      <span className="text-xs text-blue-600 shrink-0">{t('common.edit')}</span>
+                    </span>
+                  )}
+                </button>
+                {expandedStep === 1 && (
+                  <div className="p-3 border-t space-y-2">
+                    {(savedOrigins as SavedOrigin[]).length > 0 && (
+                      <div className="mb-2">
+                        <select
+                          value={selectedOriginId}
+                          onChange={(e) => handleSelectSavedOrigin(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                         >
-                          Eliminar guardado
-                        </button>
+                          <option value="">{t('routes.selectSavedOrigin')}</option>
+                          {(savedOrigins as SavedOrigin[]).map((o) => (
+                            <option key={o.id} value={o.id}>{o.name} · {o.address}</option>
+                          ))}
+                        </select>
+                        {selectedOriginId && (
+                          <div className="flex justify-end mt-1">
+                            <button
+                              type="button"
+                              onClick={() => deleteOriginMutation.mutate(selectedOriginId)}
+                              className="text-xs text-red-400 hover:text-red-600"
+                            >
+                              {t('routes.deleteSaved')}
+                            </button>
+                          </div>
+                        )}
+                        <p className="text-xs text-gray-400 mt-1 mb-2">{t('routes.orEnterNew')}</p>
                       </div>
                     )}
-                    <p className="text-xs text-gray-400 mt-1">— o ingresa uno nuevo —</p>
-                  </div>
-                )}
 
-                {/* Manual address input */}
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={originAddress}
-                    onChange={(e) => {
-                      setOriginAddress(e.target.value)
-                      setOriginPoint(null)
-                      setSelectedOriginId('')
-                      setGeocodeError('')
-                    }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') geocodeOrigin() }}
-                    className="flex-1 px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                    placeholder="Dirección de salida (depósito, sede...)"
-                  />
-                  <button
-                    type="button"
-                    onClick={geocodeOrigin}
-                    disabled={isGeocodingOrigin || !originAddress.trim()}
-                    className="px-4 py-2 bg-gray-100 border rounded-xl text-sm hover:bg-gray-200 disabled:opacity-50 whitespace-nowrap"
-                  >
-                    {isGeocodingOrigin ? '...' : '📍 Buscar'}
-                  </button>
-                </div>
-                {geocodeError && <p className="text-xs text-red-500 mt-1">{geocodeError}</p>}
-                {originPoint && !selectedOriginId && (
-                  <div className="mt-2 space-y-2">
-                    <p className="text-xs text-green-600">
-                      ✓ {originPoint.lat.toFixed(5)}, {originPoint.lng.toFixed(5)}
-                    </p>
-                    {/* Save origin option */}
-                    {!showSaveOrigin ? (
+                    <LocationInput
+                      value={depot}
+                      onChange={(v) => { setDepot(v); setSelectedOriginId('') }}
+                      label=""
+                      markerColor="#16a34a"
+                      placeholder={t('routes.depotPlaceholder')}
+                    />
+
+                    {depotSet && !selectedOriginId && (
+                      <div className="mt-1">
+                        {!showSaveOrigin ? (
+                          <button type="button" onClick={() => setShowSaveOrigin(true)} className="text-xs text-blue-600 hover:underline">
+                            {t('routes.saveOrigin')}
+                          </button>
+                        ) : (
+                          <div className="flex gap-2 items-center">
+                            <input
+                              type="text"
+                              value={newOriginName}
+                              onChange={(e) => setNewOriginName(e.target.value)}
+                              className="flex-1 px-3 py-1.5 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder={t('routes.originNamePh')}
+                            />
+                            <button
+                              type="button"
+                              disabled={!newOriginName.trim() || saveOriginMutation.isPending}
+                              onClick={() => {
+                                if (newOriginName.trim() && depot.lat != null && depot.lng != null) {
+                                  saveOriginMutation.mutate({ name: newOriginName.trim(), address: depot.address, lat: depot.lat, lng: depot.lng })
+                                }
+                              }}
+                              className="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+                            >
+                              {saveOriginMutation.isPending ? '...' : t('common.save')}
+                            </button>
+                            <button type="button" onClick={() => { setShowSaveOrigin(false); setNewOriginName('') }} className="text-gray-400 hover:text-gray-600"><Icon icon="mdi:close" /></button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex justify-end pt-1">
                       <button
                         type="button"
-                        onClick={() => setShowSaveOrigin(true)}
-                        className="text-xs text-blue-600 hover:underline"
+                        disabled={!depotSet}
+                        onClick={() => setExpandedStep(2)}
+                        className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
                       >
-                        + Guardar este origen para uso futuro
+                        {t('routes.continue')}
                       </button>
-                    ) : (
-                      <div className="flex gap-2 items-center">
-                        <input
-                          type="text"
-                          value={newOriginName}
-                          onChange={(e) => setNewOriginName(e.target.value)}
-                          className="flex-1 px-3 py-1.5 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder="Nombre del origen (ej: Bodega Central)"
-                        />
-                        <button
-                          type="button"
-                          disabled={!newOriginName.trim() || saveOriginMutation.isPending}
-                          onClick={() => {
-                            if (newOriginName.trim() && originPoint) {
-                              saveOriginMutation.mutate({
-                                name: newOriginName.trim(),
-                                address: originAddress,
-                                lat: originPoint.lat,
-                                lng: originPoint.lng,
-                              })
-                            }
-                          }}
-                          className="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-                        >
-                          {saveOriginMutation.isPending ? '...' : 'Guardar'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => { setShowSaveOrigin(false); setNewOriginName('') }}
-                          className="text-xs text-gray-400 hover:text-gray-600"
-                        >
-                          ✕
-                        </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 2 — vehicle (required) + name (accordion) */}
+              <div className={`border rounded-xl overflow-hidden ${!depotSet ? 'opacity-50' : ''}`}>
+                <button
+                  type="button"
+                  disabled={!depotSet}
+                  onClick={() => depotSet && setExpandedStep(2)}
+                  className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50 disabled:cursor-not-allowed"
+                >
+                  <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step2Vehicle')}</h4>
+                  {expandedStep !== 2 && (
+                    <span className="ml-auto flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-gray-500 truncate max-w-[240px]">
+                        {selectedVehicle ? `${selectedVehicle.name}${selectedVehicle.plate ? ` (${selectedVehicle.plate})` : ''}${routeName ? ` · ${routeName}` : ''}` : t('routes.notSet')}
+                      </span>
+                      {depotSet && <span className="text-xs text-blue-600 shrink-0">{t('common.edit')}</span>}
+                    </span>
+                  )}
+                </button>
+                {expandedStep === 2 && (
+                  <div className="p-3 border-t space-y-3">
+                    {(vehicles as Vehicle[]).filter((v) => v.status === 'available').length === 0 ? (
+                      <div className="bg-amber-50 text-amber-700 px-3 py-2 rounded-xl text-sm">
+                        {t('routes.noVehiclesAvail')}
                       </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          <select
+                            value={selectedVehicleId}
+                            onChange={(e) => setSelectedVehicleId(e.target.value)}
+                            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                          >
+                            <option value="">{t('routes.selectVehicle')}</option>
+                            {(vehicles as Vehicle[]).filter((v) => v.status === 'available').map((v) => (
+                              <option key={v.id} value={v.id}>{v.name}{v.plate ? ` (${v.plate})` : ''} · {t('routes.capacity', { c: v.capacity })}</option>
+                            ))}
+                          </select>
+                          <input
+                            type="text"
+                            value={routeName}
+                            onChange={(e) => setRouteName(e.target.value)}
+                            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                            placeholder={t('routes.namePlaceholder')}
+                          />
+                        </div>
+                        <div className="flex justify-end">
+                          <button
+                            type="button"
+                            disabled={!selectedVehicleId}
+                            onClick={() => setExpandedStep(3)}
+                            className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                          >
+                            {t('routes.continue')}
+                          </button>
+                        </div>
+                      </>
                     )}
                   </div>
                 )}
               </div>
 
-              {/* Outbound orders */}
-              <div>
-                <label className="block text-sm font-medium text-blue-700 mb-1">
-                  Pedidos de Salida ({outboundOrderIds.length} seleccionados)
-                </label>
-                <div className="max-h-48 overflow-y-auto border rounded-xl">
-                  {(unassignedOrders as UnassignedOrder[]).length === 0 ? (
-                    <div className="p-4 text-center text-gray-500 text-sm">Sin pedidos sin asignar</div>
-                  ) : (
-                    (unassignedOrders as UnassignedOrder[]).map((order) => {
-                      const isInReturn = returnOrderIds.includes(order.id)
-                      return (
-                        <label
-                          key={order.id}
-                          className={`flex items-center gap-3 p-3 border-b last:border-0 ${isInReturn ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-50 cursor-pointer'}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={outboundOrderIds.includes(order.id)}
-                            disabled={isInReturn}
-                            onChange={(e) => {
-                              if (e.target.checked) setOutboundOrderIds([...outboundOrderIds, order.id])
-                              else setOutboundOrderIds(outboundOrderIds.filter((id) => id !== order.id))
-                            }}
-                            className="rounded accent-blue-600"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{order.customerName}</p>
-                            {order.operationNumber && (
-                              <p className="text-xs text-blue-600">Op. {order.operationNumber}</p>
-                            )}
-                            <p className="text-xs text-gray-500 truncate">{order.endAddress || order.address}</p>
-                          </div>
-                          <span className="text-xs text-gray-500 shrink-0">{order.weight} kg</span>
-                        </label>
-                      )
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Return orders */}
-              <div>
-                <label className="block text-sm font-medium text-orange-600 mb-1">
-                  Pedidos de Retorno <span className="text-gray-400 font-normal">(opcional)</span> — {returnOrderIds.length} seleccionados
-                </label>
-                <div className="max-h-48 overflow-y-auto border rounded-xl">
-                  {(unassignedOrders as UnassignedOrder[]).length === 0 ? (
-                    <div className="p-4 text-center text-gray-500 text-sm">Sin pedidos sin asignar</div>
-                  ) : (
-                    (unassignedOrders as UnassignedOrder[]).map((order) => {
-                      const isInOutbound = outboundOrderIds.includes(order.id)
-                      return (
-                        <label
-                          key={order.id}
-                          className={`flex items-center gap-3 p-3 border-b last:border-0 ${isInOutbound ? 'opacity-40 cursor-not-allowed' : 'hover:bg-orange-50 cursor-pointer'}`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={returnOrderIds.includes(order.id)}
-                            disabled={isInOutbound}
-                            onChange={(e) => {
-                              if (e.target.checked) setReturnOrderIds([...returnOrderIds, order.id])
-                              else setReturnOrderIds(returnOrderIds.filter((id) => id !== order.id))
-                            }}
-                            className="rounded accent-orange-500"
-                          />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium truncate">{order.customerName}</p>
-                            {order.operationNumber && (
-                              <p className="text-xs text-orange-600">Op. {order.operationNumber}</p>
-                            )}
-                            <p className="text-xs text-gray-500 truncate">{order.endAddress || order.address}</p>
-                          </div>
-                          <span className="text-xs text-gray-500 shrink-0">{order.weight} kg</span>
-                        </label>
-                      )
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Buttons */}
-              <div className="flex gap-3 justify-end pt-2">
+              {/* Step 3 — client orders (accordion) */}
+              <div className={`border rounded-xl overflow-hidden ${!(depotSet && selectedVehicleId) ? 'opacity-50' : ''}`}>
                 <button
-                  onClick={resetModal}
-                  className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-50"
+                  type="button"
+                  disabled={!(depotSet && selectedVehicleId)}
+                  onClick={() => depotSet && selectedVehicleId && setExpandedStep(3)}
+                  className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50 disabled:cursor-not-allowed"
                 >
-                  Cancelar
+                  <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step3Orders', { n: pendingStops.length })}</h4>
+                  {expandedStep !== 3 && (
+                    <span className="ml-auto flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-gray-500 truncate max-w-[240px]">{t('routes.ordersSummary', { n: pendingStops.length })}</span>
+                      {depotSet && selectedVehicleId && <span className="text-xs text-blue-600 shrink-0">{t('common.edit')}</span>}
+                    </span>
+                  )}
                 </button>
+                {expandedStep === 3 && (
+                  <div className="p-3 border-t">
+                    {pendingStops.length > 0 && (
+                      <div className="space-y-2 mb-3">
+                        {pendingStops.map((s, i) => (
+                          <div key={i} className="flex items-center gap-3 p-2.5 border rounded-xl bg-white">
+                            <span className="w-6 h-6 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium truncate">{s.customerName}</p>
+                              <p className="text-xs text-gray-500 truncate">{s.address}</p>
+                            </div>
+                            <span className="text-xs text-gray-500 shrink-0">{s.weight} kg</span>
+                            <button onClick={() => setPendingStops(pendingStops.filter((_, idx) => idx !== i))} className="text-xs text-red-400 hover:text-red-600 shrink-0">{t('common.remove')}</button>
+                          </div>
+                        ))}
+                        {pendingOverCapacity && (
+                          <p className="text-xs text-amber-600 font-medium flex items-center gap-1"><Icon icon="mdi:alert-outline" />{t('routes.overCapWarn', { w: pendingWeight.toFixed(1), c: selectedVehicle!.capacity })}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {showPedidoForm ? (
+                      <PedidoForm onAdd={(stop) => { setPendingStops((prev) => [...prev, stop]); setShowPedidoForm(false) }} />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowPedidoForm(true)}
+                        className="w-full py-2.5 border-2 border-dashed border-blue-300 text-blue-600 rounded-xl text-sm font-medium hover:bg-blue-50"
+                      >
+                        {t('routes.addOrder')}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="flex gap-3 justify-end pt-2 border-t">
+                <button onClick={resetModal} className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-50">{t('common.cancel')}</button>
                 <button
                   onClick={handleCreateRoute}
-                  disabled={
-                    !originPoint ||
-                    (outboundOrderIds.length === 0 && returnOrderIds.length === 0) ||
-                    createRoute.isPending
-                  }
-                  className="px-4 py-2 bg-primary text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50"
+                  disabled={!depotSet || !selectedVehicleId || pendingStops.length === 0 || pendingOverCapacity || createRoute.isPending}
+                  className="px-4 py-2 bg-primary text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
                 >
-                  {createRoute.isPending ? 'Generando ruta...' : '🗺️ Generar Ruta'}
+                  <Icon icon="mdi:map-marker-path" />{createRoute.isPending ? t('routes.generating') : t('routes.generate')}
                 </button>
               </div>
 

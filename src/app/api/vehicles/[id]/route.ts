@@ -40,9 +40,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(data.type !== undefined && { type: data.type }),
       ...(data.plate !== undefined && { plate: data.plate }),
       ...(data.capacity !== undefined && { capacity: data.capacity }),
-      ...(data.baseFee !== undefined && { baseFee: data.baseFee }),
-      ...(data.costPerKm !== undefined && { costPerKm: data.costPerKm }),
-      ...(data.costPerKg !== undefined && { costPerKg: data.costPerKg }),
       ...(data.status !== undefined && { status: data.status }),
       ...(data.notes !== undefined && { notes: data.notes }),
     }
