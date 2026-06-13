@@ -219,7 +219,7 @@ function PedidoForm({
 }
 
 export default function RoutesPage() {
-  const { token } = useAppStore()
+  const { token, user } = useAppStore()
   const queryClient = useQueryClient()
 
   const [showModal, setShowModal] = useState(false)
@@ -270,9 +270,10 @@ export default function RoutesPage() {
   })
 
   const { data: savedOrigins = [] } = useQuery({
-    queryKey: ['origins'],
+    queryKey: ['origins', user?.branchId ?? 'all'],
     queryFn: async () => {
-      const res = await axios.get('/api/origins', { headers: { Authorization: `Bearer ${token}` } })
+      const url = user?.branchId ? `/api/origins?branchId=${user.branchId}` : '/api/origins'
+      const res = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } })
       return res.data as SavedOrigin[]
     },
     enabled: !!token,
@@ -295,7 +296,7 @@ export default function RoutesPage() {
   })
 
   const saveOriginMutation = useMutation({
-    mutationFn: async (data: { name: string; address: string; lat: number; lng: number }) => {
+    mutationFn: async (data: { name: string; address: string; lat: number; lng: number; branchId?: string }) => {
       const res = await axios.post('/api/origins', data, { headers: { Authorization: `Bearer ${token}` } })
       return res.data as SavedOrigin
     },
@@ -883,7 +884,7 @@ export default function RoutesPage() {
                               disabled={!newOriginName.trim() || saveOriginMutation.isPending}
                               onClick={() => {
                                 if (newOriginName.trim() && depot.lat != null && depot.lng != null) {
-                                  saveOriginMutation.mutate({ name: newOriginName.trim(), address: depot.address, lat: depot.lat, lng: depot.lng })
+                                  saveOriginMutation.mutate({ name: newOriginName.trim(), address: depot.address, lat: depot.lat, lng: depot.lng, branchId: user?.branchId ?? undefined })
                                 }
                               }}
                               className="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"

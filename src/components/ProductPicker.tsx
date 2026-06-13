@@ -14,6 +14,7 @@ export interface Product {
   packaging?: string | null
   unitsPerPackage?: number | null
   category?: string | null
+  usageCount?: number
 }
 
 /** Searchable product combobox. Calls onPick with the chosen product. */
@@ -33,10 +34,15 @@ export default function ProductPicker({ onPick }: { onPick: (p: Product) => void
   })
 
   const q = query.trim().toLowerCase()
-  const matches = (q
-    ? products.filter((p) => p.name.toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q) || (p.packaging || '').toLowerCase().includes(q))
-    : products
-  ).slice(0, 30)
+  const byUsage = (a: Product, b: Product) => (b.usageCount || 0) - (a.usageCount || 0) || a.name.localeCompare(b.name)
+
+  // No query → the 5 most-transported products. With a query → search the whole catalog.
+  const matches = q
+    ? products
+        .filter((p) => p.name.toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q) || (p.packaging || '').toLowerCase().includes(q))
+        .sort(byUsage)
+        .slice(0, 30)
+    : [...products].sort(byUsage).slice(0, 5)
 
   return (
     <div className="relative">
@@ -54,11 +60,15 @@ export default function ProductPicker({ onPick }: { onPick: (p: Product) => void
       {open && (
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-full mt-1 max-h-64 overflow-y-auto bg-white rounded-xl border border-line shadow-xl z-30 p-1">
+          <div className="absolute left-0 right-0 top-full mt-1 max-h-72 overflow-y-auto bg-white rounded-xl border border-line shadow-xl z-30 p-1">
             {matches.length === 0 ? (
               <p className="text-xs text-ink-soft/70 px-3 py-3 text-center">{t('prod.none')}</p>
             ) : (
-              matches.map((p) => (
+              <>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-soft/60 px-3 pt-1.5 pb-1 flex items-center gap-1">
+                {!q && <Icon icon="mdi:fire" className="text-accent text-xs" />}{q ? t('prod.allResults') : t('prod.topUsed')}
+              </p>
+              {matches.map((p) => (
                 <button
                   key={p.id}
                   type="button"
@@ -73,7 +83,8 @@ export default function ProductPicker({ onPick }: { onPick: (p: Product) => void
                   </span>
                   <span className="text-xs font-mono text-ink-soft shrink-0">{p.weight} kg</span>
                 </button>
-              ))
+              ))}
+              </>
             )}
           </div>
         </>

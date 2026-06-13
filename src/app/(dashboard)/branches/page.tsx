@@ -16,7 +16,15 @@ interface Branch {
   lat: number
   lng: number
   areaKm2: number
-  _count?: { members: number }
+  _count?: { members: number; origins: number }
+}
+
+interface StartPoint {
+  id: string
+  name: string
+  address: string
+  lat: number
+  lng: number
 }
 
 const emptyLoc: LocationValue = { address: '', lat: null, lng: null }
@@ -31,6 +39,40 @@ export default function BranchesPage() {
   const [name, setName] = useState('')
   const [area, setArea] = useState('1')
   const [loc, setLoc] = useState<LocationValue>(emptyLoc)
+
+  // Start points (puntos de partida) management for one branch
+  const [spBranch, setSpBranch] = useState<Branch | null>(null)
+  const [spName, setSpName] = useState('')
+  const [spLoc, setSpLoc] = useState<LocationValue>(emptyLoc)
+
+  const { data: startPoints = [] } = useQuery({
+    queryKey: ['origins', spBranch?.id],
+    queryFn: async () => {
+      const res = await axios.get(`/api/origins?branchId=${spBranch!.id}`, { headers: { Authorization: `Bearer ${token}` } })
+      return res.data as StartPoint[]
+    },
+    enabled: !!token && !!spBranch,
+  })
+
+  const addStartPoint = useMutation({
+    mutationFn: async () => {
+      return (await axios.post('/api/origins', { name: spName.trim(), address: spLoc.address, lat: spLoc.lat, lng: spLoc.lng, branchId: spBranch!.id }, { headers: { Authorization: `Bearer ${token}` } })).data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['origins'] })
+      queryClient.invalidateQueries({ queryKey: ['branches'] })
+      setSpName('')
+      setSpLoc(emptyLoc)
+    },
+  })
+
+  const deleteStartPoint = useMutation({
+    mutationFn: async (id: string) => { await axios.delete(`/api/origins/${id}`, { headers: { Authorization: `Bearer ${token}` } }) },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['origins'] })
+      queryClient.invalidateQueries({ queryKey: ['branches'] })
+    },
+  })
 
   const { data: branches = [], isLoading } = useQuery({
     queryKey: ['branches'],
@@ -127,6 +169,17 @@ export default function BranchesPage() {
                   </div>
                   <span className="text-xs bg-primary/10 text-primary px-2.5 py-1 rounded-full shrink-0 font-mono font-semibold">{b.areaKm2} km²</span>
                 </div>
+                <button
+                  onClick={() => setSpBranch(b)}
+                  className="w-full mt-3 flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-ink/[0.03] hover:bg-primary/[0.07] transition-colors text-left"
+                >
+                  <span className="text-xs font-medium text-ink flex items-center gap-1.5">
+                    <Icon icon="mdi:map-marker-radius-outline" className="text-primary" />{t('br.startPoints')}
+                  </span>
+                  <span className="text-xs font-mono text-ink-soft flex items-center gap-1">
+                    {b._count?.origins ?? 0}<Icon icon="mdi:chevron-right" />
+                  </span>
+                </button>
                 <div className="flex items-center justify-between mt-3">
                   <span className="text-xs text-gray-500">{t('br.members', { n: b._count?.members ?? 0 })}</span>
                   <div className="flex gap-3">
@@ -168,6 +221,61 @@ export default function BranchesPage() {
                 <button onClick={() => saveBranch.mutate()} disabled={!canSave || saveBranch.isPending}
                   className="px-4 py-2 bg-primary text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50">
                   {editing ? t('common.update') : t('common.create')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Start points (puntos de partida) of a branch */}
+      {spBranch && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) { setSpBranch(null); setSpName(''); setSpLoc(emptyLoc) } }}>
+          <div className="bg-white rounded-2xl p-6 w-full max-w-xl shadow-xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Icon icon="mdi:map-marker-radius-outline" className="text-primary" />{t('br.startPoints')}
+              </h3>
+              <button onClick={() => { setSpBranch(null); setSpName(''); setSpLoc(emptyLoc) }} className="text-gray-400 hover:text-gray-600"><Icon icon="mdi:close" className="text-xl" /></button>
+            </div>
+            <p className="text-xs text-ink-soft mb-4">{spBranch.name} · {t('br.startPointsHint')}</p>
+
+            {/* Existing points */}
+            <div className="space-y-2 mb-5">
+              {startPoints.length === 0 ? (
+                <div className="text-sm text-ink-soft/70 text-center py-4 bg-ink/[0.02] rounded-xl">{t('br.noStartPoints')}</div>
+              ) : (
+                startPoints.map((sp) => (
+                  <div key={sp.id} className="flex items-center gap-3 p-3 border border-line rounded-xl">
+                    <Icon icon="mdi:map-marker-outline" className="text-primary shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{sp.name}</p>
+                      <p className="text-[11px] text-ink-soft/70 truncate">{sp.address}</p>
+                      <p className="text-[11px] text-ink-soft/60 font-mono">{sp.lat.toFixed(4)}, {sp.lng.toFixed(4)}</p>
+                    </div>
+                    <button onClick={() => deleteStartPoint.mutate(sp.id)} className="text-red-400 hover:text-red-600 shrink-0"><Icon icon="mdi:trash-can-outline" /></button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Add new point */}
+            <div className="border-t border-line pt-4 space-y-3">
+              <input
+                value={spName}
+                onChange={(e) => setSpName(e.target.value)}
+                placeholder={t('br.startPointName')}
+                className="w-full px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <LocationInput value={spLoc} onChange={setSpLoc} label="" markerColor="#16a34a" />
+              <div className="flex justify-end">
+                <button
+                  onClick={() => addStartPoint.mutate()}
+                  disabled={!spName.trim() || spLoc.lat == null || addStartPoint.isPending}
+                  className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-[#1840bd] disabled:opacity-50"
+                >
+                  {t('br.addStartPoint')}
                 </button>
               </div>
             </div>

@@ -23,12 +23,28 @@ export async function GET(req: NextRequest) {
     orderBy: { name: 'asc' },
   })
 
+  // Tally how many units of each product have been transported across all orders,
+  // so the UI can surface the most-used products first.
+  const orders = await prisma.order.findMany({
+    where: { userId: user.id as string },
+    select: { items: true },
+  })
+  const usage: Record<string, number> = {}
+  for (const o of orders) {
+    const items = (Array.isArray(o.items) ? o.items : []) as Array<{ productId?: string; quantity?: number }>
+    for (const it of items) {
+      if (it?.productId) usage[it.productId] = (usage[it.productId] || 0) + (Number(it.quantity) || 0)
+    }
+  }
+
+  const withUsage = products.map((p) => ({ ...p, usageCount: usage[p.id] || 0 }))
+
   const filtered = q
-    ? products.filter((p) =>
+    ? withUsage.filter((p) =>
         p.name.toLowerCase().includes(q)
         || (p.category || '').toLowerCase().includes(q)
         || (p.packaging || '').toLowerCase().includes(q))
-    : products
+    : withUsage
 
   return NextResponse.json(filtered)
 }

@@ -47,6 +47,7 @@ model Branch {
   creatorId String
   creator   User     @relation("BranchCreator", fields: [creatorId], references: [id])
   members   User[]   @relation("UserBranch")
+  origins   SavedOrigin[]
   createdAt DateTime @default(now())
 }
 
@@ -58,6 +59,8 @@ model SavedOrigin {
   lng       Float
   userId    String
   user      User     @relation(fields: [userId], references: [id])
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
   createdAt DateTime @default(now())
 }
 

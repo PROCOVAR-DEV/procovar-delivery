@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
   const branches = await prisma.branch.findMany({
     where: { creatorId: user.id as string },
     orderBy: { createdAt: 'desc' },
-    include: { _count: { select: { members: true } } },
+    include: { _count: { select: { members: true, origins: true } } },
   })
 
   return NextResponse.json(branches)
