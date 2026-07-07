@@ -37,6 +37,8 @@ export async function POST(req: NextRequest) {
       areaKm2: areaKm2 ?? 1,
       // Mapea esta sucursal con la de PEDIDO (necesario para /api/quote y el batch).
       externalId: externalId || null,
+      // Crear con coords = el usuario fijó el punto de partida (habilita el cálculo).
+      originConfigured: true,
       creatorId: user.id as string,
     },
   })

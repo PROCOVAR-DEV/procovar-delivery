@@ -18,6 +18,7 @@ interface Snapshot {
   counts: Record<string, number>
   total: number
   recent: SyncJob[]
+  ready?: { ok: boolean; formulaOk: boolean; originOk: boolean }
   ts: number
 }
 
@@ -70,6 +71,21 @@ export default function SyncPage() {
             {live ? 'En vivo' : 'Conectando…'}
           </span>
         </div>
+
+        {snap?.ready && !snap.ready.ok && (
+          <div className="flex items-start gap-3 p-4 mb-6 border rounded-xl bg-amber-50 border-amber-200 text-amber-800">
+            <Icon icon="mdi:pause-circle" className="text-2xl shrink-0" />
+            <div>
+              <p className="font-semibold">Cálculo en espera — falta configuración</p>
+              <p className="text-sm">
+                No se calculan domicilios hasta configurar:{' '}
+                {!snap.ready.formulaOk && <b>la fórmula del domicilio (Ajustes)</b>}
+                {!snap.ready.formulaOk && !snap.ready.originOk && ' y '}
+                {!snap.ready.originOk && <b>el punto de partida del almacén (Sucursales)</b>}. Los pedidos quedan en cola.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3 mb-8 sm:grid-cols-3 lg:grid-cols-5">
           {cards.map(({ k, v }) => (

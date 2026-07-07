@@ -15,6 +15,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const { name, address, lat, lng, areaKm2, externalId } = await req.json()
 
+  // Fijar/cambiar las coordenadas = el usuario definió el punto de partida real.
+  const setsOrigin = lat !== undefined || lng !== undefined
+
   const updated = await prisma.branch.update({
     where: { id },
     data: {
@@ -24,6 +27,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(lng !== undefined && { lng }),
       ...(areaKm2 !== undefined && { areaKm2 }),
       ...(externalId !== undefined && { externalId: externalId || null }),
+      ...(setsOrigin && { originConfigured: true }),
     },
   })
 

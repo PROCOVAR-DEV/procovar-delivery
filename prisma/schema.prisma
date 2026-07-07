@@ -47,6 +47,9 @@ model Branch {
   // Id de la sucursal equivalente en la app PEDIDO. Permite que PEDIDO cotice
   // un domicilio mandando solo su id de sucursal y delivery resuelve las coords.
   externalId String?  @unique
+  // El usuario fijó el PUNTO DE PARTIDA real (ubicación del almacén). Mientras sea
+  // false, el cálculo de domicilios NO corre para esta sucursal (espera).
+  originConfigured Boolean @default(false)
   creatorId  String
   creator    User     @relation("BranchCreator", fields: [creatorId], references: [id])
   members    User[]   @relation("UserBranch")
@@ -182,6 +185,9 @@ model Settings {
   domIncludedKm Float @default(0)
   domMinFee     Float @default(0)
   domRoundTo    Float @default(0)
+  // El usuario guardó la FÓRMULA del domicilio. Mientras sea false, el cálculo
+  // NO corre (espera). Se pone true al guardar la fórmula en Settings.
+  domConfigured Boolean @default(false)
   currency  String @default("USD")
   cupRate   Float  @default(320.0)
   cupRateUpdatedAt DateTime @default(now())

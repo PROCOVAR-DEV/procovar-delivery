@@ -164,12 +164,32 @@ async function drainQueue(byId) {
   return procesados;
 }
 
+// ¿Está lista la configuración? El cálculo NO corre hasta que estén seteados
+// la FÓRMULA (settings.domConfigured) y el PUNTO DE PARTIDA (branch.originConfigured).
+async function checkReady() {
+  const settings = await prisma.settings.findFirst();
+  const formulaOk = !!settings?.domConfigured;
+  const branch = SUCURSAL_CODIGO
+    ? await prisma.branch.findFirst({ where: { externalId: SUCURSAL_CODIGO } })
+    : await prisma.branch.findFirst();
+  const originOk = !!branch?.originConfigured;
+  return { ok: formulaOk && originOk, formulaOk, originOk };
+}
+
 async function cycle() {
   if (!KEY) throw new Error('Falta SERVICE_API_KEY.');
   const orders = await fetchPending();
   const byId = new Map(orders.map((o) => [o.id, o]));
   const nuevos = await enqueueNew(orders);
   if (nuevos) log(`encolados ${nuevos} nuevos (de ${orders.length} pendientes)`);
+
+  // GUARD: sin fórmula o sin punto de partida, la cola ESPERA (no calcula).
+  const ready = await checkReady();
+  if (!ready.ok) {
+    log(`esperando configuración -> fórmula: ${ready.formulaOk ? 'OK' : 'FALTA'}, punto de partida: ${ready.originOk ? 'OK' : 'FALTA'}. La cola queda en espera.`);
+    return;
+  }
+
   const done = await drainQueue(byId);
   if (done) log(`procesados ${done} en este ciclo`);
 }

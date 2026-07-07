@@ -41,7 +41,15 @@ export async function GET(req: NextRequest) {
           take: 15,
           select: { externalId: true, folio: true, customerName: true, status: true, cost: true, error: true, updatedAt: true },
         })
-        return { counts, total, recent, ts: Date.now() }
+        // Estado de configuración: el cálculo espera hasta que estén la fórmula y el punto de partida.
+        const settings = await prisma.settings.findFirst()
+        const branch = await prisma.branch.findFirst({ where: { originConfigured: true } })
+        const ready = {
+          formulaOk: !!settings?.domConfigured,
+          originOk: !!branch,
+          ok: !!settings?.domConfigured && !!branch,
+        }
+        return { counts, total, recent, ready, ts: Date.now() }
       }
 
       // primer snapshot inmediato
