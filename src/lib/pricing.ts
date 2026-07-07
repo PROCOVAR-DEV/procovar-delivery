@@ -12,6 +12,67 @@ export function calculateOrderPrice(
   return config.baseFee + segmentKm * 2 * config.costPerKm + weightKg * config.costPerKg
 }
 
+export interface HomeDeliveryConfig {
+  domBaseFee: number
+  domCostPerKm: number
+  domCostPerKg: number
+  domIncludedKm: number
+  domMinFee: number
+  domRoundTo: number
+}
+
+export interface HomeDeliveryQuote {
+  distanceKm: number
+  chargeableKm: number
+  weightKg: number
+  price: number
+  breakdown: {
+    base: number
+    distance: number
+    weight: number
+    beforeMin: number
+    beforeRound: number
+  }
+}
+
+/**
+ * Precio de un envío a domicilio INDIVIDUAL (viaje dedicado sucursal → cliente → sucursal).
+ *
+ * A diferencia de `computeRoutePricing` (que reparte el costo del viaje entre varios
+ * clientes de una ruta), aquí el cliente paga el viaje completo él solo.
+ *
+ *   chargeableKm = max(0, distanceKm - domIncludedKm)   // primeros km incluidos en la base
+ *   price        = domBaseFee + 2·chargeableKm·domCostPerKm + weightKg·domCostPerKg
+ *   price        = max(price, domMinFee)                 // carga mínima
+ *   price        = ceil(price / domRoundTo) · domRoundTo // redondeo (si domRoundTo > 0)
+ */
+export function calculateHomeDeliveryPrice(
+  distanceKm: number,
+  weightKg: number,
+  config: HomeDeliveryConfig
+): HomeDeliveryQuote {
+  const chargeableKm = Math.max(0, distanceKm - (config.domIncludedKm || 0))
+  const base = config.domBaseFee || 0
+  const distance = 2 * chargeableKm * (config.domCostPerKm || 0)
+  const weight = weightKg * (config.domCostPerKg || 0)
+
+  const raw = base + distance + weight
+  const afterMin = Math.max(raw, config.domMinFee || 0)
+
+  let price = afterMin
+  if (config.domRoundTo && config.domRoundTo > 0) {
+    price = Math.ceil(price / config.domRoundTo) * config.domRoundTo
+  }
+
+  return {
+    distanceKm,
+    chargeableKm,
+    weightKg,
+    price,
+    breakdown: { base, distance, weight, beforeMin: raw, beforeRound: afterMin },
+  }
+}
+
 export function haversineDistance(
   lat1: number, lon1: number,
   lat2: number, lon2: number

@@ -13,7 +13,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const existing = await prisma.branch.findFirst({ where: { id, creatorId: user.id as string } })
   if (!existing) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 
-  const { name, address, lat, lng, areaKm2 } = await req.json()
+  const { name, address, lat, lng, areaKm2, externalId } = await req.json()
 
   const updated = await prisma.branch.update({
     where: { id },
@@ -23,6 +23,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...(lat !== undefined && { lat }),
       ...(lng !== undefined && { lng }),
       ...(areaKm2 !== undefined && { areaKm2 }),
+      ...(externalId !== undefined && { externalId: externalId || null }),
     },
   })
 

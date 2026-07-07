@@ -19,9 +19,18 @@ export default function SettingsPage() {
     costPerKm: '1.5',
     costPerKg: '0.5',
   })
+  const [domForm, setDomForm] = useState({
+    domBaseFee: '0',
+    domCostPerKm: '0',
+    domCostPerKg: '0',
+    domIncludedKm: '0',
+    domMinFee: '0',
+    domRoundTo: '0',
+  })
   const [currencies, setCurrencies] = useState<CurrencyDef[]>([])
   const [saved, setSaved] = useState(false)
   const [curSaved, setCurSaved] = useState(false)
+  const [homeSaved, setHomeSaved] = useState(false)
   // Initialize local form state from the server only ONCE. Re-syncing on every
   // refetch (e.g. window focus) would wipe edits the user hasn't saved yet.
   const inited = useRef(false)
@@ -42,6 +51,14 @@ export default function SettingsPage() {
         baseFee: settings.baseFee.toString(),
         costPerKm: settings.costPerKm.toString(),
         costPerKg: settings.costPerKg.toString(),
+      })
+      setDomForm({
+        domBaseFee: (settings.domBaseFee ?? 0).toString(),
+        domCostPerKm: (settings.domCostPerKm ?? 0).toString(),
+        domCostPerKg: (settings.domCostPerKg ?? 0).toString(),
+        domIncludedKm: (settings.domIncludedKm ?? 0).toString(),
+        domMinFee: (settings.domMinFee ?? 0).toString(),
+        domRoundTo: (settings.domRoundTo ?? 0).toString(),
       })
       const list: CurrencyDef[] = Array.isArray(settings.currencies) ? settings.currencies : []
       // Seed with legacy CUP rate the first time so existing setup is preserved.
@@ -102,6 +119,30 @@ export default function SettingsPage() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     updateSettings.mutate({ ...pricingPayload(), currencies: cleanCurrencies() })
+  }
+
+  const updateHome = useMutation({
+    mutationFn: async (data: unknown) => {
+      const res = await axios.put('/api/settings', data, { headers: { Authorization: `Bearer ${token}` } })
+      return res.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+      setHomeSaved(true)
+      setTimeout(() => setHomeSaved(false), 3000)
+    }
+  })
+
+  const handleSubmitHome = (e: React.FormEvent) => {
+    e.preventDefault()
+    updateHome.mutate({
+      domBaseFee: parseFloat(domForm.domBaseFee) || 0,
+      domCostPerKm: parseFloat(domForm.domCostPerKm) || 0,
+      domCostPerKg: parseFloat(domForm.domCostPerKg) || 0,
+      domIncludedKm: parseFloat(domForm.domIncludedKm) || 0,
+      domMinFee: parseFloat(domForm.domMinFee) || 0,
+      domRoundTo: parseFloat(domForm.domRoundTo) || 0,
+    })
   }
 
   const saveCurrencies = () => {
@@ -299,6 +340,96 @@ export default function SettingsPage() {
               </div>
               <p className="text-xs text-gray-500 mt-3">{t('set.formulaNote')}</p>
             </div>
+          </div>
+        </div>
+
+        {/* Envío a domicilio individual — fórmula separada de la de ruta */}
+        <div className="bg-white rounded-2xl shadow-md p-6 border-l-4 border-primary">
+          <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
+            <Icon icon="mdi:moped" className="text-xl text-primary" />
+            {t('set.homeTitle')}
+          </h3>
+          <p className="text-xs text-gray-500 mb-4">{t('set.homeHelp')}</p>
+
+          <form onSubmit={handleSubmitHome} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domBaseFee')}</label>
+              <input
+                type="number" step="0.01" min="0"
+                value={domForm.domBaseFee}
+                onChange={(e) => setDomForm({ ...domForm, domBaseFee: e.target.value })}
+                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {t('set.domCostPerKm')}
+                <span className="ml-1 text-xs text-gray-400">{t('set.domCostPerKmHint')}</span>
+              </label>
+              <input
+                type="number" step="0.01" min="0"
+                value={domForm.domCostPerKm}
+                onChange={(e) => setDomForm({ ...domForm, domCostPerKm: e.target.value })}
+                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domCostPerKg')}</label>
+              <input
+                type="number" step="0.01" min="0"
+                value={domForm.domCostPerKg}
+                onChange={(e) => setDomForm({ ...domForm, domCostPerKg: e.target.value })}
+                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domIncludedKm')}</label>
+              <input
+                type="number" step="0.1" min="0"
+                value={domForm.domIncludedKm}
+                onChange={(e) => setDomForm({ ...domForm, domIncludedKm: e.target.value })}
+                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domMinFee')}</label>
+              <input
+                type="number" step="0.01" min="0"
+                value={domForm.domMinFee}
+                onChange={(e) => setDomForm({ ...domForm, domMinFee: e.target.value })}
+                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domRoundTo')}</label>
+              <input
+                type="number" step="0.01" min="0"
+                value={domForm.domRoundTo}
+                onChange={(e) => setDomForm({ ...domForm, domRoundTo: e.target.value })}
+                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div className="sm:col-span-2 lg:col-span-3 flex items-center gap-3 pt-1">
+              {homeSaved && (
+                <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-sm flex items-center gap-2">
+                  <Icon icon="mdi:check-circle" className="text-lg" /> {t('set.homeSaved')}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={updateHome.isPending}
+                className="ml-auto px-5 py-2.5 bg-primary text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50"
+              >
+                {updateHome.isPending ? t('set.saving') : t('set.saveHome')}
+              </button>
+            </div>
+          </form>
+
+          <div className="mt-4 bg-gray-50 p-4 rounded-xl font-mono text-xs text-gray-700 space-y-1">
+            <p>km_cobrables = max(0, distancia − km_incluidos)</p>
+            <p>precio = base + (km_cobrables × 2 × costo_km) + (peso × costo_kg)</p>
+            <p>precio = max(precio, mínimo), luego redondeo</p>
           </div>
         </div>
       </div>

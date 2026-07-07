@@ -20,7 +20,10 @@ export async function PUT(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { baseFee, costPerKm, costPerKg, currency, cupRate, currencies } = await req.json()
+  const {
+    baseFee, costPerKm, costPerKg, currency, cupRate, currencies,
+    domBaseFee, domCostPerKm, domCostPerKg, domIncludedKm, domMinFee, domRoundTo,
+  } = await req.json()
 
   let settings = await prisma.settings.findFirst()
 
@@ -31,6 +34,12 @@ export async function PUT(req: NextRequest) {
     ...(currency !== undefined && { currency }),
     ...(cupRate !== undefined && { cupRate, cupRateUpdatedAt: new Date() }),
     ...(currencies !== undefined && { currencies }),
+    ...(domBaseFee !== undefined && { domBaseFee }),
+    ...(domCostPerKm !== undefined && { domCostPerKm }),
+    ...(domCostPerKg !== undefined && { domCostPerKg }),
+    ...(domIncludedKm !== undefined && { domIncludedKm }),
+    ...(domMinFee !== undefined && { domMinFee }),
+    ...(domRoundTo !== undefined && { domRoundTo }),
   }
 
   if (settings) {

@@ -38,17 +38,21 @@ model Product {
 }
 
 model Branch {
-  id        String   @id @default(cuid())
-  name      String
-  address   String?
-  lat       Float
-  lng       Float
-  areaKm2   Float    @default(1)
-  creatorId String
-  creator   User     @relation("BranchCreator", fields: [creatorId], references: [id])
-  members   User[]   @relation("UserBranch")
-  origins   SavedOrigin[]
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  name       String
+  address    String?
+  lat        Float
+  lng        Float
+  areaKm2    Float    @default(1)
+  // Id de la sucursal equivalente en la app PEDIDO. Permite que PEDIDO cotice
+  // un domicilio mandando solo su id de sucursal y delivery resuelve las coords.
+  externalId String?  @unique
+  creatorId  String
+  creator    User     @relation("BranchCreator", fields: [creatorId], references: [id])
+  members    User[]   @relation("UserBranch")
+  origins    SavedOrigin[]
+  orders     Order[]
+  createdAt  DateTime @default(now())
 }
 
 model SavedOrigin {
@@ -103,13 +107,32 @@ model Order {
   user            User      @relation(fields: [userId], references: [id])
   price           Float?
   segmentKm       Float?
+  // Precio del envío a domicilio INDIVIDUAL (viaje dedicado sucursal → cliente).
+  // Fuente de verdad para lo que se le cobra al cliente y lo que registra la
+  // contabilidad en PEDIDO. Independiente de `price` (precio de reparto de ruta);
+  // el flujo de rutas no lo sobrescribe.
+  deliveryPrice      Float?
+  deliveryDistanceKm Float?
+  // Sucursal de origen desde la que se calculó el domicilio.
+  branchId        String?
+  branch          Branch?   @relation(fields: [branchId], references: [id])
+  // Procedencia: "pedido" si entró desde la app PEDIDO, null si es manual.
+  source          String?
+  // Id/folio del pedido en PEDIDO. Usado para idempotencia (re-cotizar no duplica).
+  externalId      String?
   // Itemized breakdown of what to deliver to this client: [{ description, quantity }]
   items           Json      @default("[]")
+  // Teléfono del cliente y payload COMPLETO tal como llega de PEDIDO (cliente + pedido),
+  // para no perder ningún dato (municipio, tipo, encargado, folio, estado, etc.).
+  customerPhone   String?
+  meta            Json?
   vehicleAssignments OrderVehicle[]
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   stopOrder       Int?
   deliveredAt     DateTime?
+
+  @@index([source, externalId])
 }
 
 model OrderVehicle {
@@ -151,6 +174,14 @@ model Settings {
   baseFee   Float  @default(5.0)
   costPerKm Float  @default(1.5)
   costPerKg Float  @default(0.5)
+  // Parámetros del envío a domicilio INDIVIDUAL (separados de los de ruta).
+  // Default 0 → la fórmula se reduce a base + dist + peso hasta que se configuren.
+  domBaseFee    Float @default(0)
+  domCostPerKm  Float @default(0)
+  domCostPerKg  Float @default(0)
+  domIncludedKm Float @default(0)
+  domMinFee     Float @default(0)
+  domRoundTo    Float @default(0)
   currency  String @default("USD")
   cupRate   Float  @default(320.0)
   cupRateUpdatedAt DateTime @default(now())
