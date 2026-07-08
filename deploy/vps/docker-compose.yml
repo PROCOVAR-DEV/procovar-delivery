@@ -1,0 +1,207 @@
+# Bundle de despliegue de PRODUCCION (VPS) del sistema de 3 apps:
+#   - PEDIDO   (api Express+Prisma + front Vite/nginx)
+#   - delivery (Next standalone + worker de cola sync-queue.mjs)
+#   - analitics (backend FastAPI + front Vite/nginx)
+#
+# Reverse proxy: Caddy (TLS automatico) delante de todos los fronts/apps.
+# Persistencia: Postgres (2 bases) y Redis (reservado para el futuro BullMQ).
+#
+# Uso:
+#   1) cp .env.example .env  y rellenar los secretos.
+#   2) docker compose build
+#   3) docker compose up -d
+#
+# Las variables ${VAR} se resuelven desde el archivo .env de compose.
+
+services:
+  # ---------------------------------------------------------------------------
+  # Postgres: aloja las dos bases (procovar_pedido y procovar_delivery).
+  # El script de ./initdb solo corre en la PRIMERA inicializacion del volumen.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Base de arranque; las bases de las apps las crea ./initdb/01-databases.sql
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # Redis: INCLUIDO para el futuro worker BullMQ (documentado). El codigo ACTUAL
+  # NO lo requiere; la cola de delivery hoy es DB-backed (tabla SyncJob).
+  # Se deja listo para no tener que tocar el compose cuando llegue BullMQ.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # PEDIDO - API (Express + Prisma7). EXPOSE 8400.
+  # entrypoint: prisma db push (+ seed si RUN_SEED=true). En prod RUN_SEED=false.
+  # ---------------------------------------------------------------------------
+  pedido-api:
+    build: ./PEDIDO-pg/api
+    restart: unless-stopped
+    environment:
+      DATABASE_PROVIDER: postgresql
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/procovar_pedido
+      PORT: "8400"
+      SERVICE_API_KEY: ${SERVICE_API_KEY}
+      # Firma/verifica los JWT de login. DEBE ser estable (si cambia, se invalidan
+      # todas las sesiones). SECRETO.
+      JWT_SECRET: ${JWT_SECRET}
+      # No re-sembrar en produccion (evita pisar datos reales).
+      RUN_SEED: "false"
+      # Reservado para BullMQ; el codigo actual no lo usa.
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------------
+  # PEDIDO - Front (Vite -> nginx, listen 5000).
+  # VITE_API_BASE_URL=/api  =>  el front llama /api/... y nginx lo proxea a
+  # pedido-api:8400 (location /api/ agregado a su nginx.conf).
+  # ---------------------------------------------------------------------------
+  pedido-front:
+    build:
+      context: ./PEDIDO-pg/front
+      args:
+        VITE_API_BASE_URL: /api
+    restart: unless-stopped
+    depends_on:
+      - pedido-api
+
+  # ---------------------------------------------------------------------------
+  # DELIVERY - Web (Next standalone). EXPOSE 3000.
+  # Requiere BUILD_STANDALONE=1 para emitir output:standalone.
+  # CMD: prisma migrate deploy && node server.js
+  # ---------------------------------------------------------------------------
+  delivery:
+    build:
+      context: ./procovar-delivery
+      args:
+        BUILD_STANDALONE: "1"
+    image: procovar-delivery:local
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/procovar_delivery
+      SERVICE_API_KEY: ${SERVICE_API_KEY}
+      # delivery LANZA error si falta JWT_SECRET (su login lo exige). SECRETO.
+      JWT_SECRET: ${JWT_SECRET}
+      PEDIDO_API_URL: http://pedido-api:8400
+      SUCURSAL_CODIGO: ""
+      WAREHOUSE_API_URL: ${WAREHOUSE_API_URL}
+      WAREHOUSE_API_TOKEN: ${WAREHOUSE_API_TOKEN}
+      PORT: "3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pedido-api:
+        condition: service_started
+
+  # ---------------------------------------------------------------------------
+  # DELIVERY - Worker de la cola (sync-queue.mjs). Imagen propia Dockerfile.worker.
+  # Reutiliza la imagen ya construida por 'delivery' NO es posible (deps distintas),
+  # por eso build separado. Mismo env que delivery + DELIVERY_URL para cotizar.
+  # ---------------------------------------------------------------------------
+  delivery-sync:
+    build:
+      context: ./procovar-delivery
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/procovar_delivery
+      SERVICE_API_KEY: ${SERVICE_API_KEY}
+      PEDIDO_API_URL: http://pedido-api:8400
+      SUCURSAL_CODIGO: ""
+      WAREHOUSE_API_URL: ${WAREHOUSE_API_URL}
+      WAREHOUSE_API_TOKEN: ${WAREHOUSE_API_TOKEN}
+      PORT: "3000"
+      DELIVERY_URL: http://delivery:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      delivery:
+        condition: service_started
+
+  # ---------------------------------------------------------------------------
+  # ANALITICS - Backend (FastAPI, uvicorn main:app en 8000).
+  # El front de analitics proxea /api/ -> http://backend:8000, por eso este
+  # servicio expone el alias de red 'backend'.
+  # Lee la base de PEDIDO (procovar_pedido) para su analitica.
+  # ---------------------------------------------------------------------------
+  analitics-api:
+    build: ./sucursal-analitics/app/backend
+    container_name: backend
+    restart: unless-stopped
+    networks:
+      default:
+        aliases:
+          - backend
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/procovar_pedido
+      PEDIDO_API_URL: http://pedido-api:8400
+      SERVICE_API_KEY: ${SERVICE_API_KEY}
+      # Reservado para BullMQ; el codigo actual no lo usa.
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pedido-api:
+        condition: service_started
+
+  # ---------------------------------------------------------------------------
+  # ANALITICS - Front (Vite -> nginx, listen 80). Proxea /api/ a 'backend'.
+  # ---------------------------------------------------------------------------
+  analitics-front:
+    build: ./sucursal-analitics/app/frontend
+    restart: unless-stopped
+    depends_on:
+      - analitics-api
+
+  # ---------------------------------------------------------------------------
+  # Caddy: reverse proxy con TLS automatico. Enruta por dominio/subdominio.
+  # ---------------------------------------------------------------------------
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - pedido-front
+      - delivery
+      - analitics-front
+
+volumes:
+  pgdata:
+  redisdata:
+  caddydata:
+  caddyconfig:
+
+networks:
+  default:

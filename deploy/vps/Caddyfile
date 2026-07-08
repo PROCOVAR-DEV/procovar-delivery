@@ -1,0 +1,39 @@
+# Caddyfile - reverse proxy de PRODUCCION con TLS automatico.
+#
+# {$PUBLIC_DOMAIN} se toma del entorno del contenedor caddy (ver docker-compose).
+# Caddy obtiene y renueva certificados Let's Encrypt automaticamente siempre que
+# el DNS del dominio y sus subdominios apunte a este VPS.
+#
+# Routing:
+#   - Raiz            {$PUBLIC_DOMAIN}            -> pedido-front:5000
+#   - Delivery        delivery.{$PUBLIC_DOMAIN}  -> delivery:3000
+#   - Analitics       analitics.{$PUBLIC_DOMAIN} -> analitics-front:80
+#
+# SSE: la cola de delivery expone un stream (/api/sync/stream). Para que los
+# eventos lleguen en vivo se desactiva el buffering con flush_interval -1.
+
+# ---- App principal: PEDIDO (front) -----------------------------------------
+{$PUBLIC_DOMAIN} {
+	encode gzip
+	# flush_interval -1: pasa el SSE de la lista de pedidos en vivo (/orders/stream)
+	# sin buffering a traves de Caddy.
+	reverse_proxy pedido-front:5000 {
+		flush_interval -1
+	}
+}
+
+# ---- Delivery (Next standalone, incluye el SSE de la cola) ------------------
+delivery.{$PUBLIC_DOMAIN} {
+	encode gzip
+
+	# Streaming SSE sin buffering (eventos en tiempo real).
+	reverse_proxy delivery:3000 {
+		flush_interval -1
+	}
+}
+
+# ---- Analitics (front; su nginx proxea /api/ al backend) -------------------
+analitics.{$PUBLIC_DOMAIN} {
+	encode gzip
+	reverse_proxy analitics-front:80
+}
