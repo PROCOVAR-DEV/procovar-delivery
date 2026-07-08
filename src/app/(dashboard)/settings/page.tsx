@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Navbar from '@/components/Navbar'
-import PricingSummaryCard from '@/components/PricingSummaryCard'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
@@ -14,11 +13,6 @@ export default function SettingsPage() {
   const { token } = useAppStore()
   const t = useT()
   const queryClient = useQueryClient()
-  const [form, setForm] = useState({
-    baseFee: '5.0',
-    costPerKm: '1.5',
-    costPerKg: '0.5',
-  })
   const [domForm, setDomForm] = useState({
     domBaseFee: '0',
     domCostPerKm: '0',
@@ -28,7 +22,6 @@ export default function SettingsPage() {
     domRoundTo: '0',
   })
   const [currencies, setCurrencies] = useState<CurrencyDef[]>([])
-  const [saved, setSaved] = useState(false)
   const [curSaved, setCurSaved] = useState(false)
   const [homeSaved, setHomeSaved] = useState(false)
   // Initialize local form state from the server only ONCE. Re-syncing on every
@@ -47,11 +40,6 @@ export default function SettingsPage() {
   useEffect(() => {
     if (settings && !inited.current) {
       inited.current = true
-      setForm({
-        baseFee: settings.baseFee.toString(),
-        costPerKm: settings.costPerKm.toString(),
-        costPerKg: settings.costPerKg.toString(),
-      })
       setDomForm({
         domBaseFee: (settings.domBaseFee ?? 0).toString(),
         domCostPerKm: (settings.domCostPerKm ?? 0).toString(),
@@ -70,18 +58,6 @@ export default function SettingsPage() {
     }
   }, [settings])
 
-  const updateSettings = useMutation({
-    mutationFn: async (data: unknown) => {
-      const res = await axios.put('/api/settings', data, { headers: { Authorization: `Bearer ${token}` } })
-      return res.data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 3000)
-    }
-  })
-
   const updateCurrencies = useMutation({
     mutationFn: async (payload: unknown) => {
       const res = await axios.put('/api/settings', payload, { headers: { Authorization: `Bearer ${token}` } })
@@ -94,8 +70,6 @@ export default function SettingsPage() {
     }
   })
 
-  // Always persist pricing + currencies together so editing one and saving the
-  // other doesn't silently drop the change.
   const cleanList = (list: CurrencyDef[]) =>
     list
       .map((c) => ({ code: c.code.trim().toUpperCase(), rate: Number(c.rate) }))
@@ -107,18 +81,7 @@ export default function SettingsPage() {
   const deleteCurrencyRow = (i: number) => {
     const next = currencies.filter((_, idx) => idx !== i)
     setCurrencies(next)
-    updateCurrencies.mutate({ ...pricingPayload(), currencies: cleanList(next) })
-  }
-
-  const pricingPayload = () => ({
-    baseFee: parseFloat(form.baseFee),
-    costPerKm: parseFloat(form.costPerKm),
-    costPerKg: parseFloat(form.costPerKg),
-  })
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    updateSettings.mutate({ ...pricingPayload(), currencies: cleanCurrencies() })
+    updateCurrencies.mutate({ currencies: cleanList(next) })
   }
 
   const updateHome = useMutation({
@@ -148,15 +111,8 @@ export default function SettingsPage() {
   const saveCurrencies = () => {
     const clean = cleanCurrencies()
     setCurrencies(clean)
-    updateCurrencies.mutate({ ...pricingPayload(), currencies: clean })
+    updateCurrencies.mutate({ currencies: clean })
   }
-
-  const baseFee = parseFloat(form.baseFee) || 0
-  const costPerKm = parseFloat(form.costPerKm) || 0
-  const costPerKg = parseFloat(form.costPerKg) || 0
-  const exampleKm = 10
-  const exampleKg = 5
-  const exampleUSD = baseFee + exampleKm * 2 * costPerKm + exampleKg * costPerKg
 
   return (
     <div className="flex flex-col">
@@ -245,105 +201,8 @@ export default function SettingsPage() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Pricing config */}
-          <div className="bg-white rounded-2xl shadow-md p-6">
-            <h3 className="font-bold text-gray-800 mb-6 flex items-center gap-2">
-              <Icon icon="mdi:cog-outline" className="text-xl text-primary" />
-              {t('set.pricingTitle')}
-            </h3>
-
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.baseFee')}</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-                  <input
-                    type="number" step="0.01" min="0"
-                    value={form.baseFee}
-                    onChange={(e) => setForm({ ...form, baseFee: e.target.value })}
-                    className="w-full pl-8 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('set.costPerKm')}
-                  <span className="ml-1 text-xs text-gray-400">{t('set.costPerKmHint')}</span>
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-                  <input
-                    type="number" step="0.01" min="0"
-                    value={form.costPerKm}
-                    onChange={(e) => setForm({ ...form, costPerKm: e.target.value })}
-                    className="w-full pl-8 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.costPerKg')}</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
-                  <input
-                    type="number" step="0.01" min="0"
-                    value={form.costPerKg}
-                    onChange={(e) => setForm({ ...form, costPerKg: e.target.value })}
-                    className="w-full pl-8 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="pt-2">
-                {saved && (
-                  <div className="bg-green-50 text-green-600 px-4 py-3 rounded-xl text-sm mb-3 flex items-center gap-2">
-                    <Icon icon="mdi:check-circle" className="text-lg" /> {t('set.configSaved')}
-                  </div>
-                )}
-                <button
-                  type="submit"
-                  disabled={updateSettings.isPending}
-                  className="w-full bg-primary text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {updateSettings.isPending ? t('set.saving') : t('set.saveConfig')}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          <div className="space-y-6">
-            <PricingSummaryCard
-              baseFee={baseFee}
-              costPerKm={costPerKm}
-              costPerKg={costPerKg}
-              distanceKm={exampleKm}
-              weightKg={exampleKg}
-            />
-
-            <div className="bg-white rounded-2xl shadow-md p-6">
-              <h3 className="font-bold text-gray-800 mb-4 flex items-center gap-2">
-                <Icon icon="mdi:function-variant" className="text-xl text-primary" />
-                {t('set.formulaTitle')}
-              </h3>
-              <div className="bg-gray-50 p-4 rounded-xl font-mono text-sm space-y-1">
-                <p className="text-gray-700">precio = tarifa_base</p>
-                <p className="text-gray-700 pl-4">+ (dist_km_desde_origen <span className="font-bold text-blue-600">× 2</span> × costo_km)</p>
-                <p className="text-gray-700 pl-4">+ (peso_kg × costo_kg)</p>
-              </div>
-              <div className="mt-3 bg-blue-50 rounded-xl p-3 text-xs text-blue-700 space-y-1">
-                <p className="font-medium">{t('set.example', { km: exampleKm, kg: exampleKg })}</p>
-                <p className="font-mono">
-                  {baseFee.toFixed(2)} + ({exampleKm}×2×{costPerKm.toFixed(2)}) + ({exampleKg}×{costPerKg.toFixed(2)}) = <span className="font-bold">${exampleUSD.toFixed(2)} USD</span>
-                </p>
-              </div>
-              <p className="text-xs text-gray-500 mt-3">{t('set.formulaNote')}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Envío a domicilio individual — fórmula separada de la de ruta */}
+        {/* Envío a domicilio individual — ÚNICA fórmula de precio del sistema.
+            El generador de rutas no tiene fórmula propia: solo agrupa + capacidad. */}
         <div className="bg-white rounded-2xl shadow-md p-6 border-l-4 border-primary">
           <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
             <Icon icon="mdi:moped" className="text-xl text-primary" />

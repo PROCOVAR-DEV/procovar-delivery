@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
 import {
   greedyRouteOptimization,
-  computeRoutePricing,
+  calculateRouteSegments,
+  haversineDistance,
 } from '@/lib/pricing'
 
 export const dynamic = 'force-dynamic'
@@ -33,6 +34,9 @@ interface StopInput {
   lng: number
   operationNumber?: string | null
   items?: OrderItem[]
+  // Costo de domicilio del pedido (ya calculado por PEDIDO). El generador de rutas NO
+  // lo calcula: solo lo lleva para sumarlo en el total de la ruta.
+  price?: number | null
 }
 
 async function generateRouteCode(): Promise<string> {
@@ -125,18 +129,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Load global pricing settings
-  let settings = await prisma.settings.findFirst()
-  if (!settings) {
-    settings = await prisma.settings.create({
-      data: { baseFee: 5.0, costPerKm: 1.5, costPerKg: 0.5 }
-    })
-  }
-  const config = {
-    baseFee: settings.baseFee,
-    costPerKm: settings.costPerKm,
-    costPerKg: settings.costPerKg,
-  }
+  // El generador de rutas NO calcula precio: solo agrupa pedidos y valida capacidad
+  // por peso. El costo de cada pedido ya viene calculado (domicilio) y el total de la
+  // ruta es la suma de esos costos.
 
   // Validate vehicle capacity against total stop weight
   const totalStopWeight = stops.reduce((sum, s) => sum + weightFromItems(s.items, s.weight), 0)
@@ -180,6 +175,8 @@ export async function POST(req: NextRequest) {
           lat: s.lat,
           lng: s.lng,
           weight: weightFromItems(s.items, s.weight),
+          // Costo de domicilio ya calculado (viene del pedido). No se recalcula aquí.
+          price: Number(s.price) || 0,
           items: (Array.isArray(s.items) ? s.items : []) as unknown as Prisma.InputJsonValue,
           tripLeg: 'outbound',
           routeId: route.id,
@@ -200,22 +197,30 @@ export async function POST(req: NextRequest) {
     return { id: o.id, lat: o.endLat!, lng: o.endLng! }
   })
 
-  // Segment-based fare: equal split of total distance cost + cumulative inter-stop legs.
-  const { totalDistance, cumKm, prices } = computeRoutePricing(origin, orderedStops, config.costPerKm)
+  // Distancia REAL del recorrido del camión (depósito→s1→…→sN→depósito), solo informativa.
+  const segs = calculateRouteSegments(origin, orderedStops)
+  let totalDistance = segs.reduce((a, b) => a + b, 0)
+  if (orderedStops.length > 0) {
+    const last = orderedStops[orderedStops.length - 1]
+    totalDistance += haversineDistance(last.lat, last.lng, origin.lat, origin.lng)
+  }
 
+  // Total de la ruta = SUMA de los costos de domicilio de sus pedidos (ya calculados).
+  // El peso total valida la capacidad del camión. No se calcula ningún precio aquí.
   let totalWeight = 0
   let totalPrice = 0
 
   for (let i = 0; i < optimizedIds.length; i++) {
     const orderId = optimizedIds[i]
     const order = ordersMap[orderId]
-    const price = prices[i] ?? 0
+    const distKm = haversineDistance(origin.lat, origin.lng, order.endLat!, order.endLng!)
     totalWeight += order.weight
-    totalPrice += price
+    totalPrice += order.price || 0
 
+    // Solo el orden de visita y la distancia (informativa); el precio no se toca.
     await prisma.order.update({
       where: { id: orderId },
-      data: { stopOrder: i + 1, price, segmentKm: cumKm[i] ?? 0 },
+      data: { stopOrder: i + 1, segmentKm: distKm },
     })
   }
 

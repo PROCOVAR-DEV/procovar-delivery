@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
 import {
   greedyRouteOptimization,
-  computeRoutePricing,
+  calculateRouteSegments,
+  haversineDistance,
 } from '@/lib/pricing'
 
 export const dynamic = 'force-dynamic'
@@ -27,6 +28,7 @@ interface StopInput {
   lng: number
   operationNumber?: string | null
   items?: OrderItem[]
+  price?: number | null // costo de domicilio ya calculado (viene del pedido)
 }
 
 function weightFromItems(items: OrderItem[] | undefined, fallback: number): number {
@@ -97,11 +99,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
-    let settings = await prisma.settings.findFirst()
-    if (!settings) {
-      settings = await prisma.settings.create({ data: { baseFee: 5.0, costPerKm: 1.5, costPerKg: 0.5 } })
-    }
-    const costPerKm = settings.costPerKm
     const origin = { lat: route.originLat ?? 0, lng: route.originLng ?? 0 }
 
     // Capacity validation (existing + new)
@@ -130,6 +127,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             lat: s.lat,
             lng: s.lng,
             weight: weightFromItems(s.items, s.weight),
+            price: Number(s.price) || 0, // costo de domicilio del pedido (no se recalcula)
             items: (Array.isArray(s.items) ? s.items : []) as unknown as Prisma.InputJsonValue,
             tripLeg: 'outbound',
             routeId: id,
@@ -151,7 +149,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return { id: o.id, lat: (o.endLat ?? o.lat)!, lng: (o.endLng ?? o.lng)! }
     })
 
-    const { totalDistance, cumKm, prices } = computeRoutePricing(origin, orderedStops, costPerKm)
+    // Distancia real del recorrido (informativa). El precio NO se recalcula: el total
+    // de la ruta es la suma de los costos de domicilio de sus pedidos.
+    const segs = calculateRouteSegments(origin, orderedStops)
+    let totalDistance = segs.reduce((a, b) => a + b, 0)
+    if (orderedStops.length > 0) {
+      const last = orderedStops[orderedStops.length - 1]
+      totalDistance += haversineDistance(last.lat, last.lng, origin.lat, origin.lng)
+    }
 
     let totalWeight = 0
     let totalPrice = 0
@@ -159,13 +164,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     for (let i = 0; i < optimizedIds.length; i++) {
       const oid = optimizedIds[i]
       const order = ordersMap[oid]
-      const price = prices[i] ?? 0
+      const distKm = haversineDistance(origin.lat, origin.lng, (order.endLat ?? order.lat)!, (order.endLng ?? order.lng)!)
       totalWeight += order.weight
-      totalPrice += price
+      totalPrice += order.price || 0
 
       await prisma.order.update({
         where: { id: oid },
-        data: { stopOrder: i + 1, tripLeg: 'outbound', price, segmentKm: cumKm[i] ?? 0 }
+        data: { stopOrder: i + 1, tripLeg: 'outbound', segmentKm: distKm }
       })
     }
 
