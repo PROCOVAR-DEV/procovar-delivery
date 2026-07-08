@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Navbar from '@/components/Navbar'
+import Pagination, { usePagedList } from '@/components/Pagination'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
@@ -64,6 +65,7 @@ export default function VehiclesPage() {
   const [showModal, setShowModal] = useState(false)
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null)
   const [form, setForm] = useState<VehicleFormData>(defaultForm)
+  const [search, setSearch] = useState('')
 
   const { data: vehicles = [], isLoading } = useQuery({
     queryKey: ['vehicles'],
@@ -165,20 +167,41 @@ export default function VehiclesPage() {
     setShowModal(true)
   }
 
+  const q = search.trim().toLowerCase()
+  const filtered = (vehicles as Vehicle[]).filter((v) =>
+    !q
+    || v.name.toLowerCase().includes(q)
+    || (v.plate || '').toLowerCase().includes(q)
+  )
+
+  const paged = usePagedList(filtered, 25)
+
   return (
     <div className="flex flex-col">
       <Navbar title={t('veh.title')} />
       <div className="p-6">
 
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
           <p className="text-gray-500 text-sm">{t('veh.manageHint')}</p>
-          <button
-            onClick={openCreate}
-            className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700 transition-colors flex items-center gap-2"
-          >
-            <Icon icon="mdi:plus" className="text-lg" />
-            {t('veh.add')}
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('common.search')}
+                className="pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <button
+              onClick={openCreate}
+              className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700 transition-colors flex items-center gap-2"
+            >
+              <Icon icon="mdi:plus" className="text-lg" />
+              {t('veh.add')}
+            </button>
+          </div>
         </div>
 
         {isLoading ? (
@@ -199,7 +222,7 @@ export default function VehiclesPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-            {(vehicles as Vehicle[]).map((vehicle) => (
+            {paged.pageItems.map((vehicle) => (
               <div key={vehicle.id} className="bg-white rounded-2xl shadow-md p-5 border border-gray-100 hover:shadow-lg transition-shadow">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -282,6 +305,21 @@ export default function VehiclesPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {!isLoading && filtered.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-md mt-5 overflow-hidden">
+            <Pagination
+              page={paged.page}
+              totalPages={paged.totalPages}
+              total={paged.total}
+              from={paged.from}
+              to={paged.to}
+              pageSize={paged.pageSize}
+              onPage={paged.setPage}
+              onPageSize={paged.setPageSize}
+            />
           </div>
         )}
       </div>

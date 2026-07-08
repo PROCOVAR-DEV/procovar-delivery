@@ -4,6 +4,7 @@ import { useState } from 'react'
 import axios from 'axios'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Navbar from '@/components/Navbar'
+import Pagination, { usePagedList } from '@/components/Pagination'
 import LocationInput, { LocationValue } from '@/components/LocationInput'
 import { useAppStore } from '@/store/useAppStore'
 import { useT } from '@/lib/i18n'
@@ -34,6 +35,7 @@ export default function BranchesPage() {
   const t = useT()
   const queryClient = useQueryClient()
 
+  const [search, setSearch] = useState('')
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<Branch | null>(null)
   const [name, setName] = useState('')
@@ -129,6 +131,15 @@ export default function BranchesPage() {
 
   const canSave = name.trim() !== '' && loc.lat != null && loc.lng != null
 
+  const q = search.trim().toLowerCase()
+  const filtered = branches.filter((b) =>
+    !q
+    || b.name.toLowerCase().includes(q)
+    || (b.address || '').toLowerCase().includes(q)
+  )
+
+  const paged = usePagedList(filtered, 25)
+
   if (user?.role !== 'admin') {
     return (
       <div className="flex flex-col">
@@ -144,20 +155,32 @@ export default function BranchesPage() {
     <div className="flex flex-col">
       <Navbar title={t('br.title')} />
       <div className="p-6 space-y-4">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-wrap justify-between items-center gap-3">
           <p className="text-sm text-gray-500">{t('br.subtitle')}</p>
-          <button onClick={openCreate} className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700">
-            {t('br.new')}
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('common.search')}
+                className="pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <button onClick={openCreate} className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700">
+              {t('br.new')}
+            </button>
+          </div>
         </div>
 
         {isLoading ? (
           <div className="bg-white rounded-2xl shadow-md p-12 text-center text-gray-500">{t('br.loading')}</div>
-        ) : branches.length === 0 ? (
+        ) : filtered.length === 0 ? (
           <div className="bg-white rounded-2xl shadow-md p-12 text-center text-gray-500">{t('br.empty')}</div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {branches.map((b) => (
+            {paged.pageItems.map((b) => (
               <div key={b.id} className="bg-white rounded-2xl shadow-md p-4">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
@@ -193,6 +216,20 @@ export default function BranchesPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+        {!isLoading && filtered.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-md overflow-hidden">
+            <Pagination
+              page={paged.page}
+              totalPages={paged.totalPages}
+              total={paged.total}
+              from={paged.from}
+              to={paged.to}
+              pageSize={paged.pageSize}
+              onPage={paged.setPage}
+              onPageSize={paged.setPageSize}
+            />
           </div>
         )}
       </div>

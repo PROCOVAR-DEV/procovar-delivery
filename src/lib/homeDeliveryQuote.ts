@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client'
 import { haversineDistance, calculateHomeDeliveryPrice, HomeDeliveryQuote } from './pricing'
+import type { WeightCatalog } from './productMatch'
 
 export interface QuoteItem {
   description?: string
@@ -8,6 +9,7 @@ export interface QuoteItem {
   code?: string
   weight?: number
   quantity?: number
+  packs?: number // nº de unidades de venta (blisters/cajas). El peso del warehouse es POR pack.
 }
 
 export interface OrderQuoteInput {
@@ -27,25 +29,32 @@ export interface OrderQuoteInput {
 }
 
 /**
- * Peso total a partir de items (peso × cantidad); cae al fallback si no hay.
- * Si el item no trae `weight` pero sí `sku`/`code`, lo resuelve del catálogo de
- * pesos del Data Warehouse (weightMap: SKU en mayúsculas -> kg por unidad).
+ * Peso total (kg) de un pedido a partir de sus items.
+ *  - Si el item trae `weight` explícito (cotización manual), se usa weight × cantidad.
+ *  - Si no, se resuelve el peso POR UNIDAD DE VENTA en el catálogo del Data Warehouse
+ *    (por código SKU o por nombre normalizado/fuzzy) y se multiplica por `packs` (nº de
+ *    unidades de venta). Lo que no matchea o no tiene peso cargado aporta 0 kg.
+ * Devuelve 0 si no se pudo resolver nada (peso "sin calcular" para las rutas).
  */
 export function weightFromItems(
   items: QuoteItem[] | undefined,
   fallback: number,
-  weightMap?: Map<string, number>,
+  catalog?: WeightCatalog,
 ): number {
   if (!Array.isArray(items) || items.length === 0) return fallback || 0
   let w = 0
   for (const it of items) {
-    const qty = Number(it.quantity) || 1
-    let unitW = Number(it.weight) || 0
-    if (!unitW && weightMap) {
-      const sku = (it.sku || it.code || '').toString().toUpperCase()
-      if (sku && weightMap.has(sku)) unitW = weightMap.get(sku) as number
+    const manual = Number(it.weight) || 0
+    if (manual > 0) {
+      w += manual * (Number(it.quantity) || 1)
+      continue
     }
-    w += unitW * qty
+    if (!catalog) continue
+    const hit = catalog.resolve(it.name, it.sku || it.code)
+    if (hit.weightKg > 0) {
+      const packs = Number(it.packs) || 0
+      w += hit.weightKg * packs
+    }
   }
   return w > 0 ? w : (fallback || 0)
 }
@@ -82,9 +91,9 @@ export function computeOrderQuote(
   input: OrderQuoteInput,
   branch: BranchOrigin,
   settings: DomSettings,
-  weightMap?: Map<string, number>,
+  catalog?: WeightCatalog,
 ): OrderQuoteResult {
-  const weightKg = weightFromItems(input.items, Number(input.weight) || 0, weightMap)
+  const weightKg = weightFromItems(input.items, Number(input.weight) || 0, catalog)
   const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
   const quote = calculateHomeDeliveryPrice(distanceKm, weightKg, {
     domBaseFee: settings.domBaseFee,
@@ -112,7 +121,9 @@ export function buildOrderData(
     endLng: input.lng as number,
     lat: input.lat as number,
     lng: input.lng as number,
-    weight: computed.weightKg || 1,
+    // Peso REAL para el generador de rutas (capacidad del camión). 0 = sin peso
+    // resuelto (producto sin match o SKU sin weightKg en el warehouse).
+    weight: computed.weightKg,
     items: (Array.isArray(input.items) ? input.items : []) as unknown as Prisma.InputJsonValue,
     notes: input.notes || null,
     deliveryPrice: computed.quote.price,

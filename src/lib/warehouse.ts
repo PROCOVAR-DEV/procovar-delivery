@@ -100,3 +100,13 @@ export async function fetchWeightMap(): Promise<Map<string, number>> {
   }
   return m
 }
+
+/**
+ * Catálogo de pesos con match por código SKU y por NOMBRE (normalizado + fuzzy), ya que
+ * los pedidos no traen código. Ver productMatch.ts.
+ */
+export async function fetchWeightCatalog() {
+  const { buildWeightCatalog } = await import('./productMatch')
+  const list = await warehouse.productWeights()
+  return buildWeightCatalog(list)
+}

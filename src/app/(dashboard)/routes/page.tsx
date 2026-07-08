@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import Navbar from '@/components/Navbar'
 import LocationInput, { LocationValue } from '@/components/LocationInput'
 import ProductPicker from '@/components/ProductPicker'
+import Pagination, { usePagedList } from '@/components/Pagination'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
@@ -429,6 +430,8 @@ export default function RoutesPage() {
     return matchName && matchFrom && matchTo
   })
 
+  const pagedRoutes = usePagedList(visibleRoutes, 20)
+
   const mapStops: Array<{
     id: string
     lat: number
@@ -584,7 +587,7 @@ export default function RoutesPage() {
                 {historyTab === 'active' ? t('routes.noActive') : historyTab === 'history' ? t('routes.noCompleted') : t('routes.noInProgress')}
               </div>
             ) : (
-              visibleRoutes.map((route) => (
+              pagedRoutes.pageItems.map((route) => (
                 <div
                   key={route.id}
                   className={`bg-white rounded-2xl shadow-md p-4 cursor-pointer border-2 transition-colors ${
@@ -651,6 +654,19 @@ export default function RoutesPage() {
                   </div>
                 </div>
               ))
+            )}
+            {visibleRoutes.length > 0 && (
+              <div className="bg-white rounded-2xl shadow-md">
+                <Pagination
+                  page={pagedRoutes.page}
+                  totalPages={pagedRoutes.totalPages}
+                  total={pagedRoutes.total}
+                  from={pagedRoutes.from}
+                  to={pagedRoutes.to}
+                  pageSize={pagedRoutes.pageSize}
+                  onPage={pagedRoutes.setPage}
+                />
+              </div>
             )}
             </div>
           </div>

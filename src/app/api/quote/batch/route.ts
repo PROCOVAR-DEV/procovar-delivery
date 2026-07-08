@@ -7,7 +7,8 @@ import {
   buildOrderData,
   BranchOrigin,
 } from '@/lib/homeDeliveryQuote'
-import { fetchWeightMap } from '@/lib/warehouse'
+import { fetchWeightCatalog } from '@/lib/warehouse'
+import type { WeightCatalog } from '@/lib/productMatch'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,16 +39,17 @@ export async function POST(req: NextRequest) {
   let settings = await prisma.settings.findFirst()
   if (!settings) settings = await prisma.settings.create({ data: {} })
 
-  // Pesos por SKU desde el Data Warehouse (una sola vez). Best-effort: si el
-  // warehouse/VPN no responde, se sigue sin pesos (peso 0 / lo que traiga el item).
-  let weightMap: Map<string, number> | undefined
+  // Catálogo de pesos del Data Warehouse (una sola vez). Best-effort: si el warehouse/VPN
+  // no responde, se sigue sin pesos (peso 0). Los pedidos no traen SKU, así que el match
+  // es por nombre normalizado (+ fuzzy) contra el catálogo. Ver productMatch.ts.
+  let catalog: WeightCatalog | undefined
   let weightsSource: 'warehouse' | 'none' = 'none'
   if (body.useWarehouseWeights !== false) {
     try {
-      weightMap = await fetchWeightMap()
+      catalog = await fetchWeightCatalog()
       weightsSource = 'warehouse'
     } catch {
-      weightMap = undefined
+      catalog = undefined
     }
   }
 
@@ -99,8 +101,8 @@ export async function POST(req: NextRequest) {
     }
     const branch = info.origin
 
-    // 3) Cálculo (peso resuelto por SKU si hay catálogo del warehouse).
-    const computed = computeOrderQuote(input, branch, settings, weightMap)
+    // 3) Cálculo (peso resuelto por nombre/SKU si hay catálogo del warehouse).
+    const computed = computeOrderQuote(input, branch, settings, catalog)
     quoted++
 
     const base = {

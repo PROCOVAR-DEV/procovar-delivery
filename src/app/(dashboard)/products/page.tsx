@@ -4,6 +4,7 @@ import { useState } from 'react'
 import axios from 'axios'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Navbar from '@/components/Navbar'
+import Pagination, { usePagedList } from '@/components/Pagination'
 import { useAppStore } from '@/store/useAppStore'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
@@ -82,6 +83,8 @@ export default function ProductsPage() {
   const q = search.trim().toLowerCase()
   const filtered = products.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.category || '').toLowerCase().includes(q) || (p.packaging || '').toLowerCase().includes(q))
 
+  const paged = usePagedList(filtered, 25)
+
   return (
     <div className="flex flex-col">
       <Navbar title={t('prod.title')} />
@@ -119,7 +122,7 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((p) => (
+                {paged.pageItems.map((p) => (
                   <tr key={p.id} className="border-b border-line last:border-0 hover:bg-ink/[0.015]">
                     <td className="px-4 py-3 font-medium">{p.name}</td>
                     <td className="px-4 py-3 text-right font-mono">{p.weight} kg</td>
@@ -136,6 +139,18 @@ export default function ProductsPage() {
                 ))}
               </tbody>
             </table>
+          )}
+          {!isLoading && filtered.length > 0 && (
+            <Pagination
+              page={paged.page}
+              totalPages={paged.totalPages}
+              total={paged.total}
+              from={paged.from}
+              to={paged.to}
+              pageSize={paged.pageSize}
+              onPage={paged.setPage}
+              onPageSize={paged.setPageSize}
+            />
           )}
         </div>
       </div>

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import axios from 'axios'
 import { useQuery } from '@tanstack/react-query'
 import Navbar from '@/components/Navbar'
+import Pagination, { usePagedList } from '@/components/Pagination'
 import { useAppStore } from '@/store/useAppStore'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
@@ -59,6 +60,8 @@ export default function OrdersPage() {
     || (o.endAddress || o.address || '').toLowerCase().includes(q)
   )
 
+  const paged = usePagedList(filtered, 25)
+
   const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString() : '—'
 
   return (
@@ -105,7 +108,7 @@ export default function OrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((o) => (
+                {paged.pageItems.map((o) => (
                   <tr key={o.id} className="border-b hover:bg-gray-50 align-top">
                     <td className="px-4 py-3 font-medium">{o.customerName}</td>
                     <td className="px-4 py-3">
@@ -131,6 +134,18 @@ export default function OrdersPage() {
                 ))}
               </tbody>
             </table>
+          )}
+          {!isLoading && filtered.length > 0 && (
+            <Pagination
+              page={paged.page}
+              totalPages={paged.totalPages}
+              total={paged.total}
+              from={paged.from}
+              to={paged.to}
+              pageSize={paged.pageSize}
+              onPage={paged.setPage}
+              onPageSize={paged.setPageSize}
+            />
           )}
         </div>
       </div>

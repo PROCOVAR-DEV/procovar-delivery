@@ -25,7 +25,10 @@ export async function GET(req: NextRequest) {
     }
   })
 
-  return NextResponse.json(orders)
+  // La lista muestra `price`; el costo de domicilio se guarda en `deliveryPrice`.
+  // Exponerlo como `price` para que la columna Precio no salga vacía.
+  const withPrice = orders.map((o) => ({ ...o, price: o.deliveryPrice ?? null }))
+  return NextResponse.json(withPrice)
 }
 
 export async function POST(req: NextRequest) {

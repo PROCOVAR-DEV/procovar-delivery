@@ -4,6 +4,7 @@ import { useState } from 'react'
 import axios from 'axios'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Navbar from '@/components/Navbar'
+import Pagination, { usePagedList } from '@/components/Pagination'
 import { useAppStore } from '@/store/useAppStore'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
@@ -47,6 +48,7 @@ export default function UsersPage() {
   const [editRole, setEditRole] = useState('operator')
   const [editPassword, setEditPassword] = useState('')
   const [editBranchId, setEditBranchId] = useState('')
+  const [search, setSearch] = useState('')
 
   const { data: users = [], isLoading } = useQuery({
     queryKey: ['users'],
@@ -110,6 +112,16 @@ export default function UsersPage() {
     }
   })
 
+  const q = search.trim().toLowerCase()
+  const filtered = users.filter((u) =>
+    !q
+    || u.name.toLowerCase().includes(q)
+    || u.email.toLowerCase().includes(q)
+    || u.role.toLowerCase().includes(q)
+  )
+
+  const paged = usePagedList(filtered, 25)
+
   if (user?.role !== 'admin') {
     return (
       <div className="flex flex-col">
@@ -127,14 +139,26 @@ export default function UsersPage() {
     <div className="flex flex-col">
       <Navbar title={t('usr.title')} />
       <div className="p-6 space-y-4">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-wrap justify-between items-center gap-3">
           <h3 className="text-lg font-semibold text-gray-700">{t('usr.admin')}</h3>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="bg-primary text-white px-4 py-2 rounded-xl font-medium hover:bg-blue-700"
-          >
-            {t('usr.new')}
-          </button>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('common.search')}
+                className="pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <button
+              onClick={() => setShowCreate(true)}
+              className="bg-primary text-white px-4 py-2 rounded-xl font-medium hover:bg-blue-700"
+            >
+              {t('usr.new')}
+            </button>
+          </div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-md overflow-x-auto">
@@ -153,7 +177,7 @@ export default function UsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((row) => (
+                {paged.pageItems.map((row) => (
                   <tr key={row.id} className="border-b hover:bg-gray-50">
                     <td className="px-4 py-3">{row.name}</td>
                     <td className="px-4 py-3 text-gray-600">{row.email}</td>
@@ -191,6 +215,18 @@ export default function UsersPage() {
                 ))}
               </tbody>
             </table>
+          )}
+          {!isLoading && filtered.length > 0 && (
+            <Pagination
+              page={paged.page}
+              totalPages={paged.totalPages}
+              total={paged.total}
+              from={paged.from}
+              to={paged.to}
+              pageSize={paged.pageSize}
+              onPage={paged.setPage}
+              onPageSize={paged.setPageSize}
+            />
           )}
         </div>
       </div>
