@@ -1,0 +1,25 @@
+# Worker de la COLA de delivery (sync-queue.mjs).
+#
+# La imagen standalone de Next (Dockerfile principal) NO incluye node_modules
+# completos ni el CLI de Prisma para correr un proceso aparte, por eso el worker
+# se construye con su propia imagen ligera.
+FROM node:22-alpine
+WORKDIR /app
+
+# OpenSSL: requerido por el query engine de Prisma en Alpine.
+RUN apk add --no-cache openssl
+
+ENV NODE_ENV=production
+
+# Dependencias primero (mejor cache de capas).
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Esquema + migraciones de Prisma y generacion del cliente.
+COPY prisma ./prisma
+RUN npx prisma generate
+
+# El worker propiamente dicho.
+COPY sync-queue.mjs ./sync-queue.mjs
+
+CMD ["node", "sync-queue.mjs"]
