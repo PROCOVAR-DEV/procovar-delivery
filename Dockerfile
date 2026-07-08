@@ -12,6 +12,9 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate
+# La imagen Docker SI usa el server standalone (CMD node server.js), asi que el build
+# debe emitir output:standalone. Bajo PM2 este flag va ausente y se usa `next start`.
+ENV BUILD_STANDALONE=1
 RUN npm run build
 
 # ---- Runner ----
