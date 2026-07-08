@@ -107,8 +107,12 @@ async function quoteOne(pedido) {
   if (!res.ok) throw new Error(`quote ${res.status}: ${await res.text().catch(() => '')}`);
   const j = await res.json();
   const r = (j.results || [])[0] || {};
-  return { status: r.status, price: r.price, distanceKm: r.distanceKm, weightsSource: j.weightsSource };
+  return { status: r.status, reason: r.reason, price: r.price, distanceKm: r.distanceKm, weightsSource: j.weightsSource };
 }
+
+// Skips que significan "la sucursal aún no está lista" (no es un fallo del pedido):
+// se dejan EN ESPERA para reintentar cuando se configure esa sucursal.
+const ESPERA = new Set(['sucursal-no-mapeada', 'sucursal-sin-punto-de-partida']);
 
 // Escribe el costo de vuelta en PEDIDO para un pedido.
 async function writeback(externalId, cost, distanceKm) {
@@ -123,9 +127,12 @@ async function writeback(externalId, cost, distanceKm) {
 // 2) PROCESAR la cola de a uno, con delay (suave). `byId` = snapshot del ciclo.
 async function drainQueue(byId) {
   let procesados = 0;
+  // Pedidos de sucursales aún sin configurar: se saltan SOLO en este ciclo (para no
+  // reprocesarlos en bucle) pero quedan 'pending' y se reintentan en el próximo.
+  const enEspera = [];
   for (;;) {
     const job = await prisma.syncJob.findFirst({
-      where: { status: 'pending', attempts: { lt: MAX_ATTEMPTS } },
+      where: { status: 'pending', attempts: { lt: MAX_ATTEMPTS }, id: { notIn: enEspera } },
       orderBy: { createdAt: 'asc' },
     });
     if (!job) break;
@@ -147,9 +154,17 @@ async function drainQueue(byId) {
         });
         log(`✓ ${job.folio || job.externalId} -> $${r.price} (${r.weightsSource})`);
         procesados++;
+      } else if (ESPERA.has(r.reason)) {
+        // La sucursal de este pedido aún no tiene almacén/punto de partida configurado:
+        // se deja EN ESPERA (pending, sin gastar el intento). Las DEMÁS sucursales que
+        // sí estén listas se siguen procesando en este mismo ciclo.
+        await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'pending', attempts: { decrement: 1 }, error: `esperando: ${r.reason}` } });
+        enEspera.push(job.id);
+        log(`… ${job.folio || job.externalId} en espera (${r.reason})`);
+        continue; // no dormir: pasa al siguiente pedido
       } else {
-        await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'skipped', weightsSource: r.weightsSource, processedAt: new Date(), error: r.status || 'sin cotizar' } });
-        log(`- ${job.folio || job.externalId} skipped (${r.status})`);
+        await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'skipped', weightsSource: r.weightsSource, processedAt: new Date(), error: r.reason || r.status || 'sin cotizar' } });
+        log(`- ${job.folio || job.externalId} skipped (${r.reason || r.status})`);
       }
     } catch (e) {
       const failed = job.attempts + 1 >= MAX_ATTEMPTS;
@@ -164,16 +179,13 @@ async function drainQueue(byId) {
   return procesados;
 }
 
-// ¿Está lista la configuración? El cálculo NO corre hasta que estén seteados
-// la FÓRMULA (settings.domConfigured) y el PUNTO DE PARTIDA (branch.originConfigured).
-async function checkReady() {
+// La FÓRMULA (settings.domConfigured) es GLOBAL: sin ella no se calcula nada, en
+// ninguna sucursal. El PUNTO DE PARTIDA ya NO se chequea aquí: es por-sucursal y lo
+// valida la cotización (cada pedido usa el almacén de SU sucursal; si esa sucursal no
+// tiene punto de partida, ese pedido queda en espera, sin frenar a las demás).
+async function checkFormula() {
   const settings = await prisma.settings.findFirst();
-  const formulaOk = !!settings?.domConfigured;
-  const branch = SUCURSAL_CODIGO
-    ? await prisma.branch.findFirst({ where: { externalId: SUCURSAL_CODIGO } })
-    : await prisma.branch.findFirst();
-  const originOk = !!branch?.originConfigured;
-  return { ok: formulaOk && originOk, formulaOk, originOk };
+  return !!settings?.domConfigured;
 }
 
 async function cycle() {
@@ -183,10 +195,9 @@ async function cycle() {
   const nuevos = await enqueueNew(orders);
   if (nuevos) log(`encolados ${nuevos} nuevos (de ${orders.length} pendientes)`);
 
-  // GUARD: sin fórmula o sin punto de partida, la cola ESPERA (no calcula).
-  const ready = await checkReady();
-  if (!ready.ok) {
-    log(`esperando configuración -> fórmula: ${ready.formulaOk ? 'OK' : 'FALTA'}, punto de partida: ${ready.originOk ? 'OK' : 'FALTA'}. La cola queda en espera.`);
+  // GUARD GLOBAL: sin fórmula, la cola entera espera.
+  if (!(await checkFormula())) {
+    log('esperando configuración -> falta la FÓRMULA del domicilio (Ajustes). La cola queda en espera.');
     return;
   }
 

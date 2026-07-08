@@ -51,17 +51,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Cache de sucursales-origen por externalId (evita N consultas repetidas).
-  const branchCache = new Map<string, BranchOrigin | null>()
-  async function getBranch(externalId?: string): Promise<BranchOrigin | null> {
+  // Cache del almacén-origen por externalId (evita N consultas repetidas). Guarda si
+  // existe y si tiene el PUNTO DE PARTIDA configurado (cada sucursal el suyo).
+  type BranchInfo = { origin: BranchOrigin; configured: boolean } | null
+  const branchCache = new Map<string, BranchInfo>()
+  async function getBranch(externalId?: string): Promise<BranchInfo> {
     if (!externalId) return null
-    if (branchCache.has(externalId)) return branchCache.get(externalId) as BranchOrigin | null
+    if (branchCache.has(externalId)) return branchCache.get(externalId) as BranchInfo
     const b = await prisma.branch.findUnique({ where: { externalId } })
-    const origin: BranchOrigin | null = b
-      ? { id: b.id, name: b.name, lat: b.lat, lng: b.lng, creatorId: b.creatorId }
+    const info: BranchInfo = b
+      ? {
+          origin: { id: b.id, name: b.name, lat: b.lat, lng: b.lng, creatorId: b.creatorId },
+          configured: b.originConfigured,
+        }
       : null
-    branchCache.set(externalId, origin)
-    return origin
+    branchCache.set(externalId, info)
+    return info
   }
 
   const results: Array<Record<string, unknown>> = []
@@ -79,13 +84,20 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    // 2) Sucursal de origen no mapeada en delivery → se salta.
-    const branch = await getBranch(input.sucursalExternalId)
-    if (!branch) {
+    // 2) La sucursal de origen debe existir en delivery Y tener su punto de partida
+    //    (almacén) configurado. Si no, se salta: cada sucursal se activa por separado.
+    const info = await getBranch(input.sucursalExternalId)
+    if (!info) {
       skipped++
       results.push({ ref, status: 'skipped', reason: 'sucursal-no-mapeada' })
       continue
     }
+    if (!info.configured) {
+      skipped++
+      results.push({ ref, status: 'skipped', reason: 'sucursal-sin-punto-de-partida' })
+      continue
+    }
+    const branch = info.origin
 
     // 3) Cálculo (peso resuelto por SKU si hay catálogo del warehouse).
     const computed = computeOrderQuote(input, branch, settings, weightMap)
