@@ -22,6 +22,8 @@ export async function GET(req: NextRequest) {
           vehicle: { select: { name: true, plate: true } },
         },
       },
+      // Almacén de origen (punto de partida) para dibujar el recorrido en el detalle.
+      branch: { select: { id: true, name: true, lat: true, lng: true } },
     }
   })
 

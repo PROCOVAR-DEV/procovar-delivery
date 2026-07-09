@@ -2,9 +2,12 @@
 
 import { useState, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import dynamic from 'next/dynamic'
 import axios from 'axios'
 import { useQuery } from '@tanstack/react-query'
 import Navbar from '@/components/Navbar'
+
+const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false })
 import Pagination, { usePagedList } from '@/components/Pagination'
 import { useAppStore } from '@/store/useAppStore'
 import { useCurrency } from '@/lib/useCurrency'
@@ -33,6 +36,7 @@ interface OrderRow {
   deliveryDistanceKm?: number | null
   items?: OrderItem[]
   createdAt: string
+  branch?: { id: string; name: string; lat: number; lng: number } | null
   route?: {
     id: string
     name?: string | null
@@ -244,6 +248,23 @@ export default function OrdersPage() {
                   )}
                 </div>
               </div>
+
+              {/* Recorrido: almacén (punto de partida) → cliente */}
+              {detail.branch && detail.endLat != null && detail.endLng != null && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Recorrido</p>
+                  <div className="rounded-xl overflow-hidden border">
+                    <MapComponent
+                      height="220px"
+                      stops={[
+                        { id: 'origin', lat: detail.branch.lat, lng: detail.branch.lng, label: detail.branch.name || 'Almacén', isOrigin: true },
+                        { id: detail.id, lat: detail.endLat, lng: detail.endLng, label: detail.customerName, tripLeg: 'outbound' },
+                      ]}
+                    />
+                  </div>
+                  <p className="text-[11px] text-gray-400 mt-1">Del almacén ({detail.branch.name}) al cliente.</p>
+                </div>
+              )}
 
               {/* Costo del domicilio — por qué salió ese valor */}
               <div className="bg-green-50 rounded-xl p-4">
