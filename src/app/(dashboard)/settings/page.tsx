@@ -21,7 +21,9 @@ export default function SettingsPage() {
     domMinFee: '0',
     domRoundTo: '0',
   })
-  const [currencies, setCurrencies] = useState<CurrencyDef[]>([])
+  // La tasa se edita como TEXTO (permite vaciar el campo y escribir libre); se convierte
+  // a número solo al guardar (cleanList). Si se guardara número, borrar lo dejaba en 0.
+  const [currencies, setCurrencies] = useState<Array<{ code: string; rate: number | string }>>([])
   const [curSaved, setCurSaved] = useState(false)
   const [homeSaved, setHomeSaved] = useState(false)
   // Initialize local form state from the server only ONCE. Re-syncing on every
@@ -70,10 +72,10 @@ export default function SettingsPage() {
     }
   })
 
-  const cleanList = (list: CurrencyDef[]) =>
+  const cleanList = (list: Array<{ code: string; rate: number | string }>): CurrencyDef[] =>
     list
-      .map((c) => ({ code: c.code.trim().toUpperCase(), rate: Number(c.rate) }))
-      .filter((c) => c.code && c.code !== 'USD' && c.rate > 0)
+      .map((c) => ({ code: String(c.code).trim().toUpperCase(), rate: Number(c.rate) }))
+      .filter((c) => c.code && c.code !== 'USD' && Number.isFinite(c.rate) && c.rate > 0)
 
   const cleanCurrencies = () => cleanList(currencies)
 
@@ -145,7 +147,7 @@ export default function SettingsPage() {
                   step="0.0001"
                   min="0"
                   value={c.rate}
-                  onChange={(e) => setCurrencies(currencies.map((x, idx) => idx === i ? { ...x, rate: parseFloat(e.target.value) || 0 } : x))}
+                  onChange={(e) => setCurrencies(currencies.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))}
                   placeholder="320"
                   className="px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-400 text-sm"
                 />
@@ -176,7 +178,7 @@ export default function SettingsPage() {
           <div className="flex items-center gap-3 mt-4">
             <button
               type="button"
-              onClick={() => setCurrencies([...currencies, { code: '', rate: 0 }])}
+              onClick={() => setCurrencies([...currencies, { code: '', rate: '' }])}
               className="text-sm text-blue-600 hover:underline"
             >
               {t('set.addCurrency')}
