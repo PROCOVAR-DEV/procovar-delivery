@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import axios from 'axios'
 import { useQuery } from '@tanstack/react-query'
 import Navbar from '@/components/Navbar'
@@ -48,6 +49,16 @@ export default function OrdersPage() {
   const t = useT()
   const [search, setSearch] = useState('')
   const [detail, setDetail] = useState<OrderRow | null>(null)
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
+
+  // Bloquear el scroll del fondo mientras el modal está abierto (solo el modal se usa).
+  useEffect(() => {
+    if (!detail) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [detail])
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ['orders'],
@@ -179,10 +190,11 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {/* Detalle del pedido */}
-      {detail && (
+      {/* Detalle del pedido — por portal a document.body para escapar el `transform` del
+          layout (animate-rise) que rompería `position: fixed`. */}
+      {detail && mounted && createPortal(
         <div
-          className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
           onClick={() => setDetail(null)}
         >
           <div
@@ -283,7 +295,8 @@ export default function OrdersPage() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
