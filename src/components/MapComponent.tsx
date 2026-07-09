@@ -52,12 +52,13 @@ export default function MapComponent({ stops, onStopClick, selectable = false, s
       })
 
       if (!mapInstanceRef.current && mapRef.current) {
-        // Centro por defecto: Camagüey, Cuba (no São Paulo). Se usa solo cuando no hay
-        // stops ni defaultCenter (p.ej. mapa vacío al crear una sucursal/punto).
+        // Sin sucursal/punto: se muestra CUBA entera (vista de país), no São Paulo ni una
+        // ciudad concreta. Cuando hay defaultCenter (la sucursal) se centra en ella.
         const initCenter: [number, number] = defaultCenter
           ? [defaultCenter.lat, defaultCenter.lng]
-          : [21.3809, -77.9169]
-        mapInstanceRef.current = L.map(mapRef.current, { attributionControl: false }).setView(initCenter, defaultZoom)
+          : [21.9, -79.5] // centro de Cuba
+        const initZoom = defaultCenter ? defaultZoom : 7 // 7 ≈ toda la isla
+        mapInstanceRef.current = L.map(mapRef.current, { attributionControl: false }).setView(initCenter, initZoom)
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '© OpenStreetMap contributors',
         }).addTo(mapInstanceRef.current)
