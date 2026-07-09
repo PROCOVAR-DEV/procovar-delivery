@@ -98,13 +98,10 @@ export default function SettingsPage() {
 
   const handleSubmitHome = (e: React.FormEvent) => {
     e.preventDefault()
+    // La fórmula del domicilio solo usa el costo por km. Guardarlo marca la fórmula
+    // como configurada (habilita el cálculo, junto con el punto de partida por sucursal).
     updateHome.mutate({
-      domBaseFee: parseFloat(domForm.domBaseFee) || 0,
       domCostPerKm: parseFloat(domForm.domCostPerKm) || 0,
-      domCostPerKg: parseFloat(domForm.domCostPerKg) || 0,
-      domIncludedKm: parseFloat(domForm.domIncludedKm) || 0,
-      domMinFee: parseFloat(domForm.domMinFee) || 0,
-      domRoundTo: parseFloat(domForm.domRoundTo) || 0,
     })
   }
 
@@ -210,66 +207,24 @@ export default function SettingsPage() {
           </h3>
           <p className="text-xs text-gray-500 mb-4">{t('set.homeHelp')}</p>
 
-          <form onSubmit={handleSubmitHome} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domBaseFee')}</label>
-              <input
-                type="number" step="0.01" min="0"
-                value={domForm.domBaseFee}
-                onChange={(e) => setDomForm({ ...domForm, domBaseFee: e.target.value })}
-                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+          <form onSubmit={handleSubmitHome} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('set.domCostPerKm')}
-                <span className="ml-1 text-xs text-gray-400">{t('set.domCostPerKmHint')}</span>
+                Costo por kilómetro
+                <span className="ml-1 text-xs text-gray-400">(se aplica ×2 por ida y vuelta)</span>
               </label>
-              <input
-                type="number" step="0.01" min="0"
-                value={domForm.domCostPerKm}
-                onChange={(e) => setDomForm({ ...domForm, domCostPerKm: e.target.value })}
-                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domCostPerKg')}</label>
-              <input
-                type="number" step="0.01" min="0"
-                value={domForm.domCostPerKg}
-                onChange={(e) => setDomForm({ ...domForm, domCostPerKg: e.target.value })}
-                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domIncludedKm')}</label>
-              <input
-                type="number" step="0.1" min="0"
-                value={domForm.domIncludedKm}
-                onChange={(e) => setDomForm({ ...domForm, domIncludedKm: e.target.value })}
-                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domMinFee')}</label>
-              <input
-                type="number" step="0.01" min="0"
-                value={domForm.domMinFee}
-                onChange={(e) => setDomForm({ ...domForm, domMinFee: e.target.value })}
-                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('set.domRoundTo')}</label>
-              <input
-                type="number" step="0.01" min="0"
-                value={domForm.domRoundTo}
-                onChange={(e) => setDomForm({ ...domForm, domRoundTo: e.target.value })}
-                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                <input
+                  type="number" step="0.01" min="0"
+                  value={domForm.domCostPerKm}
+                  onChange={(e) => setDomForm({ ...domForm, domCostPerKm: e.target.value })}
+                  className="w-full pl-8 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
             </div>
 
-            <div className="sm:col-span-2 lg:col-span-3 flex items-center gap-3 pt-1">
+            <div className="flex items-end gap-3">
               {homeSaved && (
                 <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-sm flex items-center gap-2">
                   <Icon icon="mdi:check-circle" className="text-lg" /> {t('set.homeSaved')}
@@ -278,7 +233,7 @@ export default function SettingsPage() {
               <button
                 type="submit"
                 disabled={updateHome.isPending}
-                className="ml-auto px-5 py-2.5 bg-primary text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50"
+                className="ml-auto px-5 py-3 bg-primary text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50"
               >
                 {updateHome.isPending ? t('set.saving') : t('set.saveHome')}
               </button>
@@ -286,9 +241,9 @@ export default function SettingsPage() {
           </form>
 
           <div className="mt-4 bg-gray-50 p-4 rounded-xl font-mono text-xs text-gray-700 space-y-1">
-            <p>km_cobrables = max(0, distancia − km_incluidos)</p>
-            <p>precio = base + (km_cobrables × 2 × costo_km) + (peso × costo_kg)</p>
-            <p>precio = max(precio, mínimo), luego redondeo</p>
+            <p>peso_carga = suma del peso de TODOS los pedidos del envío (por sucursal)</p>
+            <p>precio = 2 × distancia_almacén→cliente × peso_pedido × costo_km / peso_carga</p>
+            <p className="text-gray-500">// cada pedido paga su fracción de peso del costo del viaje (ida y vuelta)</p>
           </div>
         </div>
       </div>

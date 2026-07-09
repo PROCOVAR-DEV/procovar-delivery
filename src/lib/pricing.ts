@@ -73,6 +73,28 @@ export function calculateHomeDeliveryPrice(
   }
 }
 
+/**
+ * Precio de domicilio de UN pedido como su FRACCIÓN DE PESO del costo de transporte.
+ *
+ *   precio = 2 · distancia · peso_pedido · costo_km / peso_carga
+ *
+ * - distancia   = km del almacén (punto de partida) al cliente de ese pedido.
+ * - 2·          = ida y vuelta.
+ * - peso_pedido = peso total de los productos del pedido (kg).
+ * - costo_km    = tarifa por km (domCostPerKm).
+ * - peso_carga  = suma del peso de TODOS los pedidos del envío (kg) → cada pedido paga
+ *                 su parte proporcional al peso. Si peso_carga es 0, el precio es 0.
+ */
+export function calculateShareDeliveryPrice(
+  distanceKm: number,
+  orderWeightKg: number,
+  costPerKm: number,
+  pesoCargaKg: number,
+): number {
+  if (!pesoCargaKg || pesoCargaKg <= 0) return 0
+  return (2 * distanceKm * orderWeightKg * (costPerKm || 0)) / pesoCargaKg
+}
+
 export function haversineDistance(
   lat1: number, lon1: number,
   lat2: number, lon2: number

@@ -83,10 +83,14 @@ async function enqueueNew(orders) {
   return nuevos;
 }
 
-// Cotiza UN pedido en delivery y devuelve { price, distanceKm, weightsSource, status }.
-async function quoteOne(pedido) {
+// Cotiza TODO el lote en UNA sola llamada. Es imprescindible: el precio de cada pedido
+// es su FRACCIÓN DE PESO del costo de transporte, así que depende del PESO DE CARGA total
+// del envío (suma del peso de todos los pedidos). Si se cotizara de a uno, la carga sería
+// el peso de ese pedido y el precio saldría mal. Devuelve un Map externalId(=id) -> result.
+async function quoteBatch(pedidos) {
+  if (!pedidos.length) return { byRef: new Map(), weightsSource: 'none' };
   const body = {
-    orders: [{
+    orders: pedidos.map((pedido) => ({
       sucursalExternalId: pedido.sucursalCodigo,
       customerName: pedido.cliente?.nombre || pedido.encargado || 'Cliente',
       address: pedido.direccion || pedido.cliente?.direccion || null,
@@ -99,15 +103,16 @@ async function quoteOne(pedido) {
       operationNumber: pedido.folio,
       externalId: pedido.id,
       meta: pedido,
-    }],
+    })),
   };
   const res = await fetch(`${DELIVERY_URL}/api/quote/batch`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': KEY }, body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`quote ${res.status}: ${await res.text().catch(() => '')}`);
   const j = await res.json();
-  const r = (j.results || [])[0] || {};
-  return { status: r.status, reason: r.reason, price: r.price, distanceKm: r.distanceKm, weightsSource: j.weightsSource };
+  const byRef = new Map();
+  for (const r of (j.results || [])) if (r.ref != null) byRef.set(r.ref, r);
+  return { byRef, weightsSource: j.weightsSource };
 }
 
 // Skips que significan "la sucursal aún no está lista" (no es un fallo del pedido):
@@ -124,8 +129,9 @@ async function writeback(externalId, cost, distanceKm) {
   return res.json();
 }
 
-// 2) PROCESAR la cola de a uno, con delay (suave). `byId` = snapshot del ciclo.
-async function drainQueue(byId) {
+// 2) ESCRIBIR de vuelta los costos, de a uno con delay (suave) para el SSE. El precio
+// ya viene cotizado en el LOTE (`resultsByRef`), aquí solo se escribe en PEDIDO.
+async function drainQueue(byId, resultsByRef, weightsSource) {
   let procesados = 0;
   // Pedidos de sucursales aún sin configurar: se saltan SOLO en este ciclo (para no
   // reprocesarlos en bucle) pero quedan 'pending' y se reintentan en el próximo.
@@ -145,14 +151,14 @@ async function drainQueue(byId) {
         await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'skipped', processedAt: new Date(), error: 'ya no pendiente' } });
         continue;
       }
-      const r = await quoteOne(pedido);
+      const r = resultsByRef.get(job.externalId) || { status: 'skipped', reason: 'sin-resultado' };
       if (r.status === 'quoted' && r.price != null) {
         await writeback(job.externalId, r.price, r.distanceKm);
         await prisma.syncJob.update({
           where: { id: job.id },
-          data: { status: 'done', cost: r.price, distanceKm: r.distanceKm, weightsSource: r.weightsSource, processedAt: new Date(), error: null },
+          data: { status: 'done', cost: r.price, distanceKm: r.distanceKm, weightsSource, processedAt: new Date(), error: null },
         });
-        log(`✓ ${job.folio || job.externalId} -> $${r.price} (${r.weightsSource})`);
+        log(`✓ ${job.folio || job.externalId} -> $${Number(r.price).toFixed(2)} (${weightsSource})`);
         procesados++;
       } else if (ESPERA.has(r.reason)) {
         // La sucursal de este pedido aún no tiene almacén/punto de partida configurado:
@@ -163,7 +169,7 @@ async function drainQueue(byId) {
         log(`… ${job.folio || job.externalId} en espera (${r.reason})`);
         continue; // no dormir: pasa al siguiente pedido
       } else {
-        await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'skipped', weightsSource: r.weightsSource, processedAt: new Date(), error: r.reason || r.status || 'sin cotizar' } });
+        await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'skipped', weightsSource, processedAt: new Date(), error: r.reason || r.status || 'sin cotizar' } });
         log(`- ${job.folio || job.externalId} skipped (${r.reason || r.status})`);
       }
     } catch (e) {
@@ -201,7 +207,10 @@ async function cycle() {
     return;
   }
 
-  const done = await drainQueue(byId);
+  // Cotiza TODO el lote de una vez (el precio de cada pedido depende del peso de carga
+  // total del envío). Luego se escriben los costos de a uno (suave) para el SSE.
+  const { byRef, weightsSource } = await quoteBatch(orders);
+  const done = await drainQueue(byId, byRef, weightsSource);
   if (done) log(`procesados ${done} en este ciclo`);
 }
 

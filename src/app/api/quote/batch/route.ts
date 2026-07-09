@@ -3,10 +3,11 @@ import { prisma } from '@/lib/prisma'
 import { isValidServiceKey } from '@/lib/serviceAuth'
 import {
   OrderQuoteInput,
-  computeOrderQuote,
+  weightFromItems,
   buildOrderData,
   BranchOrigin,
 } from '@/lib/homeDeliveryQuote'
+import { haversineDistance, calculateShareDeliveryPrice } from '@/lib/pricing'
 import { fetchWeightCatalog } from '@/lib/warehouse'
 import type { WeightCatalog } from '@/lib/productMatch'
 
@@ -76,18 +77,30 @@ export async function POST(req: NextRequest) {
   let persisted = 0
   let skipped = 0
 
+  // PASO 1: validar cada pedido y calcular su PESO (total de sus productos) y su
+  // DISTANCIA al almacén. Se acumula el PESO DE CARGA por sucursal = suma del peso de
+  // los pedidos cotizables de esa sucursal en ESTE envío. El precio se sabe recién en
+  // el paso 2 (necesita la carga total: cada pedido paga su fracción de peso).
+  type Prepared = {
+    input: OrderQuoteInput
+    ref: string | null
+    branch: BranchOrigin
+    weightKg: number
+    distanceKm: number
+  }
+  const prepared: Prepared[] = []
+  const pesoCargaByBranch = new Map<string, number>()
+
   for (const input of orders) {
     const ref = input.externalId || input.operationNumber || null
 
-    // 1) Sin geolocalización → no se puede calcular; se salta (no es error).
+    // Sin geolocalización → no se puede calcular; se salta (no es error).
     if (input.lat == null || input.lng == null) {
       skipped++
       results.push({ ref, status: 'skipped', reason: 'sin-geolocalizacion' })
       continue
     }
-
-    // 2) La sucursal de origen debe existir en delivery Y tener su punto de partida
-    //    (almacén) configurado. Si no, se salta: cada sucursal se activa por separado.
+    // La sucursal de origen debe existir en delivery Y tener su punto de partida.
     const info = await getBranch(input.sucursalExternalId)
     if (!info) {
       skipped++
@@ -100,19 +113,26 @@ export async function POST(req: NextRequest) {
       continue
     }
     const branch = info.origin
+    const weightKg = weightFromItems(input.items, Number(input.weight) || 0, catalog)
+    const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
+    prepared.push({ input, ref, branch, weightKg, distanceKm })
+    pesoCargaByBranch.set(branch.id, (pesoCargaByBranch.get(branch.id) || 0) + weightKg)
+  }
 
-    // 3) Cálculo (peso resuelto por nombre/SKU si hay catálogo del warehouse).
-    const computed = computeOrderQuote(input, branch, settings, catalog)
+  // PASO 2: precio = 2·dist·peso·costo_km / peso_carga_de_su_sucursal, y persistir.
+  for (const p of prepared) {
+    const pesoCarga = pesoCargaByBranch.get(p.branch.id) || 0
+    const price = calculateShareDeliveryPrice(p.distanceKm, p.weightKg, settings.domCostPerKm, pesoCarga)
     quoted++
 
     const base = {
-      ref,
+      ref: p.ref,
       status: 'quoted' as const,
-      price: computed.quote.price,
-      distanceKm: computed.distanceKm,
-      chargeableKm: computed.quote.chargeableKm,
-      weightKg: computed.quote.weightKg,
-      branch: { id: branch.id, name: branch.name },
+      price,
+      distanceKm: p.distanceKm,
+      weightKg: p.weightKg,
+      pesoCarga,
+      branch: { id: p.branch.id, name: p.branch.name },
     }
 
     if (preview) {
@@ -120,12 +140,20 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    // 4) Persistir (idempotente por source+externalId). Requiere nombre de cliente.
-    if (!input.customerName) {
+    // Persistir (idempotente por source+externalId). Requiere nombre de cliente.
+    if (!p.input.customerName) {
       results.push({ ...base, persisted: false, reason: 'falta-customerName' })
       continue
     }
-    const data = buildOrderData(input, branch, computed)
+    const computed = {
+      weightKg: p.weightKg,
+      distanceKm: p.distanceKm,
+      quote: {
+        price, distanceKm: p.distanceKm, chargeableKm: 0, weightKg: p.weightKg,
+        breakdown: { base: 0, distance: 0, weight: 0, beforeMin: price, beforeRound: price },
+      },
+    }
+    const data = buildOrderData(p.input, p.branch, computed)
     const existing = data.externalId
       ? await prisma.order.findFirst({ where: { source: 'pedido', externalId: data.externalId } })
       : null
