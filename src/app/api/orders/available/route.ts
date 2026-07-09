@@ -1,0 +1,51 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
+import { getUserFromRequest } from '@/lib/auth'
+
+export const dynamic = 'force-dynamic'
+
+/**
+ * GET /api/orders/available — Pedidos YA importados de PEDIDO que están listos para
+ * meter en una ruta: son de origen `pedido`, tienen geolocalización y todavía NO están
+ * en ninguna ruta. El armador de rutas los lista para SELECCIONARLOS (no re-teclearlos):
+ * ya traen su ubicación, su peso y su costo de domicilio calculado.
+ */
+export async function GET(req: NextRequest) {
+  const user = getUserFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const q = new URL(req.url).searchParams.get('q')?.trim().toLowerCase() || ''
+
+  const orders = await prisma.order.findMany({
+    where: {
+      userId: user.id as string,
+      source: 'pedido',
+      routeId: null,
+      endLat: { not: null },
+      endLng: { not: null },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: {
+      id: true,
+      operationNumber: true,
+      customerName: true,
+      address: true,
+      endAddress: true,
+      endLat: true,
+      endLng: true,
+      weight: true,
+      deliveryPrice: true,
+      deliveryDistanceKm: true,
+      items: true,
+    },
+  })
+
+  const filtered = q
+    ? orders.filter((o) =>
+        o.customerName.toLowerCase().includes(q) ||
+        (o.endAddress || o.address || '').toLowerCase().includes(q) ||
+        (o.operationNumber || '').toLowerCase().includes(q))
+    : orders
+
+  return NextResponse.json(filtered)
+}

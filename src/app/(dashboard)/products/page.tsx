@@ -30,6 +30,8 @@ export default function ProductsPage() {
   const [form, setForm] = useState(emptyForm)
   const [showImport, setShowImport] = useState(false)
   const [csv, setCsv] = useState('')
+  const [warehouseMsg, setWarehouseMsg] = useState('')
+  const [warehouseErr, setWarehouseErr] = useState('')
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ['products'],
@@ -68,6 +70,23 @@ export default function ProductsPage() {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['products'] }); setShowImport(false); setCsv('') },
   })
 
+  const importWarehouse = useMutation({
+    mutationFn: async () => {
+      const res = await axios.post('/api/products/import-warehouse', {}, { headers: { Authorization: `Bearer ${token}` } })
+      return res.data as { total: number; creados: number; actualizados: number; sinPeso: number }
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['products'] })
+      setWarehouseErr('')
+      setWarehouseMsg(t('prod.importWarehouseResult', { c: data.creados, u: data.actualizados }))
+    },
+    onError: (err: unknown) => {
+      setWarehouseMsg('')
+      const msg = axios.isAxiosError(err) ? err.response?.data?.error : null
+      setWarehouseErr(msg || t('prod.importWarehouseError'))
+    },
+  })
+
   const deleteProduct = useMutation({
     mutationFn: async (id: string) => { await axios.delete(`/api/products/${id}`, { headers: { Authorization: `Bearer ${token}` } }) },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['products'] }),
@@ -100,9 +119,25 @@ export default function ProductsPage() {
             <button onClick={() => setShowImport(true)} className="px-4 py-2 border border-line rounded-xl text-sm font-medium hover:bg-ink/[0.03] flex items-center gap-1.5">
               <Icon icon="mdi:file-import-outline" />{t('prod.import')}
             </button>
+            <button onClick={() => importWarehouse.mutate()} disabled={importWarehouse.isPending} className="px-4 py-2 border border-line rounded-xl text-sm font-medium hover:bg-ink/[0.03] flex items-center gap-1.5 disabled:opacity-50">
+              <Icon icon="mdi:cloud-download-outline" />{importWarehouse.isPending ? t('prod.importingWarehouse') : t('prod.importWarehouse')}
+            </button>
             <button onClick={openCreate} className="bg-primary text-white px-4 py-2 rounded-xl font-medium hover:bg-[#1840bd]">{t('prod.new')}</button>
           </div>
         </div>
+
+        {warehouseMsg && (
+          <div className="bg-green-50 text-green-700 px-3 py-2 rounded-xl text-sm flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5"><Icon icon="mdi:check-circle-outline" />{warehouseMsg}</span>
+            <button onClick={() => setWarehouseMsg('')} className="text-green-700/70 hover:text-green-700"><Icon icon="mdi:close" /></button>
+          </div>
+        )}
+        {warehouseErr && (
+          <div className="bg-red-50 text-red-600 px-3 py-2 rounded-xl text-sm flex items-center justify-between gap-2">
+            <span className="flex items-center gap-1.5"><Icon icon="mdi:alert-circle-outline" />{warehouseErr}</span>
+            <button onClick={() => setWarehouseErr('')} className="text-red-600/70 hover:text-red-600"><Icon icon="mdi:close" /></button>
+          </div>
+        )}
 
         <div className="bg-white rounded-2xl shadow-md overflow-x-auto">
           {isLoading ? (

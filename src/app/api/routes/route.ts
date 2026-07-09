@@ -52,6 +52,92 @@ async function generateRouteCode(): Promise<string> {
   return `${prefix}${seq}`
 }
 
+/**
+ * Arma una ruta a partir de PEDIDOS YA EXISTENTES (importados de PEDIDO): los asigna a la
+ * ruta (routeId), optimiza el orden de visita, valida capacidad por peso y suma los costos
+ * de domicilio (que ya venían calculados). No crea ni re-teclea pedidos.
+ */
+async function createRouteFromExistingOrders(
+  userId: string,
+  opts: {
+    name?: string; vehicleId?: string; originAddress?: string
+    originLat: number; originLng: number; deliveryDate?: string; orderIds: string[]
+  },
+) {
+  const { name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds } = opts
+
+  const orders = await prisma.order.findMany({
+    where: {
+      id: { in: orderIds }, userId, source: 'pedido', routeId: null,
+      endLat: { not: null }, endLng: { not: null },
+    },
+  })
+  if (orders.length === 0) {
+    return NextResponse.json({ error: 'Los pedidos seleccionados ya no están disponibles' }, { status: 400 })
+  }
+
+  const totalW = orders.reduce((s, o) => s + (o.weight || 0), 0)
+  const vehicle = vehicleId ? await prisma.vehicle.findFirst({ where: { id: vehicleId } }) : null
+  if (vehicle && totalW > vehicle.capacity) {
+    return NextResponse.json({
+      error: `Peso total (${totalW.toFixed(1)} kg) supera la capacidad del vehículo (${vehicle.capacity} kg)`,
+    }, { status: 400 })
+  }
+
+  const origin = { lat: originLat, lng: originLng }
+  const routeCode = await generateRouteCode()
+  const route = await prisma.route.create({
+    data: {
+      name: name || null, routeCode, userId,
+      ...(vehicleId && { vehicleId }),
+      originAddress: originAddress ?? null, originLat, originLng,
+      deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
+    },
+  })
+
+  const stopsForOpt = orders.map((o) => ({ id: o.id, lat: o.endLat!, lng: o.endLng! }))
+  const optimizedIds =
+    stopsForOpt.length > 1 ? greedyRouteOptimization(origin, stopsForOpt) : stopsForOpt.map((s) => s.id)
+  const byId = Object.fromEntries(orders.map((o) => [o.id, o]))
+  const orderedStops = optimizedIds.map((id) => ({ id, lat: byId[id].endLat!, lng: byId[id].endLng! }))
+
+  // Distancia real del recorrido (informativa).
+  const segs = calculateRouteSegments(origin, orderedStops)
+  let totalDistance = segs.reduce((a, b) => a + b, 0)
+  if (orderedStops.length > 0) {
+    const last = orderedStops[orderedStops.length - 1]
+    totalDistance += haversineDistance(last.lat, last.lng, origin.lat, origin.lng)
+  }
+
+  let totalWeight = 0
+  let totalPrice = 0
+  for (let i = 0; i < optimizedIds.length; i++) {
+    const o = byId[optimizedIds[i]]
+    const distKm = haversineDistance(origin.lat, origin.lng, o.endLat!, o.endLng!)
+    totalWeight += o.weight || 0
+    totalPrice += o.deliveryPrice || 0 // el costo de domicilio ya calculado
+    await prisma.order.update({
+      where: { id: o.id },
+      data: { routeId: route.id, stopOrder: i + 1, tripLeg: 'outbound', segmentKm: distKm, price: o.deliveryPrice || 0 },
+    })
+  }
+
+  await prisma.route.update({
+    where: { id: route.id },
+    data: { totalDistance, totalWeight, totalPrice, optimized: true },
+  })
+  if (vehicleId) await prisma.vehicle.update({ where: { id: vehicleId }, data: { status: 'in_use' } })
+
+  const full = await prisma.route.findUnique({
+    where: { id: route.id },
+    include: {
+      vehicle: { select: { id: true, name: true, type: true, plate: true, capacity: true } },
+      orders: { orderBy: { stopOrder: 'asc' } },
+    },
+  })
+  return NextResponse.json(full, { status: 201 })
+}
+
 export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -100,6 +186,7 @@ export async function POST(req: NextRequest) {
     originLng,
     deliveryDate,
     stops = [],
+    orderIds = [],
   }: {
     name?: string
     vehicleId?: string
@@ -108,6 +195,7 @@ export async function POST(req: NextRequest) {
     originLng?: number
     deliveryDate?: string
     stops?: StopInput[]
+    orderIds?: string[]
   } = await req.json()
 
   if (originLat == null || originLng == null) {
@@ -116,6 +204,14 @@ export async function POST(req: NextRequest) {
 
   if (!vehicleId) {
     return NextResponse.json({ error: 'Se requiere un vehículo para crear la ruta' }, { status: 400 })
+  }
+
+  // CAMINO PREFERIDO: armar la ruta con PEDIDOS YA IMPORTADOS (se seleccionan de la
+  // lista; ya tienen ubicación, peso y costo de domicilio). No se re-teclea nada.
+  if (Array.isArray(orderIds) && orderIds.length > 0) {
+    return await createRouteFromExistingOrders(user.id as string, {
+      name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds,
+    })
   }
 
   if (!Array.isArray(stops) || stops.length === 0) {

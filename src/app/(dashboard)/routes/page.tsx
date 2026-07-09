@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import Navbar from '@/components/Navbar'
 import LocationInput, { LocationValue } from '@/components/LocationInput'
@@ -76,6 +76,20 @@ interface SavedOrigin {
   address: string
   lat: number
   lng: number
+}
+
+interface AvailableOrder {
+  id: string
+  operationNumber?: string | null
+  customerName: string
+  address: string
+  endAddress?: string | null
+  endLat?: number | null
+  endLng?: number | null
+  weight: number
+  deliveryPrice?: number | null
+  deliveryDistanceKm?: number | null
+  items?: OrderItem[]
 }
 
 interface PendingStop {
@@ -236,7 +250,11 @@ export default function RoutesPage() {
   const [showSaveOrigin, setShowSaveOrigin] = useState(false)
   const [newOriginName, setNewOriginName] = useState('')
 
-  // Pending client stops to create with the route
+  // Existing available orders to pick for the route
+  const [orderSearch, setOrderSearch] = useState('')
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
+
+  // Pending client stops to create with the route (manual flow)
   const [pendingStops, setPendingStops] = useState<PendingStop[]>([])
   const [showPedidoForm, setShowPedidoForm] = useState(false)
   // Accordion: which step of the create modal is expanded (1=depot, 2=vehicle, 3=orders)
@@ -280,6 +298,31 @@ export default function RoutesPage() {
     enabled: !!token,
   })
 
+  const { data: availableOrders = [], isLoading: loadingAvailable } = useQuery({
+    queryKey: ['orders-available', orderSearch],
+    queryFn: async () => {
+      const res = await axios.get('/api/orders/available', {
+        params: { q: orderSearch },
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      return res.data as AvailableOrder[]
+    },
+    enabled: !!token,
+  })
+
+  // When the create modal opens and no depot is set yet, default to the first
+  // saved origin (the branch's start point) so the user needn't locate it manually.
+  useEffect(() => {
+    if (!showModal) return
+    if (depot.lat != null && depot.lng != null) return
+    const origins = savedOrigins as SavedOrigin[]
+    if (origins.length === 0) return
+    const first = origins[0]
+    setDepot({ address: first.address, lat: first.lat, lng: first.lng })
+    setSelectedOriginId(first.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showModal, savedOrigins])
+
   const createRoute = useMutation({
     mutationFn: async (data: unknown) => {
       const res = await axios.post('/api/routes', data, { headers: { Authorization: `Bearer ${token}` } })
@@ -287,6 +330,7 @@ export default function RoutesPage() {
     },
     onSuccess: (data: Route) => {
       queryClient.invalidateQueries({ queryKey: ['routes'] })
+      queryClient.invalidateQueries({ queryKey: ['orders-available'] })
       resetModal()
       setSelectedRouteId(data.id)
     },
@@ -375,6 +419,8 @@ export default function RoutesPage() {
     setShowPedidoForm(false)
     setExpandedStep(1)
     setApiError('')
+    setSelectedOrderIds(new Set())
+    setOrderSearch('')
   }
 
   const handleSelectSavedOrigin = (originId: string) => {
@@ -394,22 +440,43 @@ export default function RoutesPage() {
   const selectedVehicle = (vehicles as Vehicle[]).find((v) => v.id === selectedVehicleId)
   const pendingOverCapacity = selectedVehicle != null && pendingWeight > selectedVehicle.capacity
 
+  // Selected existing orders (primary flow)
+  const selectedOrders = (availableOrders as AvailableOrder[]).filter((o) => selectedOrderIds.has(o.id))
+  const selectedWeight = selectedOrders.reduce((s, o) => s + (o.weight || 0), 0)
+  const selectedOverCapacity = selectedVehicle != null && selectedWeight > selectedVehicle.capacity
+  const hasSelectedOrders = selectedOrderIds.size > 0
+
+  const toggleOrder = (id: string) => {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
   const handleCreateRoute = () => {
-    if (!depotSet || !selectedVehicleId || pendingStops.length === 0) return
-    if (pendingOverCapacity) {
-      setApiError(t('routes.overCapWarn', { w: pendingWeight.toFixed(1), c: selectedVehicle!.capacity }))
+    if (!depotSet || !selectedVehicleId || (!hasSelectedOrders && pendingStops.length === 0)) return
+    const overCap = hasSelectedOrders ? selectedOverCapacity : pendingOverCapacity
+    if (overCap) {
+      const w = hasSelectedOrders ? selectedWeight : pendingWeight
+      setApiError(t('routes.overCapWarn', { w: w.toFixed(1), c: selectedVehicle!.capacity }))
       return
     }
     setApiError('')
-    createRoute.mutate({
+    const base = {
       name: routeName || undefined,
       vehicleId: selectedVehicleId || undefined,
       deliveryDate: deliveryDate || undefined,
       originAddress: depot.address || undefined,
       originLat: depot.lat,
       originLng: depot.lng,
-      stops: pendingStops,
-    })
+    }
+    if (hasSelectedOrders) {
+      createRoute.mutate({ ...base, orderIds: [...selectedOrderIds] })
+    } else {
+      createRoute.mutate({ ...base, stops: pendingStops })
+    }
   }
 
   const selectedRoute = (routes as Route[]).find((r) => r.id === selectedRouteId) ?? null
@@ -1007,46 +1074,116 @@ export default function RoutesPage() {
                   className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50 disabled:cursor-not-allowed"
                 >
                   <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
-                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step3Orders', { n: pendingStops.length })}</h4>
+                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step3Orders', { n: selectedOrderIds.size + pendingStops.length })}</h4>
                   {expandedStep !== 3 && (
                     <span className="ml-auto flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-gray-500 truncate max-w-[240px]">{t('routes.ordersSummary', { n: pendingStops.length })}</span>
+                      <span className="text-xs text-gray-500 truncate max-w-[240px]">{t('routes.ordersSummary', { n: selectedOrderIds.size + pendingStops.length })}</span>
                       {depotSet && selectedVehicleId && <span className="text-xs text-blue-600 shrink-0">{t('common.edit')}</span>}
                     </span>
                   )}
                 </button>
                 {expandedStep === 3 && (
-                  <div className="p-3 border-t">
-                    {pendingStops.length > 0 && (
-                      <div className="space-y-2 mb-3">
-                        {pendingStops.map((s, i) => (
-                          <div key={i} className="flex items-center gap-3 p-2.5 border rounded-xl bg-white">
-                            <span className="w-6 h-6 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium truncate">{s.customerName}</p>
-                              <p className="text-xs text-gray-500 truncate">{s.address}</p>
-                            </div>
-                            <span className="text-xs text-gray-500 shrink-0">{s.weight} kg</span>
-                            <button onClick={() => setPendingStops(pendingStops.filter((_, idx) => idx !== i))} className="text-xs text-red-400 hover:text-red-600 shrink-0">{t('common.remove')}</button>
-                          </div>
-                        ))}
-                        {pendingOverCapacity && (
-                          <p className="text-xs text-amber-600 font-medium flex items-center gap-1"><Icon icon="mdi:alert-outline" />{t('routes.overCapWarn', { w: pendingWeight.toFixed(1), c: selectedVehicle!.capacity })}</p>
+                  <div className="p-3 border-t space-y-3">
+                    {/* Primary: pick from existing available orders */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <h5 className="text-sm font-semibold text-gray-700">{t('routes.availableOrders')}</h5>
+                      </div>
+                      <div className="relative mb-2">
+                        <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="text"
+                          value={orderSearch}
+                          onChange={(e) => setOrderSearch(e.target.value)}
+                          placeholder={t('routes.searchOrders')}
+                          className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                        {loadingAvailable ? (
+                          <p className="text-sm text-gray-400 text-center py-4">{t('routes.loadingOrders')}</p>
+                        ) : (availableOrders as AvailableOrder[]).length === 0 ? (
+                          <p className="text-sm text-gray-400 text-center py-4">{t('routes.noAvailOrders')}</p>
+                        ) : (
+                          (availableOrders as AvailableOrder[]).map((o) => {
+                            const checked = selectedOrderIds.has(o.id)
+                            return (
+                              <label
+                                key={o.id}
+                                className={`flex items-center gap-3 p-2.5 border rounded-xl cursor-pointer ${checked ? 'bg-blue-50 border-blue-300' : 'bg-white hover:bg-gray-50'}`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleOrder(o.id)}
+                                  className="w-4 h-4 accent-blue-600 shrink-0"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium truncate">{o.customerName}</p>
+                                  <p className="text-xs text-gray-500 truncate">{o.endAddress || o.address}</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="text-xs text-gray-500">{o.weight} kg</p>
+                                  {o.deliveryPrice != null && (
+                                    <p className="text-xs font-semibold text-blue-700">{format(o.deliveryPrice)}</p>
+                                  )}
+                                </div>
+                              </label>
+                            )
+                          })
                         )}
                       </div>
-                    )}
+                      {hasSelectedOrders && (
+                        <div className="flex items-center justify-between mt-2 text-xs">
+                          <span className="font-medium text-gray-600">{t('routes.selectedCount', { n: selectedOrderIds.size })}</span>
+                          <span className={selectedOverCapacity ? 'text-amber-600 font-medium' : 'text-gray-600'}>
+                            {selectedWeight.toFixed(1)} / {selectedVehicle ? selectedVehicle.capacity : '—'} kg
+                          </span>
+                        </div>
+                      )}
+                      {selectedOverCapacity && (
+                        <p className="text-xs text-amber-600 font-medium flex items-center gap-1 mt-1"><Icon icon="mdi:alert-outline" />{t('routes.overCapWarn', { w: selectedWeight.toFixed(1), c: selectedVehicle!.capacity })}</p>
+                      )}
+                    </div>
 
-                    {showPedidoForm ? (
-                      <PedidoForm onAdd={(stop) => { setPendingStops((prev) => [...prev, stop]); setShowPedidoForm(false) }} />
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => setShowPedidoForm(true)}
-                        className="w-full py-2.5 border-2 border-dashed border-blue-300 text-blue-600 rounded-xl text-sm font-medium hover:bg-blue-50"
-                      >
-                        {t('routes.addOrder')}
-                      </button>
-                    )}
+                    {/* Secondary: manual order entry */}
+                    <details className="border rounded-xl">
+                      <summary className="cursor-pointer select-none p-3 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                        {t('routes.manualOrderSection', { n: pendingStops.length })}
+                      </summary>
+                      <div className="p-3 border-t">
+                        {pendingStops.length > 0 && (
+                          <div className="space-y-2 mb-3">
+                            {pendingStops.map((s, i) => (
+                              <div key={i} className="flex items-center gap-3 p-2.5 border rounded-xl bg-white">
+                                <span className="w-6 h-6 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium truncate">{s.customerName}</p>
+                                  <p className="text-xs text-gray-500 truncate">{s.address}</p>
+                                </div>
+                                <span className="text-xs text-gray-500 shrink-0">{s.weight} kg</span>
+                                <button onClick={() => setPendingStops(pendingStops.filter((_, idx) => idx !== i))} className="text-xs text-red-400 hover:text-red-600 shrink-0">{t('common.remove')}</button>
+                              </div>
+                            ))}
+                            {pendingOverCapacity && (
+                              <p className="text-xs text-amber-600 font-medium flex items-center gap-1"><Icon icon="mdi:alert-outline" />{t('routes.overCapWarn', { w: pendingWeight.toFixed(1), c: selectedVehicle!.capacity })}</p>
+                            )}
+                          </div>
+                        )}
+
+                        {showPedidoForm ? (
+                          <PedidoForm onAdd={(stop) => { setPendingStops((prev) => [...prev, stop]); setShowPedidoForm(false) }} />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setShowPedidoForm(true)}
+                            className="w-full py-2.5 border-2 border-dashed border-blue-300 text-blue-600 rounded-xl text-sm font-medium hover:bg-blue-50"
+                          >
+                            {t('routes.addOrder')}
+                          </button>
+                        )}
+                      </div>
+                    </details>
                   </div>
                 )}
               </div>
@@ -1056,7 +1193,7 @@ export default function RoutesPage() {
                 <button onClick={resetModal} className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-50">{t('common.cancel')}</button>
                 <button
                   onClick={handleCreateRoute}
-                  disabled={!depotSet || !selectedVehicleId || pendingStops.length === 0 || pendingOverCapacity || createRoute.isPending}
+                  disabled={!depotSet || !selectedVehicleId || (!hasSelectedOrders && pendingStops.length === 0) || (hasSelectedOrders ? selectedOverCapacity : pendingOverCapacity) || createRoute.isPending}
                   className="px-4 py-2 bg-primary text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
                 >
                   <Icon icon="mdi:map-marker-path" />{createRoute.isPending ? t('routes.generating') : t('routes.generate')}
