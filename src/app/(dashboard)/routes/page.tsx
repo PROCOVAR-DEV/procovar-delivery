@@ -1121,9 +1121,22 @@ export default function RoutesPage() {
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-medium truncate">{o.customerName}</p>
                                   <p className="text-xs text-gray-500 truncate">{o.endAddress || o.address}</p>
+                                  {o.items && o.items.length > 0 && (
+                                    <div
+                                      className="inline-flex items-center gap-1 mt-0.5"
+                                      title={o.items.map((it) => `${it.name || it.description} ×${it.quantity}`).join('\n')}
+                                    >
+                                      <span className="text-[10px] bg-gray-100 rounded-full px-1.5 py-0.5 truncate max-w-[130px]">
+                                        {o.items[0].name || o.items[0].description} ×{o.items[0].quantity}
+                                      </span>
+                                      {o.items.length > 1 && (
+                                        <span className="text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-medium">+{o.items.length - 1}</span>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                                 <div className="text-right shrink-0">
-                                  <p className="text-xs text-gray-500">{o.weight} kg</p>
+                                  <p className="text-xs text-gray-500">{Number(o.weight).toFixed(1)} kg</p>
                                   {o.deliveryPrice != null && (
                                     <p className="text-xs font-semibold text-blue-700">{format(o.deliveryPrice)}</p>
                                   )}

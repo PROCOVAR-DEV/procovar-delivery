@@ -15,15 +15,21 @@ interface OrderItem {
   description?: string
   packaging?: string | null
   quantity: number
+  packs?: number | null
 }
 
 interface OrderRow {
   id: string
+  operationNumber?: string | null
   customerName: string
+  customerPhone?: string | null
   address: string
   endAddress?: string | null
+  endLat?: number | null
+  endLng?: number | null
   weight: number
   price?: number | null
+  deliveryDistanceKm?: number | null
   items?: OrderItem[]
   createdAt: string
   route?: {
@@ -41,6 +47,7 @@ export default function OrdersPage() {
   const { format } = useCurrency()
   const t = useT()
   const [search, setSearch] = useState('')
+  const [detail, setDetail] = useState<OrderRow | null>(null)
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ['orders'],
@@ -63,6 +70,7 @@ export default function OrdersPage() {
   const paged = usePagedList(filtered, 25)
 
   const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString() : '—'
+  const itemLabel = (it: OrderItem) => it.name || it.description || '—'
 
   return (
     <div className="flex flex-col">
@@ -105,11 +113,16 @@ export default function OrdersPage() {
                   <th className="px-4 py-3 font-semibold text-right">{t('common.weight')}</th>
                   <th className="px-4 py-3 font-semibold text-right">{t('common.price')}</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colDelivery')}</th>
+                  <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
                 {paged.pageItems.map((o) => (
-                  <tr key={o.id} className="border-b hover:bg-gray-50 align-top">
+                  <tr
+                    key={o.id}
+                    className="border-b hover:bg-blue-50/40 align-middle cursor-pointer"
+                    onClick={() => setDetail(o)}
+                  >
                     <td className="px-4 py-3 font-medium">{o.customerName}</td>
                     <td className="px-4 py-3">
                       {o.route?.routeCode ? (
@@ -119,17 +132,33 @@ export default function OrdersPage() {
                     <td className="px-4 py-3 text-gray-600 text-xs">{o.route?.vehicle?.name || '—'}</td>
                     <td className="px-4 py-3">
                       {o.items && o.items.length > 0 ? (
-                        <div className="flex flex-wrap gap-1 max-w-[260px]">
-                          {o.items.map((it, i) => (
-                            <span key={i} className="text-[11px] bg-gray-100 rounded-full px-2 py-0.5">{it.name || it.description} <b>×{it.quantity}</b></span>
-                          ))}
+                        <div className="relative group inline-flex items-center gap-1">
+                          <span className="text-[11px] bg-gray-100 rounded-full px-2 py-0.5 truncate max-w-[150px]">
+                            {itemLabel(o.items[0])} <b>×{o.items[0].quantity}</b>
+                          </span>
+                          {o.items.length > 1 && (
+                            <span className="text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 whitespace-nowrap font-medium">
+                              +{o.items.length - 1}
+                            </span>
+                          )}
+                          {o.items.length > 1 && (
+                            <div className="hidden group-hover:block absolute left-0 top-full mt-1 z-20 bg-white border shadow-xl rounded-xl p-2 w-64 max-h-64 overflow-y-auto space-y-1">
+                              {o.items.map((it, i) => (
+                                <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
+                                  <span className="truncate text-gray-700">{itemLabel(it)}</span>
+                                  <b className="shrink-0 text-gray-900">×{it.quantity}</b>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ) : <span className="text-gray-300 text-xs italic">—</span>}
                     </td>
                     <td className="px-4 py-3 text-gray-600 text-xs max-w-[200px] truncate">{o.endAddress || o.address}</td>
-                    <td className="px-4 py-3 text-right font-mono text-xs">{o.weight} kg</td>
+                    <td className="px-4 py-3 text-right font-mono text-xs">{o.weight?.toFixed(1)} kg</td>
                     <td className="px-4 py-3 text-right font-semibold text-green-700 font-mono">{o.price != null ? format(o.price) : '—'}</td>
                     <td className="px-4 py-3 text-gray-600 text-xs">{fmtDate(o.route?.deliveryDate)}</td>
+                    <td className="px-4 py-3 text-right text-gray-300"><Icon icon="mdi:chevron-right" /></td>
                   </tr>
                 ))}
               </tbody>
@@ -149,6 +178,113 @@ export default function OrdersPage() {
           )}
         </div>
       </div>
+
+      {/* Detalle del pedido */}
+      {detail && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setDetail(null)}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[88vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Cabecera */}
+            <div className="flex items-start justify-between gap-3 p-5 border-b sticky top-0 bg-white">
+              <div>
+                <h3 className="text-lg font-bold text-gray-800">{detail.customerName}</h3>
+                {detail.operationNumber && (
+                  <p className="text-xs text-gray-400 font-mono">{detail.operationNumber}</p>
+                )}
+              </div>
+              <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-700">
+                <Icon icon="mdi:close" className="text-xl" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-5">
+              {/* Entrega */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Entrega</p>
+                <div className="space-y-1.5 text-sm">
+                  <div className="flex gap-2">
+                    <Icon icon="mdi:map-marker" className="text-blue-500 mt-0.5 shrink-0" />
+                    <span className="text-gray-700">{detail.endAddress || detail.address}</span>
+                  </div>
+                  {detail.endLat != null && detail.endLng != null && (
+                    <div className="flex gap-2 items-center">
+                      <Icon icon="mdi:crosshairs-gps" className="text-gray-400 shrink-0" />
+                      <span className="text-gray-500 font-mono text-xs">{detail.endLat.toFixed(6)}, {detail.endLng.toFixed(6)}</span>
+                      <a
+                        href={`https://www.google.com/maps?q=${detail.endLat},${detail.endLng}`}
+                        target="_blank" rel="noreferrer"
+                        className="text-blue-600 text-xs hover:underline"
+                      >
+                        ver mapa
+                      </a>
+                    </div>
+                  )}
+                  {detail.customerPhone && (
+                    <div className="flex gap-2 items-center">
+                      <Icon icon="mdi:phone" className="text-gray-400 shrink-0" />
+                      <span className="text-gray-600 text-xs">{detail.customerPhone}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Costo del domicilio — por qué salió ese valor */}
+              <div className="bg-green-50 rounded-xl p-4">
+                <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2">Costo del domicilio</p>
+                <div className="flex items-end justify-between">
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                    <span className="text-gray-500">Distancia</span>
+                    <span className="font-mono text-gray-800">{detail.deliveryDistanceKm != null ? `${detail.deliveryDistanceKm.toFixed(2)} km` : '—'}</span>
+                    <span className="text-gray-500">Peso total</span>
+                    <span className="font-mono text-gray-800">{detail.weight?.toFixed(2)} kg</span>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-green-700 font-mono">{detail.price != null ? format(detail.price) : '—'}</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-gray-400 mt-2">La distancia es del almacén al cliente (ida y vuelta ×2).</p>
+              </div>
+
+              {/* Productos */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                  Productos {detail.items?.length ? `(${detail.items.length})` : ''}
+                </p>
+                {detail.items && detail.items.length > 0 ? (
+                  <div className="space-y-1">
+                    {detail.items.map((it, i) => (
+                      <div key={i} className="flex items-center justify-between gap-2 bg-gray-50 rounded-lg px-3 py-2 text-sm">
+                        <div className="min-w-0">
+                          <p className="text-gray-800 truncate">{itemLabel(it)}</p>
+                          {it.packs != null && <p className="text-[11px] text-gray-400">{it.packs} pack(s)</p>}
+                        </div>
+                        <b className="shrink-0 text-gray-900">×{it.quantity}</b>
+                      </div>
+                    ))}
+                  </div>
+                ) : <p className="text-sm text-gray-400 italic">Sin productos</p>}
+              </div>
+
+              {/* Ruta */}
+              {detail.route?.routeCode && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Ruta</p>
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg">{detail.route.routeCode}</span>
+                    {detail.route.vehicle?.name && <span className="text-gray-600">{detail.route.vehicle.name}</span>}
+                    <span className="text-gray-400 text-xs ml-auto">{fmtDate(detail.route.deliveryDate)}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
