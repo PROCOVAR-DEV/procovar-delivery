@@ -95,6 +95,29 @@ export function calculateShareDeliveryPrice(
   return (2 * distanceKm * orderWeightKg * (costPerKm || 0)) / pesoCargaKg
 }
 
+/**
+ * Fórmula OFICIAL del domicilio (William):  C = CKK × D × PP   (en CUP)
+ *   CKK = (costo_km_USD × tipoCambio) / (0.5 × capacidad_kg)   → CUP por kg·km
+ *   D   = 2 × distancia(almacén→cliente)  (ida y vuelta)
+ *   PP  = peso del pedido (kg)
+ * Devuelve el costo en CUP y en USD (÷ tipoCambio). El CKK usa el 50% de la capacidad
+ * (el camión no siempre va lleno). costo_km y capacidad salen del vehículo de referencia.
+ */
+export function calculateDomicilioOficial(
+  distanceKm: number,
+  pesoKg: number,
+  costoKmUsd: number,
+  capacidadKg: number,
+  tipoCambio: number,
+): { cup: number; usd: number; ckk: number } {
+  if (!capacidadKg || capacidadKg <= 0 || !tipoCambio || tipoCambio <= 0) {
+    return { cup: 0, usd: 0, ckk: 0 }
+  }
+  const ckk = (costoKmUsd * tipoCambio) / (0.5 * capacidadKg)
+  const cup = ckk * (2 * distanceKm) * pesoKg
+  return { cup, usd: cup / tipoCambio, ckk }
+}
+
 export function haversineDistance(
   lat1: number, lon1: number,
   lat2: number, lon2: number

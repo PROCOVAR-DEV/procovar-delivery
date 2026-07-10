@@ -117,7 +117,7 @@ async function quoteBatch(pedidos) {
 
 // Skips que significan "la sucursal aún no está lista" (no es un fallo del pedido):
 // se dejan EN ESPERA para reintentar cuando se configure esa sucursal.
-const ESPERA = new Set(['sucursal-no-mapeada', 'sucursal-sin-punto-de-partida']);
+const ESPERA = new Set(['sucursal-no-mapeada', 'sucursal-sin-punto-de-partida', 'sucursal-sin-vehiculo-de-calculo']);
 
 // Escribe el costo de vuelta en PEDIDO para un pedido.
 async function writeback(externalId, cost, distanceKm) {

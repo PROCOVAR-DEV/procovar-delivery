@@ -77,6 +77,12 @@ model Vehicle {
   type      String   @default("truck")
   plate     String?
   capacity  Float    @default(1000)
+  // Costo de rodar este camión, en USD por km (lo da el camionero). Con la capacidad
+  // define el CKK de la fórmula oficial del domicilio: costoKmUsd·tc/(0.5·capacidad).
+  costoKmUsd Float?
+  // Marca el vehículo de REFERENCIA de su sucursal para CALCULAR el domicilio.
+  // Solo uno por sucursal debería tenerla en true.
+  usarParaDomicilio Boolean @default(false)
   status    String   @default("available")
   notes     String?
   userId    String
@@ -185,6 +191,9 @@ model Settings {
   domIncludedKm Float @default(0)
   domMinFee     Float @default(0)
   domRoundTo    Float @default(0)
+  // Tipo de cambio para el domicilio (fórmula oficial): CUP por 1 USD = "toque + 20".
+  // El costo se calcula en CUP y se guarda en USD dividiendo por este valor.
+  domTipoCambio Float @default(700)
   // El usuario guardó la FÓRMULA del domicilio. Mientras sea false, el cálculo
   // NO corre (espera). Se pone true al guardar la fórmula en Settings.
   domConfigured Boolean @default(false)

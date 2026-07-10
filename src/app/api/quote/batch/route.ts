@@ -7,7 +7,7 @@ import {
   buildOrderData,
   BranchOrigin,
 } from '@/lib/homeDeliveryQuote'
-import { haversineDistance, calculateShareDeliveryPrice } from '@/lib/pricing'
+import { haversineDistance, calculateDomicilioOficial } from '@/lib/pricing'
 import { fetchWeightCatalog } from '@/lib/warehouse'
 import type { WeightCatalog } from '@/lib/productMatch'
 
@@ -72,25 +72,29 @@ export async function POST(req: NextRequest) {
     return info
   }
 
+  // Vehículo de REFERENCIA por sucursal (el marcado `usarParaDomicilio`, del dueño de la
+  // sucursal). Define capacidad + costo_km para el CKK de la fórmula del jefe. Cache por
+  // creatorId de la sucursal.
+  type RefVehiculo = { costoKmUsd: number; capacidadKg: number } | null
+  const vehiculoCache = new Map<string, RefVehiculo>()
+  async function getVehiculoRef(creatorId: string): Promise<RefVehiculo> {
+    if (vehiculoCache.has(creatorId)) return vehiculoCache.get(creatorId) as RefVehiculo
+    const v = await prisma.vehicle.findFirst({
+      where: { userId: creatorId, usarParaDomicilio: true, costoKmUsd: { not: null } },
+    })
+    const info: RefVehiculo = v && v.costoKmUsd != null ? { costoKmUsd: v.costoKmUsd, capacidadKg: v.capacity } : null
+    vehiculoCache.set(creatorId, info)
+    return info
+  }
+
+  const tc = settings.domTipoCambio || 700
   const results: Array<Record<string, unknown>> = []
   let quoted = 0
   let persisted = 0
   let skipped = 0
 
-  // PASO 1: validar cada pedido y calcular su PESO (total de sus productos) y su
-  // DISTANCIA al almacén. Se acumula el PESO DE CARGA por sucursal = suma del peso de
-  // los pedidos cotizables de esa sucursal en ESTE envío. El precio se sabe recién en
-  // el paso 2 (necesita la carga total: cada pedido paga su fracción de peso).
-  type Prepared = {
-    input: OrderQuoteInput
-    ref: string | null
-    branch: BranchOrigin
-    weightKg: number
-    distanceKm: number
-  }
-  const prepared: Prepared[] = []
-  const pesoCargaByBranch = new Map<string, number>()
-
+  // FÓRMULA OFICIAL (William) por pedido:  C = CKK × D × PP.
+  // CKK = costo_km · tc / (0.5 · capacidad)  (del vehículo de referencia de la sucursal).
   for (const input of orders) {
     const ref = input.externalId || input.operationNumber || null
 
@@ -113,26 +117,29 @@ export async function POST(req: NextRequest) {
       continue
     }
     const branch = info.origin
+    // Vehículo de referencia de la sucursal (para el CKK). Sin él, no se calcula: espera.
+    const veh = await getVehiculoRef(branch.creatorId)
+    if (!veh) {
+      skipped++
+      results.push({ ref, status: 'skipped', reason: 'sucursal-sin-vehiculo-de-calculo' })
+      continue
+    }
+
     const weightKg = weightFromItems(input.items, Number(input.weight) || 0, catalog)
     const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
-    prepared.push({ input, ref, branch, weightKg, distanceKm })
-    pesoCargaByBranch.set(branch.id, (pesoCargaByBranch.get(branch.id) || 0) + weightKg)
-  }
-
-  // PASO 2: precio = 2·dist·peso·costo_km / peso_carga_de_su_sucursal, y persistir.
-  for (const p of prepared) {
-    const pesoCarga = pesoCargaByBranch.get(p.branch.id) || 0
-    const price = calculateShareDeliveryPrice(p.distanceKm, p.weightKg, settings.domCostPerKm, pesoCarga)
+    const dom = calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc)
+    const price = dom.usd // se guarda en USD (base); el front convierte a CUP con la tasa
     quoted++
 
     const base = {
-      ref: p.ref,
+      ref,
       status: 'quoted' as const,
       price,
-      distanceKm: p.distanceKm,
-      weightKg: p.weightKg,
-      pesoCarga,
-      branch: { id: p.branch.id, name: p.branch.name },
+      priceCup: dom.cup,
+      distanceKm,
+      weightKg,
+      ckk: dom.ckk,
+      branch: { id: branch.id, name: branch.name },
     }
 
     if (preview) {
@@ -141,19 +148,19 @@ export async function POST(req: NextRequest) {
     }
 
     // Persistir (idempotente por source+externalId). Requiere nombre de cliente.
-    if (!p.input.customerName) {
+    if (!input.customerName) {
       results.push({ ...base, persisted: false, reason: 'falta-customerName' })
       continue
     }
     const computed = {
-      weightKg: p.weightKg,
-      distanceKm: p.distanceKm,
+      weightKg,
+      distanceKm,
       quote: {
-        price, distanceKm: p.distanceKm, chargeableKm: 0, weightKg: p.weightKg,
+        price, distanceKm, chargeableKm: 0, weightKg,
         breakdown: { base: 0, distance: 0, weight: 0, beforeMin: price, beforeRound: price },
       },
     }
-    const data = buildOrderData(p.input, p.branch, computed)
+    const data = buildOrderData(input, branch, computed)
     const existing = data.externalId
       ? await prisma.order.findFirst({ where: { source: 'pedido', externalId: data.externalId } })
       : null
