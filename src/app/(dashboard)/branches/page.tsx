@@ -13,6 +13,7 @@ import { Icon } from '@iconify/react'
 interface Branch {
   id: string
   name: string
+  externalId?: string | null
   address?: string | null
   lat: number
   lng: number
@@ -39,6 +40,7 @@ export default function BranchesPage() {
   const [showModal, setShowModal] = useState(false)
   const [editing, setEditing] = useState<Branch | null>(null)
   const [name, setName] = useState('')
+  const [externalId, setExternalId] = useState('')
   const [area, setArea] = useState('1')
   const [loc, setLoc] = useState<LocationValue>(emptyLoc)
 
@@ -87,7 +89,7 @@ export default function BranchesPage() {
 
   const saveBranch = useMutation({
     mutationFn: async () => {
-      const payload = { name, address: loc.address, lat: loc.lat, lng: loc.lng, areaKm2: parseFloat(area) || 1 }
+      const payload = { name, externalId: externalId.trim() || null, address: loc.address, lat: loc.lat, lng: loc.lng, areaKm2: parseFloat(area) || 1 }
       if (editing) {
         const res = await axios.patch(`/api/branches/${editing.id}`, payload, { headers: { Authorization: `Bearer ${token}` } })
         return res.data
@@ -112,6 +114,7 @@ export default function BranchesPage() {
     setShowModal(false)
     setEditing(null)
     setName('')
+    setExternalId('')
     setArea('1')
     setLoc(emptyLoc)
   }
@@ -124,6 +127,7 @@ export default function BranchesPage() {
   const openEdit = (b: Branch) => {
     setEditing(b)
     setName(b.name)
+    setExternalId(b.externalId || '')
     setArea(String(b.areaKm2))
     setLoc({ address: b.address || '', lat: b.lat, lng: b.lng })
     setShowModal(true)
@@ -135,6 +139,7 @@ export default function BranchesPage() {
   const filtered = branches.filter((b) =>
     !q
     || b.name.toLowerCase().includes(q)
+    || (b.externalId || '').toLowerCase().includes(q)
     || (b.address || '').toLowerCase().includes(q)
   )
 
@@ -187,6 +192,13 @@ export default function BranchesPage() {
                     <h3 className="font-bold text-gray-800 truncate flex items-center gap-1">
                       <Icon icon="mdi:office-building-marker-outline" className="text-primary" />{b.name}
                     </h3>
+                    <div className="mt-1">
+                      {b.externalId ? (
+                        <span className="text-[11px] bg-ink/[0.06] text-ink px-2 py-0.5 rounded-md font-mono font-semibold uppercase">{b.externalId}</span>
+                      ) : (
+                        <span className="text-[11px] text-gray-400 italic">{t('br.noCode')}</span>
+                      )}
+                    </div>
                     {b.address && <p className="text-xs text-gray-500 truncate mt-0.5">{b.address}</p>}
                     <p className="text-xs text-gray-400 mt-0.5 font-mono">{b.lat.toFixed(4)}, {b.lng.toFixed(4)}</p>
                   </div>
@@ -251,6 +263,13 @@ export default function BranchesPage() {
                   <input type="number" step="0.1" min="0.1" value={area} onChange={(e) => setArea(e.target.value)}
                     className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm" />
                 </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('br.code')}</label>
+                <input type="text" value={externalId} onChange={(e) => setExternalId(e.target.value.toUpperCase())}
+                  placeholder={t('br.codePlaceholder')}
+                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono uppercase" />
+                <p className="text-xs text-gray-400 mt-1">{t('br.codeNote')}</p>
               </div>
               <LocationInput value={loc} onChange={setLoc} label={t('br.location')} markerColor="#16a34a" />
               <div className="flex gap-2 justify-end pt-2">

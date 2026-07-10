@@ -10,11 +10,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter()
 
   useEffect(() => {
-    if (!token) {
+    // Tras un reload, el store aún no hidrató el token del store desde localStorage.
+    // Solo mandamos a /login si NO hay sesión ni en el store ni en localStorage
+    // (si no, estaríamos botando al usuario en cada refresco mientras hidrata).
+    const stored = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token && !stored) {
       router.push('/login')
     }
   }, [token, router])
 
+  // Si el store aún no tiene token pero localStorage sí, estamos hidratando: no mostramos
+  // nada todavía (se re-renderiza en cuanto el token cargue), sin redirigir.
   if (!token) return null
 
   return (

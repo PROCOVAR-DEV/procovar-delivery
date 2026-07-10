@@ -10,6 +10,13 @@ import { useQuery } from '@tanstack/react-query'
 interface Branch {
   id: string
   name: string
+  externalId?: string | null
+}
+
+// Muestra "nombre (CÓDIGO)" si la sucursal tiene código.
+function branchLabel(b?: Branch | null) {
+  if (!b) return ''
+  return b.externalId ? `${b.name} (${b.externalId})` : b.name
 }
 
 export default function Navbar({ title }: { title: string }) {
@@ -26,10 +33,13 @@ export default function Navbar({ title }: { title: string }) {
     enabled: !!token,
   })
 
-  const isAdmin = user?.role === 'admin'
+  // Admin GLOBAL = usuario SIN sucursal asignada (ve todas y puede elegir). Un usuario
+  // con sucursal (branchId) queda fijo a la suya, aunque su rol sea 'admin'.
+  const isAdmin = !user?.branchId
   const ownBranch = branches.find((b) => b.id === user?.branchId)
+  const activeBranch = sucursalId ? branches.find((b) => b.id === sucursalId) : null
   const activeBranchName = sucursalId
-    ? (branches.find((b) => b.id === sucursalId)?.name ?? 'Sucursal')
+    ? (branchLabel(activeBranch) || 'Sucursal')
     : 'Todas las sucursales'
 
   return (
@@ -52,12 +62,12 @@ export default function Navbar({ title }: { title: string }) {
               >
                 <option value="">Todas las sucursales</option>
                 {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
+                  <option key={b.id} value={b.id}>{branchLabel(b)}</option>
                 ))}
               </select>
             ) : (
               <span className="text-xs font-semibold text-ink py-1 pr-0.5 max-w-[160px] truncate">
-                {ownBranch?.name ?? activeBranchName}
+                {ownBranch ? branchLabel(ownBranch) : activeBranchName}
               </span>
             )}
           </div>

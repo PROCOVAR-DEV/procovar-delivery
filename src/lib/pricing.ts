@@ -109,7 +109,7 @@ export function calculateDomicilioOficial(
   costoKmUsd: number,
   capacidadKg: number,
   tipoCambio: number,
-  minCup = 0,
+  minUsd = 0,
   factorCapacidad = 0.5,
 ): { cup: number; usd: number; ckk: number } {
   if (!capacidadKg || capacidadKg <= 0 || !tipoCambio || tipoCambio <= 0) {
@@ -117,9 +117,11 @@ export function calculateDomicilioOficial(
   }
   const f = factorCapacidad && factorCapacidad > 0 ? factorCapacidad : 0.5
   const ckk = (costoKmUsd * tipoCambio) / (f * capacidadKg)
-  // Piso: ningún domicilio sale por debajo del mínimo (para que no salga gratis).
-  const cup = Math.max(ckk * (2 * distanceKm) * pesoKg, minCup || 0)
-  return { cup, usd: cup / tipoCambio, ckk }
+  // La app es en USD: se calcula el costo (CUP por la fórmula) y se pasa a USD. El PISO
+  // (mínimo para que no salga gratis) se aplica en USD. El CUP es solo para mostrarlo.
+  let usd = (ckk * (2 * distanceKm) * pesoKg) / tipoCambio
+  usd = Math.max(usd, minUsd || 0)
+  return { cup: usd * tipoCambio, usd, ckk }
 }
 
 export function haversineDistance(

@@ -220,16 +220,16 @@ export default function SettingsPage() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Costo mínimo del domicilio
-                <span className="ml-1 text-xs text-gray-400">(piso, en CUP)</span>
+                <span className="ml-1 text-xs text-gray-400">(piso, en USD)</span>
               </label>
               <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                 <input
-                  type="number" step="1" min="0"
+                  type="number" step="0.01" min="0"
                   value={domForm.domMinFee}
                   onChange={(e) => setDomForm({ ...domForm, domMinFee: e.target.value })}
-                  className="w-full pl-4 pr-14 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full pl-8 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">CUP</span>
               </div>
               <p className="text-[11px] text-gray-400 mt-1">Ningún domicilio baja de este valor (para que no salga gratis). 0 = sin mínimo.</p>
             </div>
