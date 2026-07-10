@@ -43,6 +43,7 @@ function arg(name, def = undefined) {
   return v && !v.startsWith('--') ? v : true;
 }
 const ONCE = !!arg('once', false);
+const RECOMPUTE = !!arg('recompute', false); // recotiza TODOS (no solo pendientes) y reescribe el costo
 const DELAY = arg('delay') ? parseInt(arg('delay'), 10) : 1500;      // pausa entre pedidos (suave)
 const POLL = arg('poll') ? parseInt(arg('poll'), 10) : 15000;        // cada cuánto busca pedidos nuevos
 const MAX_ATTEMPTS = 3;
@@ -214,8 +215,36 @@ async function cycle() {
   if (done) log(`procesados ${done} en este ciclo`);
 }
 
+// RECOMPUTE: recotiza TODOS los pedidos (con la fórmula vigente) y reescribe el costo en
+// PEDIDO, aunque ya tuvieran costo. Úsalo tras cambiar la fórmula/tarifa/vehículo.
+async function recomputeAll() {
+  const q = new URLSearchParams(); // sin onlyPending => todos los que tienen geolocalización
+  if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
+  const res = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY } });
+  if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);
+  const { orders = [] } = await res.json();
+  log(`recompute: ${orders.length} pedidos con geo`);
+  const { byRef } = await quoteBatch(orders); // recotiza + persiste los Order de delivery
+  const updates = [];
+  for (const o of orders) {
+    const r = byRef.get(o.id);
+    if (r && r.status === 'quoted' && r.price != null) updates.push({ id: o.id, costo: r.price, distanceKm: r.distanceKm });
+  }
+  log(`recompute: ${updates.length} recosteados, escribiendo en PEDIDO...`);
+  for (let i = 0; i < updates.length; i += 200) {
+    const chunk = updates.slice(i, i + 200);
+    const wb = await fetch(`${PEDIDO_API_URL}/integration/orders/domicilio`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': KEY },
+      body: JSON.stringify({ updates: chunk }),
+    });
+    if (!wb.ok) throw new Error(`writeback ${wb.status}: ${await wb.text().catch(() => '')}`);
+  }
+  log(`recompute LISTO: ${updates.length} domicilios actualizados.`);
+}
+
 async function main() {
   log(`sync-queue arrancado. PEDIDO=${PEDIDO_API_URL} delay=${DELAY}ms poll=${POLL}ms once=${ONCE}`);
+  if (RECOMPUTE) { await recomputeAll(); return; }
   // Recupera jobs que quedaron 'processing' si el worker murió a mitad.
   const reset = await prisma.syncJob.updateMany({ where: { status: 'processing' }, data: { status: 'pending' } });
   if (reset.count) log(`recuperados ${reset.count} jobs 'processing' huérfanos -> pending`);
@@ -228,4 +257,4 @@ async function main() {
 
 main()
   .catch((e) => { log('FATAL:', e.message); process.exitCode = 1; })
-  .finally(async () => { if (ONCE) await prisma.$disconnect(); });
+  .finally(async () => { if (ONCE || RECOMPUTE) await prisma.$disconnect(); });
