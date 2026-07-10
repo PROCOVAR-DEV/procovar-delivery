@@ -109,12 +109,14 @@ export function calculateDomicilioOficial(
   costoKmUsd: number,
   capacidadKg: number,
   tipoCambio: number,
+  minCup = 0,
 ): { cup: number; usd: number; ckk: number } {
   if (!capacidadKg || capacidadKg <= 0 || !tipoCambio || tipoCambio <= 0) {
     return { cup: 0, usd: 0, ckk: 0 }
   }
   const ckk = (costoKmUsd * tipoCambio) / (0.5 * capacidadKg)
-  const cup = ckk * (2 * distanceKm) * pesoKg
+  // Piso: ningún domicilio sale por debajo del mínimo (para que no salga gratis).
+  const cup = Math.max(ckk * (2 * distanceKm) * pesoKg, minCup || 0)
   return { cup, usd: cup / tipoCambio, ckk }
 }
 

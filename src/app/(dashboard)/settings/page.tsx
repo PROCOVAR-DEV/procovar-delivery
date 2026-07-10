@@ -107,6 +107,7 @@ export default function SettingsPage() {
     // Guardar el tipo de cambio marca la fórmula como configurada.
     updateHome.mutate({
       domTipoCambio: parseFloat(domForm.domTipoCambio) || 700,
+      domMinFee: parseFloat(domForm.domMinFee) || 0,
     })
   }
 
@@ -229,7 +230,24 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <div className="flex items-end gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Costo mínimo del domicilio
+                <span className="ml-1 text-xs text-gray-400">(piso, en CUP)</span>
+              </label>
+              <div className="relative">
+                <input
+                  type="number" step="1" min="0"
+                  value={domForm.domMinFee}
+                  onChange={(e) => setDomForm({ ...domForm, domMinFee: e.target.value })}
+                  className="w-full pl-4 pr-14 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">CUP</span>
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">Ningún domicilio baja de este valor (para que no salga gratis). 0 = sin mínimo.</p>
+            </div>
+
+            <div className="sm:col-span-2 flex items-end gap-3">
               {homeSaved && (
                 <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-sm flex items-center gap-2">
                   <Icon icon="mdi:check-circle" className="text-lg" /> {t('set.homeSaved')}
