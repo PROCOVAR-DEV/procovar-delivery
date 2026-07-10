@@ -71,7 +71,7 @@ export default function UsersPage() {
   })
 
   const createUser = useMutation({
-    mutationFn: async (payload: typeof defaultCreate) => {
+    mutationFn: async (payload: Omit<typeof defaultCreate, 'branchId'> & { branchId: string | null }) => {
       const res = await axios.post('/api/users', payload, {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -184,7 +184,11 @@ export default function UsersPage() {
                     <td className="px-4 py-3">
                       <span className="px-2 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-medium">{row.role}</span>
                     </td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">{row.branch?.name || '—'}</td>
+                    <td className="px-4 py-3 text-gray-600 text-xs">
+                      {row.branchId
+                        ? (row.branch?.name || branches.find((b) => b.id === row.branchId)?.name || row.branchId)
+                        : <span className="text-gray-400">{t('usr.branchGlobal')}</span>}
+                    </td>
                     <td className="px-4 py-3 text-gray-600 text-xs">
                       {row._count ? t('usr.activity', { o: row._count.orders, r: row._count.routes, v: row._count.vehicles }) : '-'}
                     </td>
@@ -270,21 +274,24 @@ export default function UsersPage() {
                 <option value="dispatcher">dispatcher</option>
                 <option value="viewer">viewer</option>
               </select>
-              <select
-                value={form.branchId}
-                onChange={(e) => setForm({ ...form, branchId: e.target.value })}
-                className="w-full px-3 py-2 border rounded-xl"
-              >
-                <option value="">{t('usr.noBranch')}</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+              <div>
+                <select
+                  value={form.branchId}
+                  onChange={(e) => setForm({ ...form, branchId: e.target.value })}
+                  className="w-full px-3 py-2 border rounded-xl"
+                >
+                  <option value="">{t('usr.noBranch')}</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">{t('usr.branchNote')}</p>
+              </div>
             </div>
             <div className="flex gap-2 justify-end mt-4">
               <button onClick={() => setShowCreate(false)} className="px-4 py-2 border rounded-xl">{t('common.cancel')}</button>
               <button
-                onClick={() => createUser.mutate(form)}
+                onClick={() => createUser.mutate({ ...form, branchId: form.branchId || null })}
                 className="px-4 py-2 bg-primary text-white rounded-xl"
                 disabled={createUser.isPending || !form.name || !form.email || !form.password}
               >
@@ -320,16 +327,19 @@ export default function UsersPage() {
                 <option value="dispatcher">dispatcher</option>
                 <option value="viewer">viewer</option>
               </select>
-              <select
-                value={editBranchId}
-                onChange={(e) => setEditBranchId(e.target.value)}
-                className="w-full px-3 py-2 border rounded-xl"
-              >
-                <option value="">{t('usr.noBranch')}</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name}</option>
-                ))}
-              </select>
+              <div>
+                <select
+                  value={editBranchId}
+                  onChange={(e) => setEditBranchId(e.target.value)}
+                  className="w-full px-3 py-2 border rounded-xl"
+                >
+                  <option value="">{t('usr.noBranch')}</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">{t('usr.branchNote')}</p>
+              </div>
               <input
                 type="password"
                 value={editPassword}
