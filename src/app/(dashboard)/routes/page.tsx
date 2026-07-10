@@ -798,10 +798,14 @@ export default function RoutesPage() {
                                       )}
                                     </div>
                                     {(order.items && order.items.length > 0) ? (
-                                      <div className="flex flex-wrap gap-1 mt-1.5 pl-7">
-                                        {order.items.map((it, i) => (
-                                          <span key={i} className="text-[11px] bg-white border rounded-full px-2 py-0.5">{it.name || it.description} <b>×{it.quantity}</b></span>
-                                        ))}
+                                      <div
+                                        className="flex items-center gap-1 mt-1.5 pl-7"
+                                        title={order.items.map((it) => `${it.name || it.description} ×${it.quantity}`).join('\n')}
+                                      >
+                                        <span className="text-[11px] bg-white border rounded-full px-2 py-0.5 truncate max-w-[170px]">{order.items[0].name || order.items[0].description} <b>×{order.items[0].quantity}</b></span>
+                                        {order.items.length > 1 && (
+                                          <span className="text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium shrink-0">+{order.items.length - 1}</span>
+                                        )}
                                       </div>
                                     ) : (
                                       <p className="text-[11px] text-gray-300 italic mt-1 pl-7">{t('routes.noItems')}</p>

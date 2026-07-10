@@ -164,7 +164,16 @@ export default function VehiclesPage() {
   })
 
   const openTipos = () => {
-    setTiposDraft(tiposVehiculo.map((tp) => ({ nombre: tp.nombre, costoKmUsd: tp.costoKmUsd })))
+    // Incluye los tipos ya configurados MÁS los que usan los vehículos (ej. "truck" por
+    // defecto) que aún no están en la lista, para que se vean y se les ponga su costo/km.
+    const conocidos = new Set(tiposVehiculo.map((tp) => tp.nombre))
+    const deVehiculos = [...new Set((vehicles as Vehicle[]).map((v) => v.type).filter(Boolean))]
+      .filter((nombre) => !conocidos.has(nombre))
+      .map((nombre) => {
+        const v = (vehicles as Vehicle[]).find((x) => x.type === nombre && (x as { costoKmUsd?: number | null }).costoKmUsd != null)
+        return { nombre, costoKmUsd: (v as { costoKmUsd?: number | null } | undefined)?.costoKmUsd ?? 0 }
+      })
+    setTiposDraft([...tiposVehiculo.map((tp) => ({ nombre: tp.nombre, costoKmUsd: tp.costoKmUsd })), ...deVehiculos])
     setShowTiposModal(true)
   }
 
