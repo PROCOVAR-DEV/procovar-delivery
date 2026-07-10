@@ -194,6 +194,10 @@ model Settings {
   // Tipo de cambio para el domicilio (fórmula oficial): CUP por 1 USD = "toque + 20".
   // El costo se calcula en CUP y se guarda en USD dividiendo por este valor.
   domTipoCambio Float @default(700)
+  // Tipos de vehículo con su costo/km por defecto (el "padre"). Al crear un vehículo de
+  // ese tipo se hereda el costo/km, y se puede cambiar por vehículo.
+  // [{ nombre: "Camión", costoKmUsd: 1.65 }, { nombre: "Camioneta", costoKmUsd: 0.9 }]
+  tiposVehiculo Json?
   // El usuario guardó la FÓRMULA del domicilio. Mientras sea false, el cálculo
   // NO corre (espera). Se pone true al guardar la fórmula en Settings.
   domConfigured Boolean @default(false)

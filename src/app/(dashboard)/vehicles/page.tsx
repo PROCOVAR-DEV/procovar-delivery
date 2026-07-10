@@ -23,6 +23,11 @@ interface Vehicle {
   routes?: { id: string; name: string; status: string }[]
 }
 
+interface TipoVehiculo {
+  nombre: string
+  costoKmUsd: number
+}
+
 interface VehicleFormData {
   name: string
   type: string
@@ -75,6 +80,9 @@ export default function VehiclesPage() {
   // Ayudante para estimar el costo por km a partir de lo que cobra el camionero.
   const [helperCup, setHelperCup] = useState('')
   const [helperKm, setHelperKm] = useState('')
+  // Editor de tipos de vehículo (costo/km "padre" heredable).
+  const [showTiposModal, setShowTiposModal] = useState(false)
+  const [tiposDraft, setTiposDraft] = useState<TipoVehiculo[]>([])
 
   const { data: vehicles = [], isLoading } = useQuery({
     queryKey: ['vehicles'],
@@ -99,6 +107,32 @@ export default function VehiclesPage() {
   })
 
   const tipoCambio = Number(settings?.domTipoCambio) || 700
+  const tiposVehiculo: TipoVehiculo[] = (settings?.tiposVehiculo as TipoVehiculo[] | undefined) || []
+
+  const saveTiposMutation = useMutation({
+    mutationFn: async (tipos: TipoVehiculo[]) => {
+      const res = await axios.put('/api/settings', { tiposVehiculo: tipos }, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      return res.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+      setShowTiposModal(false)
+    }
+  })
+
+  const openTipos = () => {
+    setTiposDraft(tiposVehiculo.map((tp) => ({ nombre: tp.nombre, costoKmUsd: tp.costoKmUsd })))
+    setShowTiposModal(true)
+  }
+
+  const saveTipos = () => {
+    const clean = tiposDraft
+      .map((tp) => ({ nombre: tp.nombre.trim(), costoKmUsd: Number(tp.costoKmUsd) || 0 }))
+      .filter((tp) => tp.nombre !== '')
+    saveTiposMutation.mutate(clean)
+  }
 
   const createMutation = useMutation({
     mutationFn: async (data: unknown) => {
@@ -233,6 +267,13 @@ export default function VehiclesPage() {
                 className="pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
+            <button
+              onClick={openTipos}
+              className="bg-white text-gray-700 border px-4 py-2 rounded-xl font-medium hover:bg-gray-50 transition-colors flex items-center gap-2"
+            >
+              <Icon icon="mdi:tag-multiple-outline" className="text-lg" />
+              Tipos de vehículo
+            </button>
             <button
               onClick={openCreate}
               className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700 transition-colors flex items-center gap-2"
@@ -402,15 +443,55 @@ export default function VehiclesPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('veh.type')}</label>
-                  <select
-                    value={form.type}
-                    onChange={(e) => setForm({ ...form, type: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    {vehicleTypes.map((vt) => (
-                      <option key={vt.value} value={vt.value}>{t(`veh.type.${vt.value}`)}</option>
-                    ))}
-                  </select>
+                  {tiposVehiculo.length > 0 ? (
+                    (() => {
+                      const isKnown = tiposVehiculo.some((tp) => tp.nombre === form.type)
+                      return (
+                        <>
+                          <select
+                            value={isKnown ? form.type : '__custom__'}
+                            onChange={(e) => {
+                              const val = e.target.value
+                              if (val === '__custom__') {
+                                setForm((f) => ({ ...f, type: '' }))
+                                return
+                              }
+                              const tp = tiposVehiculo.find((x) => x.nombre === val)
+                              setForm((f) => ({
+                                ...f,
+                                type: val,
+                                // Hereda el costo/km del tipo (el usuario puede editarlo luego).
+                                costoKmUsd: tp && tp.costoKmUsd != null ? String(tp.costoKmUsd) : f.costoKmUsd,
+                              }))
+                            }}
+                            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            {tiposVehiculo.map((tp) => (
+                              <option key={tp.nombre} value={tp.nombre}>{tp.nombre} · ${tp.costoKmUsd}/km</option>
+                            ))}
+                            <option value="__custom__">Otro (escribir)…</option>
+                          </select>
+                          {!isKnown && (
+                            <input
+                              type="text"
+                              value={form.type}
+                              onChange={(e) => setForm({ ...form, type: e.target.value })}
+                              className="w-full mt-2 px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                              placeholder="Escribe el tipo"
+                            />
+                          )}
+                        </>
+                      )
+                    })()
+                  ) : (
+                    <input
+                      type="text"
+                      value={form.type}
+                      onChange={(e) => setForm({ ...form, type: e.target.value })}
+                      className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Camión, Camioneta…"
+                    />
+                  )}
                 </div>
 
                 <div>
@@ -562,6 +643,92 @@ export default function VehiclesPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showTiposModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowTiposModal(false) }}
+        >
+          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
+              <Icon icon="mdi:tag-multiple-outline" className="text-primary text-xl" />
+              Tipos de vehículo
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Define cada tipo con su costo por km por defecto. Al crear un vehículo de ese tipo se hereda el costo/km (editable por vehículo).
+            </p>
+
+            <div className="space-y-2">
+              <div className="grid grid-cols-[1fr_130px_auto] gap-2 text-xs font-medium text-gray-500 px-1">
+                <span>Nombre</span>
+                <span>Costo/km (USD)</span>
+                <span></span>
+              </div>
+              {tiposDraft.length === 0 && (
+                <p className="text-sm text-gray-400 text-center py-4">Sin tipos. Agrega el primero.</p>
+              )}
+              {tiposDraft.map((tp, idx) => (
+                <div key={idx} className="grid grid-cols-[1fr_130px_auto] gap-2 items-center">
+                  <input
+                    type="text"
+                    value={tp.nombre}
+                    onChange={(e) => setTiposDraft(tiposDraft.map((x, i) => i === idx ? { ...x, nombre: e.target.value } : x))}
+                    className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="Camión"
+                  />
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={tp.costoKmUsd}
+                      onChange={(e) => setTiposDraft(tiposDraft.map((x, i) => i === idx ? { ...x, costoKmUsd: parseFloat(e.target.value) || 0 } : x))}
+                      className="w-full pl-7 pr-2 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="1.65"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTiposDraft(tiposDraft.filter((_, i) => i !== idx))}
+                    className="text-red-400 hover:text-red-600 p-2"
+                    title="Quitar"
+                  >
+                    <Icon icon="mdi:trash-can-outline" className="text-lg" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setTiposDraft([...tiposDraft, { nombre: '', costoKmUsd: 0 }])}
+              className="mt-3 w-full py-2.5 border-2 border-dashed border-blue-300 text-blue-600 rounded-xl text-sm font-medium hover:bg-blue-50 flex items-center justify-center gap-1"
+            >
+              <Icon icon="mdi:plus" />
+              Agregar tipo
+            </button>
+
+            <div className="flex gap-3 justify-end pt-5">
+              <button
+                type="button"
+                onClick={() => setShowTiposModal(false)}
+                className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-50"
+              >
+                {t('common.cancel')}
+              </button>
+              <button
+                type="button"
+                onClick={saveTipos}
+                disabled={saveTiposMutation.isPending}
+                className="px-5 py-2 bg-primary text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saveTiposMutation.isPending ? '...' : t('common.save')}
+              </button>
+            </div>
           </div>
         </div>
       )}

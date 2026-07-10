@@ -23,6 +23,7 @@ export async function PUT(req: NextRequest) {
   const {
     baseFee, costPerKm, costPerKg, currency, cupRate, currencies,
     domBaseFee, domCostPerKm, domCostPerKg, domIncludedKm, domMinFee, domRoundTo, domTipoCambio,
+    tiposVehiculo,
   } = await req.json()
 
   let settings = await prisma.settings.findFirst()
@@ -47,6 +48,7 @@ export async function PUT(req: NextRequest) {
     ...(domRoundTo !== undefined && { domRoundTo }),
     ...(domTipoCambio !== undefined && { domTipoCambio }),
     ...(domProvided && { domConfigured: true }),
+    ...(tiposVehiculo !== undefined && { tiposVehiculo }),
   }
 
   if (settings) {

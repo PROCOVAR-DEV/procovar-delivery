@@ -446,6 +446,12 @@ export default function RoutesPage() {
   const selectedOverCapacity = selectedVehicle != null && selectedWeight > selectedVehicle.capacity
   const hasSelectedOrders = selectedOrderIds.size > 0
 
+  // Capacidad del camión seleccionado (para la barra "LLENO / no cabe más").
+  const capacity = selectedVehicle?.capacity ?? 0
+  const capacityPct = capacity > 0 ? (selectedWeight / capacity) * 100 : 0
+  const isFull = selectedVehicle != null && selectedWeight >= capacity
+  const capacityBarColor = capacityPct >= 100 ? 'bg-red-500' : capacityPct >= 80 ? 'bg-amber-500' : 'bg-green-500'
+
   const toggleOrder = (id: string) => {
     setSelectedOrderIds((prev) => {
       const next = new Set(prev)
@@ -1099,6 +1105,37 @@ export default function RoutesPage() {
                           className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                       </div>
+
+                      {/* Barra de capacidad del camión */}
+                      {selectedVehicle ? (
+                        <div className="mb-3">
+                          <div className="flex items-center justify-between text-xs mb-1">
+                            <span className="font-medium text-gray-600">
+                              {selectedWeight.toFixed(1)} / {capacity} kg ({Math.round(capacityPct)}%)
+                            </span>
+                            {isFull && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">
+                                <Icon icon="mdi:alert-octagon" />LLENO
+                              </span>
+                            )}
+                          </div>
+                          <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all ${capacityBarColor}`}
+                              style={{ width: `${Math.min(capacityPct, 100)}%` }}
+                            />
+                          </div>
+                          {isFull && (
+                            <p className="text-xs text-red-600 font-medium flex items-center gap-1 mt-1.5">
+                              <Icon icon="mdi:truck-alert-outline" />Camión lleno — no cabe más
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="mb-3 text-xs text-gray-400 flex items-center gap-1">
+                          <Icon icon="mdi:truck-outline" />Elige un vehículo para ver la capacidad
+                        </div>
+                      )}
                       <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                         {loadingAvailable ? (
                           <p className="text-sm text-gray-400 text-center py-4">{t('routes.loadingOrders')}</p>
@@ -1107,20 +1144,34 @@ export default function RoutesPage() {
                         ) : (
                           (availableOrders as AvailableOrder[]).map((o) => {
                             const checked = selectedOrderIds.has(o.id)
+                            // Deshabilita pedidos NO seleccionados que ya no caben en el camión.
+                            const wouldExceed = selectedVehicle != null && selectedWeight + (o.weight || 0) > capacity
+                            const blocked = !checked && wouldExceed
                             return (
                               <label
                                 key={o.id}
-                                className={`flex items-center gap-3 p-2.5 border rounded-xl cursor-pointer ${checked ? 'bg-blue-50 border-blue-300' : 'bg-white hover:bg-gray-50'}`}
+                                title={blocked ? 'No cabe en el camión' : undefined}
+                                className={`flex items-center gap-3 p-2.5 border rounded-xl ${
+                                  blocked
+                                    ? 'bg-gray-100 border-gray-200 opacity-60 cursor-not-allowed'
+                                    : checked
+                                      ? 'bg-blue-50 border-blue-300 cursor-pointer'
+                                      : 'bg-white hover:bg-gray-50 cursor-pointer'
+                                }`}
                               >
                                 <input
                                   type="checkbox"
                                   checked={checked}
+                                  disabled={blocked}
                                   onChange={() => toggleOrder(o.id)}
-                                  className="w-4 h-4 accent-blue-600 shrink-0"
+                                  className="w-4 h-4 accent-blue-600 shrink-0 disabled:cursor-not-allowed"
                                 />
                                 <div className="flex-1 min-w-0">
                                   <p className="text-sm font-medium truncate">{o.customerName}</p>
                                   <p className="text-xs text-gray-500 truncate">{o.endAddress || o.address}</p>
+                                  {blocked && (
+                                    <p className="text-[11px] text-red-500 font-medium">No cabe en el camión</p>
+                                  )}
                                   {o.items && o.items.length > 0 && (
                                     <div
                                       className="inline-flex items-center gap-1 mt-0.5"
