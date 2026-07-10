@@ -55,6 +55,8 @@ model Branch {
   members    User[]   @relation("UserBranch")
   origins    SavedOrigin[]
   orders     Order[]
+  vehicles   Vehicle[] @relation("BranchVehicles")
+  routes     Route[]   @relation("BranchRoutes")
   createdAt  DateTime @default(now())
 }
 
@@ -87,6 +89,9 @@ model Vehicle {
   notes     String?
   userId    String
   user      User     @relation(fields: [userId], references: [id])
+  // Sucursal dueña del vehículo (para el scoping multi-sucursal). null = de todas.
+  branchId  String?
+  branch    Branch?  @relation("BranchVehicles", fields: [branchId], references: [id])
   routes    Route[]
   orders    Order[]
   orderAssignments OrderVehicle[]
@@ -173,6 +178,9 @@ model Route {
   vehicle         Vehicle? @relation(fields: [vehicleId], references: [id])
   userId          String
   user            User     @relation(fields: [userId], references: [id])
+  // Sucursal de la ruta (para el scoping multi-sucursal).
+  branchId        String?
+  branch          Branch?  @relation("BranchRoutes", fields: [branchId], references: [id])
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   optimized       Boolean  @default(false)

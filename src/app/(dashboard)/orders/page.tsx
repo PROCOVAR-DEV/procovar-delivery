@@ -34,6 +34,7 @@ interface OrderRow {
   weight: number
   price?: number | null
   deliveryDistanceKm?: number | null
+  municipio?: string | null
   items?: OrderItem[]
   createdAt: string
   status?: string | null
@@ -57,6 +58,7 @@ export default function OrdersPage() {
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('recientes')
   const [statusFilter, setStatusFilter] = useState('todos')
+  const [municipioFilter, setMunicipioFilter] = useState('todos')
   const [detail, setDetail] = useState<OrderRow | null>(null)
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
@@ -88,6 +90,15 @@ export default function OrdersPage() {
     return { key: 'pendiente', label: 'Pendiente', cls: 'bg-gray-100 text-gray-600' }
   }
 
+  // Municipios distintos (no vacíos) presentes en los pedidos, ordenados.
+  const municipios = Array.from(
+    new Set(
+      orders
+        .map((o) => (o.municipio || '').trim())
+        .filter((m) => m !== '')
+    )
+  ).sort((a, b) => a.localeCompare(b))
+
   const q = search.trim().toLowerCase()
   const filtered = orders
     .filter((o) => !sucursalId || o.branch?.id === sucursalId)
@@ -99,6 +110,7 @@ export default function OrdersPage() {
       || (o.endAddress || o.address || '').toLowerCase().includes(q)
     )
     .filter((o) => statusFilter === 'todos' || deliveryStatus(o).key === statusFilter)
+    .filter((o) => municipioFilter === 'todos' || o.municipio === municipioFilter)
 
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
@@ -135,6 +147,16 @@ export default function OrdersPage() {
               <option value="pendiente">Pendiente</option>
               <option value="reparto">En reparto</option>
               <option value="entregado">Entregado</option>
+            </select>
+            <select
+              value={municipioFilter}
+              onChange={(e) => setMunicipioFilter(e.target.value)}
+              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="todos">Todos los municipios</option>
+              {municipios.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
             </select>
             <select
               value={sortBy}

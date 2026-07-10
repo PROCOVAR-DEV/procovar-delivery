@@ -40,6 +40,8 @@ interface RouteOrder {
   price?: number | null
   stopOrder?: number | null
   segmentKm?: number | null
+  municipio?: string | null
+  meta?: { cliente?: { municipio?: string | null } | null } | null
   items?: OrderItem[]
 }
 
@@ -89,6 +91,7 @@ interface AvailableOrder {
   weight: number
   deliveryPrice?: number | null
   deliveryDistanceKm?: number | null
+  municipio?: string | null
   items?: OrderItem[]
 }
 
@@ -252,6 +255,7 @@ export default function RoutesPage() {
 
   // Existing available orders to pick for the route
   const [orderSearch, setOrderSearch] = useState('')
+  const [availMunicipio, setAvailMunicipio] = useState('todos')
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
 
   // Pending client stops to create with the route (manual flow)
@@ -421,6 +425,7 @@ export default function RoutesPage() {
     setApiError('')
     setSelectedOrderIds(new Set())
     setOrderSearch('')
+    setAvailMunicipio('todos')
   }
 
   const handleSelectSavedOrigin = (originId: string) => {
@@ -439,6 +444,20 @@ export default function RoutesPage() {
   const pendingWeight = pendingStops.reduce((s, p) => s + p.weight, 0)
   const selectedVehicle = (vehicles as Vehicle[]).find((v) => v.id === selectedVehicleId)
   const pendingOverCapacity = selectedVehicle != null && pendingWeight > selectedVehicle.capacity
+
+  // Municipios distintos (no vacíos) de los pedidos disponibles, ordenados.
+  const availMunicipios = Array.from(
+    new Set(
+      (availableOrders as AvailableOrder[])
+        .map((o) => (o.municipio || '').trim())
+        .filter((m) => m !== '')
+    )
+  ).sort((a, b) => a.localeCompare(b))
+
+  // Lista de disponibles filtrada por municipio (el search ya lo aplica el backend).
+  const filteredAvailable = (availableOrders as AvailableOrder[]).filter(
+    (o) => availMunicipio === 'todos' || o.municipio === availMunicipio
+  )
 
   // Selected existing orders (primary flow)
   const selectedOrders = (availableOrders as AvailableOrder[]).filter((o) => selectedOrderIds.has(o.id))
@@ -784,34 +803,44 @@ export default function RoutesPage() {
                                   </div>
                                 )}
                                 <p className="text-xs font-semibold text-gray-500 px-1 pt-1">{t('routes.stopsAndPrice', { n: orderedStops.length })}</p>
-                                {orderedStops.map((order, idx) => (
-                                  <div key={order.id} className="p-2 bg-blue-50 rounded-lg">
-                                    <div className="flex items-center gap-2">
-                                      <span className="w-5 h-5 bg-blue-600 text-white rounded-full flex items-center justify-center text-[10px] font-bold shrink-0">{idx + 1}</span>
+                                {orderedStops.map((order, idx) => {
+                                  const municipio = (order.municipio || order.meta?.cliente?.municipio || '').trim()
+                                  return (
+                                  <div key={order.id} className="p-2.5 bg-white border border-gray-100 rounded-xl shadow-sm">
+                                    <div className="flex items-start gap-2.5">
+                                      <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 mt-0.5">{idx + 1}</span>
                                       <div className="flex-1 min-w-0">
-                                        <p className="text-xs font-medium truncate">{order.customerName}</p>
-                                        <p className="text-[11px] text-gray-500 truncate">{order.endAddress || order.address}</p>
-                                        <p className="text-[11px] text-gray-400">{order.weight} kg{order.segmentKm != null ? ` · ${t('routes.kmFromStart', { km: order.segmentKm.toFixed(1) })}` : ''}</p>
+                                        <p className="text-xs font-semibold text-gray-800 truncate">{order.customerName}</p>
+                                        <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                                          <p className="text-[11px] text-gray-500 truncate">{order.endAddress || order.address}</p>
+                                          {municipio && (
+                                            <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] bg-gray-100 text-gray-600 rounded-full px-1.5 py-0.5">
+                                              <Icon icon="mdi:map-marker-outline" className="text-[11px]" />{municipio}
+                                            </span>
+                                          )}
+                                        </div>
+                                        <p className="text-[11px] text-gray-400 mt-0.5">{order.weight} kg{order.segmentKm != null ? ` · ${t('routes.kmFromStart', { km: order.segmentKm.toFixed(1) })}` : ''}</p>
                                       </div>
                                       {order.price != null && (
-                                        <p className="text-xs font-semibold text-blue-700 shrink-0">{format(order.price)}</p>
+                                        <p className="text-sm font-bold text-blue-700 font-mono shrink-0 mt-0.5">{format(order.price)}</p>
                                       )}
                                     </div>
                                     {(order.items && order.items.length > 0) ? (
                                       <div
-                                        className="flex items-center gap-1 mt-1.5 pl-7"
+                                        className="flex items-center gap-1 mt-2 pl-[2.125rem]"
                                         title={order.items.map((it) => `${it.name || it.description} ×${it.quantity}`).join('\n')}
                                       >
-                                        <span className="text-[11px] bg-white border rounded-full px-2 py-0.5 truncate max-w-[170px]">{order.items[0].name || order.items[0].description} <b>×{order.items[0].quantity}</b></span>
+                                        <span className="text-[11px] bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5 truncate max-w-[170px]">{order.items[0].name || order.items[0].description} <b>×{order.items[0].quantity}</b></span>
                                         {order.items.length > 1 && (
                                           <span className="text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 font-medium shrink-0">+{order.items.length - 1}</span>
                                         )}
                                       </div>
                                     ) : (
-                                      <p className="text-[11px] text-gray-300 italic mt-1 pl-7">{t('routes.noItems')}</p>
+                                      <p className="text-[11px] text-gray-300 italic mt-1.5 pl-[2.125rem]">{t('routes.noItems')}</p>
                                     )}
                                   </div>
-                                ))}
+                                  )
+                                })}
                               </div>
                             </>
                           )}
@@ -1099,15 +1128,27 @@ export default function RoutesPage() {
                       <div className="flex items-center justify-between mb-2">
                         <h5 className="text-sm font-semibold text-gray-700">{t('routes.availableOrders')}</h5>
                       </div>
-                      <div className="relative mb-2">
-                        <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input
-                          type="text"
-                          value={orderSearch}
-                          onChange={(e) => setOrderSearch(e.target.value)}
-                          placeholder={t('routes.searchOrders')}
-                          className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                        />
+                      <div className="flex gap-2 mb-2">
+                        <div className="relative flex-1">
+                          <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input
+                            type="text"
+                            value={orderSearch}
+                            onChange={(e) => setOrderSearch(e.target.value)}
+                            placeholder={t('routes.searchOrders')}
+                            className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+                        <select
+                          value={availMunicipio}
+                          onChange={(e) => setAvailMunicipio(e.target.value)}
+                          className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[45%]"
+                        >
+                          <option value="todos">Todos</option>
+                          {availMunicipios.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
                       </div>
 
                       {/* Barra de capacidad del camión */}
@@ -1143,10 +1184,10 @@ export default function RoutesPage() {
                       <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                         {loadingAvailable ? (
                           <p className="text-sm text-gray-400 text-center py-4">{t('routes.loadingOrders')}</p>
-                        ) : (availableOrders as AvailableOrder[]).length === 0 ? (
+                        ) : filteredAvailable.length === 0 ? (
                           <p className="text-sm text-gray-400 text-center py-4">{t('routes.noAvailOrders')}</p>
                         ) : (
-                          (availableOrders as AvailableOrder[]).map((o) => {
+                          filteredAvailable.map((o) => {
                             const checked = selectedOrderIds.has(o.id)
                             // Deshabilita pedidos NO seleccionados que ya no caben en el camión.
                             const wouldExceed = selectedVehicle != null && selectedWeight + (o.weight || 0) > capacity

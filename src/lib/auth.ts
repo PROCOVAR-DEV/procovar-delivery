@@ -6,6 +6,8 @@ export interface AuthUser {
   email: string
   name: string
   role: string
+  // Sucursal del usuario (null = admin global, ve todas). Base del scoping multi-sucursal.
+  branchId: string | null
 }
 
 function getSecret(): string {
@@ -52,5 +54,6 @@ export function getUserFromRequest(req: NextRequest): AuthUser | null {
     return null
   }
 
-  return { id, email, name, role }
+  const branchId = typeof payload.branchId === 'string' ? payload.branchId : null
+  return { id, email, name, role, branchId }
 }

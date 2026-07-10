@@ -28,8 +28,12 @@ export async function GET(req: NextRequest) {
   })
 
   // La lista muestra `price`; el costo de domicilio se guarda en `deliveryPrice`.
-  // Exponerlo como `price` para que la columna Precio no salga vacía.
-  const withPrice = orders.map((o) => ({ ...o, price: o.deliveryPrice ?? null }))
+  // Exponerlo como `price`, y el `municipio` del cliente (viene en meta) para filtrar.
+  const withPrice = orders.map((o) => ({
+    ...o,
+    price: o.deliveryPrice ?? null,
+    municipio: ((o.meta as { cliente?: { municipio?: string } } | null)?.cliente?.municipio) || null,
+  }))
   return NextResponse.json(withPrice)
 }
 

@@ -37,15 +37,23 @@ export async function GET(req: NextRequest) {
       deliveryPrice: true,
       deliveryDistanceKm: true,
       items: true,
+      meta: true,
     },
   })
 
+  // Expone el municipio (del cliente, viene en meta) para poder filtrar por él.
+  const conMunicipio = orders.map((o) => {
+    const { meta, ...rest } = o
+    return { ...rest, municipio: ((meta as { cliente?: { municipio?: string } } | null)?.cliente?.municipio) || null }
+  })
+
   const filtered = q
-    ? orders.filter((o) =>
+    ? conMunicipio.filter((o) =>
         o.customerName.toLowerCase().includes(q) ||
         (o.endAddress || o.address || '').toLowerCase().includes(q) ||
-        (o.operationNumber || '').toLowerCase().includes(q))
-    : orders
+        (o.operationNumber || '').toLowerCase().includes(q) ||
+        (o.municipio || '').toLowerCase().includes(q))
+    : conMunicipio
 
   return NextResponse.json(filtered)
 }
