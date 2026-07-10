@@ -37,19 +37,20 @@ export async function POST(req: NextRequest) {
 
   const userId = user.id as string
   const useForDelivery = usarParaDomicilio === true
+  const vehicleType = type || 'truck'
 
   const vehicle = await prisma.$transaction(async (tx) => {
-    // Solo UN vehículo por sucursal puede ser la referencia de cálculo del domicilio.
+    // Solo UN vehículo por TIPO puede ser la referencia de cálculo del domicilio.
     if (useForDelivery) {
       await tx.vehicle.updateMany({
-        where: { userId },
+        where: { userId, type: vehicleType, usarParaDomicilio: true },
         data: { usarParaDomicilio: false },
       })
     }
     return tx.vehicle.create({
       data: {
         name,
-        type: type || 'truck',
+        type: vehicleType,
         plate: plate || null,
         capacity: capacity ?? 1000,
         status: status || 'available',

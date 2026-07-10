@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
 
     const weightKg = weightFromItems(input.items, Number(input.weight) || 0, catalog)
     const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
-    const dom = calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc, settings.domMinFee || 0)
+    const dom = calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
     const price = dom.usd // se guarda en USD (base); el front convierte a CUP con la tasa
     quoted++
 

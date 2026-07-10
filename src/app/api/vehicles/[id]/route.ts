@@ -45,10 +45,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   }
 
   const updated = await prisma.$transaction(async (tx) => {
-    // Solo UN vehículo por sucursal puede ser la referencia de cálculo del domicilio.
+    // Solo UN vehículo por TIPO puede ser la referencia de cálculo del domicilio.
     if (data.usarParaDomicilio === true) {
+      const targetType = data.type !== undefined ? data.type : vehicle.type
       await tx.vehicle.updateMany({
-        where: { userId: user.id as string, id: { not: id } },
+        where: { userId: user.id as string, type: targetType, usarParaDomicilio: true, id: { not: id } },
         data: { usarParaDomicilio: false },
       })
     }

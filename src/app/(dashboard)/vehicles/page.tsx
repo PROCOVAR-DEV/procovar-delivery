@@ -83,6 +83,10 @@ export default function VehiclesPage() {
   // Editor de tipos de vehículo (costo/km "padre" heredable).
   const [showTiposModal, setShowTiposModal] = useState(false)
   const [tiposDraft, setTiposDraft] = useState<TipoVehiculo[]>([])
+  // Crear tipo nuevo inline desde el form del vehículo.
+  const [creatingType, setCreatingType] = useState(false)
+  const [newTipoNombre, setNewTipoNombre] = useState('')
+  const [newTipoCosto, setNewTipoCosto] = useState('')
 
   const { data: vehicles = [], isLoading } = useQuery({
     queryKey: ['vehicles'],
@@ -119,6 +123,43 @@ export default function VehiclesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
       setShowTiposModal(false)
+    }
+  })
+
+  // Crea un tipo nuevo desde el form del vehículo y lo selecciona.
+  const createTipoInlineMutation = useMutation({
+    mutationFn: async ({ nombre, costoKmUsd }: { nombre: string; costoKmUsd: number }) => {
+      const nuevos = [...tiposVehiculo, { nombre, costoKmUsd }]
+      const res = await axios.put('/api/settings', { tiposVehiculo: nuevos }, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      return { data: res.data, nombre, costoKmUsd }
+    },
+    onSuccess: ({ nombre, costoKmUsd }) => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] })
+      setForm((f) => ({ ...f, type: nombre, costoKmUsd: String(costoKmUsd) }))
+      setCreatingType(false)
+      setNewTipoNombre('')
+      setNewTipoCosto('')
+    }
+  })
+
+  const handleCreateTipoInline = () => {
+    const nombre = newTipoNombre.trim()
+    if (!nombre) return
+    createTipoInlineMutation.mutate({ nombre, costoKmUsd: Number(newTipoCosto) || 0 })
+  }
+
+  // Marca directamente un vehículo como el de cálculo del domicilio (desde la tarjeta).
+  const usarDomicilioMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await axios.patch(`/api/vehicles/${id}`, { usarParaDomicilio: true }, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      return res.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vehicles'] })
     }
   })
 
@@ -220,6 +261,9 @@ export default function VehiclesPage() {
     })
     setHelperCup('')
     setHelperKm('')
+    setCreatingType(false)
+    setNewTipoNombre('')
+    setNewTipoCosto('')
     setShowModal(true)
   }
 
@@ -228,6 +272,9 @@ export default function VehiclesPage() {
     setForm(defaultForm)
     setHelperCup('')
     setHelperKm('')
+    setCreatingType(false)
+    setNewTipoNombre('')
+    setNewTipoCosto('')
     setShowModal(true)
   }
 
@@ -323,17 +370,34 @@ export default function VehiclesPage() {
                   </span>
                 </div>
 
-                {vehicle.usarParaDomicilio && (
-                  <div className="flex flex-wrap items-center gap-2 mb-4">
-                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary">
-                      <Icon icon="mdi:calculator-variant-outline" className="text-sm" />
-                      Cálculo domicilio
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  {vehicle.type && (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-gray-100 text-gray-600">
+                      <Icon icon={getTypeIcon(vehicle.type)} className="text-sm" />
+                      {vehicle.type}
                     </span>
-                    {vehicle.costoKmUsd != null && (
-                      <span className="text-xs font-semibold text-gray-700">${vehicle.costoKmUsd}/km</span>
-                    )}
-                  </div>
-                )}
+                  )}
+                  {vehicle.usarParaDomicilio ? (
+                    <>
+                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary">
+                        <Icon icon="mdi:calculator-variant-outline" className="text-sm" />
+                        Cálculo domicilio
+                      </span>
+                      {vehicle.costoKmUsd != null && (
+                        <span className="text-xs font-semibold text-gray-700">${vehicle.costoKmUsd}/km</span>
+                      )}
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => usarDomicilioMutation.mutate(vehicle.id)}
+                      disabled={usarDomicilioMutation.isPending}
+                      className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full border border-primary/30 text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+                    >
+                      <Icon icon="mdi:calculator-variant-outline" className="text-sm" />
+                      Usar para domicilio
+                    </button>
+                  )}
+                </div>
 
                 <div className="grid grid-cols-2 gap-3 mb-4 text-center">
                   <div className="bg-gray-50 rounded-xl p-2">
@@ -443,55 +507,93 @@ export default function VehiclesPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('veh.type')}</label>
-                  {tiposVehiculo.length > 0 ? (
-                    (() => {
-                      const isKnown = tiposVehiculo.some((tp) => tp.nombre === form.type)
-                      return (
-                        <>
-                          <select
-                            value={isKnown ? form.type : '__custom__'}
-                            onChange={(e) => {
-                              const val = e.target.value
-                              if (val === '__custom__') {
-                                setForm((f) => ({ ...f, type: '' }))
-                                return
-                              }
-                              const tp = tiposVehiculo.find((x) => x.nombre === val)
-                              setForm((f) => ({
-                                ...f,
-                                type: val,
-                                // Hereda el costo/km del tipo (el usuario puede editarlo luego).
-                                costoKmUsd: tp && tp.costoKmUsd != null ? String(tp.costoKmUsd) : f.costoKmUsd,
-                              }))
-                            }}
-                            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          >
-                            {tiposVehiculo.map((tp) => (
-                              <option key={tp.nombre} value={tp.nombre}>{tp.nombre} · ${tp.costoKmUsd}/km</option>
-                            ))}
-                            <option value="__custom__">Otro (escribir)…</option>
-                          </select>
-                          {!isKnown && (
-                            <input
-                              type="text"
-                              value={form.type}
-                              onChange={(e) => setForm({ ...form, type: e.target.value })}
-                              className="w-full mt-2 px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              placeholder="Escribe el tipo"
-                            />
+                  {(() => {
+                    const isKnown = tiposVehiculo.some((tp) => tp.nombre === form.type)
+                    // Si el tipo actual no está en la lista (valor heredado/legacy), lo mostramos igual.
+                    const showLegacy = !creatingType && !isKnown && form.type.trim() !== ''
+                    return (
+                      <>
+                        <select
+                          value={creatingType ? '__create__' : (isKnown ? form.type : (showLegacy ? form.type : ''))}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            if (val === '__create__') {
+                              setCreatingType(true)
+                              return
+                            }
+                            setCreatingType(false)
+                            const tp = tiposVehiculo.find((x) => x.nombre === val)
+                            setForm((f) => ({
+                              ...f,
+                              type: val,
+                              // Hereda el costo/km del tipo (el usuario puede editarlo luego).
+                              costoKmUsd: tp && tp.costoKmUsd != null ? String(tp.costoKmUsd) : f.costoKmUsd,
+                            }))
+                          }}
+                          className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        >
+                          {showLegacy && (
+                            <option value={form.type}>{form.type}</option>
                           )}
-                        </>
-                      )
-                    })()
-                  ) : (
-                    <input
-                      type="text"
-                      value={form.type}
-                      onChange={(e) => setForm({ ...form, type: e.target.value })}
-                      className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="Camión, Camioneta…"
-                    />
-                  )}
+                          {tiposVehiculo.length === 0 && !showLegacy && (
+                            <option value="" disabled>Sin tipos configurados</option>
+                          )}
+                          {tiposVehiculo.map((tp) => (
+                            <option key={tp.nombre} value={tp.nombre}>{tp.nombre} · ${tp.costoKmUsd}/km</option>
+                          ))}
+                          <option value="__create__">+ Crear tipo nuevo…</option>
+                        </select>
+                        {creatingType && (
+                          <div className="mt-2 p-3 bg-gray-50 rounded-xl space-y-2">
+                            <div className="grid grid-cols-[1fr_130px] gap-2">
+                              <div>
+                                <label className="block text-xs text-gray-500 mb-1">Nombre del tipo</label>
+                                <input
+                                  type="text"
+                                  value={newTipoNombre}
+                                  onChange={(e) => setNewTipoNombre(e.target.value)}
+                                  className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                  placeholder="Camión"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs text-gray-500 mb-1">Costo por km (USD)</label>
+                                <div className="relative">
+                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={newTipoCosto}
+                                    onChange={(e) => setNewTipoCosto(e.target.value)}
+                                    className="w-full pl-7 pr-2 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    placeholder="1.65"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={handleCreateTipoInline}
+                                disabled={createTipoInlineMutation.isPending || newTipoNombre.trim() === ''}
+                                className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                              >
+                                {createTipoInlineMutation.isPending ? '...' : 'Crear tipo'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => { setCreatingType(false); setNewTipoNombre(''); setNewTipoCosto('') }}
+                                className="px-4 py-2 border rounded-xl text-sm text-gray-600 hover:bg-gray-50"
+                              >
+                                {t('common.cancel')}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
                 </div>
 
                 <div>
@@ -606,7 +708,7 @@ export default function VehiclesPage() {
                   />
                   <span>
                     <span className="text-sm font-medium text-gray-700">Usar este vehículo para calcular el domicilio</span>
-                    <span className="block text-xs text-gray-400">Solo un vehículo por sucursal.</span>
+                    <span className="block text-xs text-gray-400">Solo un vehículo por TIPO.</span>
                   </span>
                 </label>
               </div>

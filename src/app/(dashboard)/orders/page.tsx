@@ -36,6 +36,9 @@ interface OrderRow {
   deliveryDistanceKm?: number | null
   items?: OrderItem[]
   createdAt: string
+  status?: string | null
+  deliveredAt?: string | null
+  routeId?: string | null
   branch?: { id: string; name: string; lat: number; lng: number } | null
   route?: {
     id: string
@@ -52,6 +55,8 @@ export default function OrdersPage() {
   const { format } = useCurrency()
   const t = useT()
   const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState('recientes')
+  const [statusFilter, setStatusFilter] = useState('todos')
   const [detail, setDetail] = useState<OrderRow | null>(null)
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
@@ -73,16 +78,38 @@ export default function OrdersPage() {
     enabled: !!token,
   })
 
-  const q = search.trim().toLowerCase()
-  const filtered = orders.filter((o) =>
-    !q
-    || o.customerName.toLowerCase().includes(q)
-    || (o.route?.routeCode || '').toLowerCase().includes(q)
-    || (o.route?.vehicle?.name || '').toLowerCase().includes(q)
-    || (o.endAddress || o.address || '').toLowerCase().includes(q)
-  )
+  // Estado de entrega del pedido (para el badge y el filtro):
+  //  - Entregado: ya se entregó (deliveredAt) o su ruta está completada.
+  //  - En reparto: está en una ruta (asignado, saliendo) pero aún no entregado.
+  //  - Pendiente: todavía no está en ninguna ruta.
+  const deliveryStatus = (o: OrderRow) => {
+    if (o.deliveredAt || o.route?.status === 'completed') return { key: 'entregado', label: 'Entregado', cls: 'bg-green-100 text-green-700' }
+    if (o.routeId || o.route?.id) return { key: 'reparto', label: 'En reparto', cls: 'bg-blue-100 text-blue-700' }
+    return { key: 'pendiente', label: 'Pendiente', cls: 'bg-gray-100 text-gray-600' }
+  }
 
-  const paged = usePagedList(filtered, 25)
+  const q = search.trim().toLowerCase()
+  const filtered = orders
+    .filter((o) =>
+      !q
+      || o.customerName.toLowerCase().includes(q)
+      || (o.route?.routeCode || '').toLowerCase().includes(q)
+      || (o.route?.vehicle?.name || '').toLowerCase().includes(q)
+      || (o.endAddress || o.address || '').toLowerCase().includes(q)
+    )
+    .filter((o) => statusFilter === 'todos' || deliveryStatus(o).key === statusFilter)
+
+  const sorted = [...filtered].sort((a, b) => {
+    switch (sortBy) {
+      case 'precio_desc': return (b.price ?? 0) - (a.price ?? 0)
+      case 'precio_asc': return (a.price ?? 0) - (b.price ?? 0)
+      case 'distancia_desc': return (b.deliveryDistanceKm ?? 0) - (a.deliveryDistanceKm ?? 0)
+      case 'peso_desc': return (b.weight ?? 0) - (a.weight ?? 0)
+      default: return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    }
+  })
+
+  const paged = usePagedList(sorted, 25)
 
   const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString() : '—'
   const itemLabel = (it: OrderItem) => it.name || it.description || '—'
@@ -96,8 +123,29 @@ export default function OrdersPage() {
             <h3 className="text-lg font-semibold text-gray-700">{t('ord.title')}</h3>
             <p className="text-sm text-gray-500">{t('ord.subtitle')}</p>
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-gray-500">{t('ord.totalOrders', { n: filtered.length })}</span>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-sm text-gray-500">{t('ord.totalOrders', { n: sorted.length })}</span>
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="todos">Todos los estados</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="reparto">En reparto</option>
+              <option value="entregado">Entregado</option>
+            </select>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="recientes">Más recientes</option>
+              <option value="precio_desc">Precio: mayor a menor</option>
+              <option value="precio_asc">Precio: menor a mayor</option>
+              <option value="distancia_desc">Distancia: más larga</option>
+              <option value="peso_desc">Peso: mayor</option>
+            </select>
             <div className="relative">
               <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
@@ -172,7 +220,11 @@ export default function OrdersPage() {
                     <td className="px-4 py-3 text-gray-600 text-xs max-w-[200px] truncate">{o.endAddress || o.address}</td>
                     <td className="px-4 py-3 text-right font-mono text-xs">{o.weight?.toFixed(1)} kg</td>
                     <td className="px-4 py-3 text-right font-semibold text-green-700 font-mono">{o.price != null ? format(o.price) : '—'}</td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">{fmtDate(o.route?.deliveryDate)}</td>
+                    <td className="px-4 py-3">
+                      {(() => { const s = deliveryStatus(o); return (
+                        <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
+                      )})()}
+                    </td>
                     <td className="px-4 py-3 text-right text-gray-300"><Icon icon="mdi:chevron-right" /></td>
                   </tr>
                 ))}

@@ -21,6 +21,7 @@ export default function SettingsPage() {
     domMinFee: '0',
     domRoundTo: '0',
     domTipoCambio: '700',
+    domFactorCapacidad: '0.5',
   })
   // La tasa se edita como TEXTO (permite vaciar el campo y escribir libre); se convierte
   // a número solo al guardar (cleanList). Si se guardara número, borrar lo dejaba en 0.
@@ -51,6 +52,7 @@ export default function SettingsPage() {
         domMinFee: (settings.domMinFee ?? 0).toString(),
         domRoundTo: (settings.domRoundTo ?? 0).toString(),
         domTipoCambio: (settings.domTipoCambio ?? 700).toString(),
+        domFactorCapacidad: (settings.domFactorCapacidad ?? 0.5).toString(),
       })
       const list: CurrencyDef[] = Array.isArray(settings.currencies) ? settings.currencies : []
       // Seed with legacy CUP rate the first time so existing setup is preserved.
@@ -105,9 +107,10 @@ export default function SettingsPage() {
     // La fórmula oficial del domicilio usa el tipo de cambio (CUP por 1 USD). El costo por
     // km y la capacidad salen del vehículo marcado como referencia en cada sucursal.
     // Guardar el tipo de cambio marca la fórmula como configurada.
-    // El tipo de cambio ya vive en "Monedas" (tasa CUP); aquí solo el mínimo.
+    // El tipo de cambio ya vive en "Monedas" (tasa CUP); aquí el mínimo y el factor.
     updateHome.mutate({
       domMinFee: parseFloat(domForm.domMinFee) || 0,
+      domFactorCapacidad: parseFloat(domForm.domFactorCapacidad) || 0.5,
     })
   }
 
@@ -231,6 +234,20 @@ export default function SettingsPage() {
               <p className="text-[11px] text-gray-400 mt-1">Ningún domicilio baja de este valor (para que no salga gratis). 0 = sin mínimo.</p>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Factor de capacidad
+                <span className="ml-1 text-xs text-gray-400">(% promedio de carga del camión)</span>
+              </label>
+              <input
+                type="number" step="0.05" min="0.1" max="1"
+                value={domForm.domFactorCapacidad}
+                onChange={(e) => setDomForm({ ...domForm, domFactorCapacidad: e.target.value })}
+                className="w-full px-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-[11px] text-gray-400 mt-1">Se asume que el camión va a esta fracción de su capacidad en promedio. 0.5 = 50% (recomendado por el jefe). Menor = domicilios más caros.</p>
+            </div>
+
             <div className="sm:col-span-2 flex items-end gap-3">
               {homeSaved && (
                 <div className="bg-green-50 text-green-600 px-4 py-2 rounded-xl text-sm flex items-center gap-2">
@@ -252,7 +269,7 @@ export default function SettingsPage() {
             <p className="font-mono text-[13px] text-gray-800">C = CKK × D × PP</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
               <p><b className="font-mono">C</b> — <b>C</b>osto del domicilio (en CUP, se muestra también en USD).</p>
-              <p><b className="font-mono">CKK</b> — <b>C</b>osto por <b>K</b>g por <b>K</b>m = costo_km(USD) × tasa_CUP ÷ (0.5 × capacidad del camión).</p>
+              <p><b className="font-mono">CKK</b> — <b>C</b>osto por <b>K</b>g por <b>K</b>m = costo_km(USD) × tasa_CUP ÷ (factor × capacidad del camión). El <b>factor</b> lo pones abajo (0.5 = 50%).</p>
               <p><b className="font-mono">D</b> — <b>D</b>istancia = 2 × (almacén → cliente) km (ida y vuelta).</p>
               <p><b className="font-mono">PP</b> — <b>P</b>eso del <b>P</b>edido = suma del peso de los productos (kg).</p>
             </div>
