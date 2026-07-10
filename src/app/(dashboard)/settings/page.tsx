@@ -102,6 +102,24 @@ export default function SettingsPage() {
     }
   })
 
+  // Recálculo de TODOS los pedidos con la configuración vigente (tras cambiar el mínimo,
+  // el factor, la tarifa del vehículo o la tasa CUP).
+  const [recomputeMsg, setRecomputeMsg] = useState<{ ok: boolean; text: string } | null>(null)
+  const recompute = useMutation({
+    mutationFn: async () => {
+      const res = await axios.post('/api/admin/recompute', {}, { headers: { Authorization: `Bearer ${token}` }, timeout: 300000 })
+      return res.data as { total: number; actualizados: number; sucursal: string }
+    },
+    onSuccess: (d) => {
+      setRecomputeMsg({ ok: true, text: `Listo: ${d.actualizados} de ${d.total} pedidos recalculados (${d.sucursal}).` })
+      queryClient.invalidateQueries({ queryKey: ['orders'] })
+    },
+    onError: (err: unknown) => {
+      const msg = axios.isAxiosError(err) ? (err.response?.data?.error || err.message) : 'Error al recalcular'
+      setRecomputeMsg({ ok: false, text: msg })
+    },
+  })
+
   const handleSubmitHome = (e: React.FormEvent) => {
     e.preventDefault()
     // La fórmula oficial del domicilio usa el tipo de cambio (CUP por 1 USD). El costo por
@@ -219,8 +237,8 @@ export default function SettingsPage() {
           <form onSubmit={handleSubmitHome} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Costo mínimo del domicilio
-                <span className="ml-1 text-xs text-gray-400">(piso, en USD)</span>
+                Base del domicilio
+                <span className="ml-1 text-xs text-gray-400">(se suma al costo, en USD)</span>
               </label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
@@ -231,7 +249,7 @@ export default function SettingsPage() {
                   className="w-full pl-8 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-              <p className="text-[11px] text-gray-400 mt-1">Ningún domicilio baja de este valor (para que no salga gratis). 0 = sin mínimo.</p>
+              <p className="text-[11px] text-gray-400 mt-1">Se SUMA al costo de cada domicilio (para que no salga gratis y mantenga variación). Precio = base + costo. 0 = sin base.</p>
             </div>
 
             <div>
@@ -273,7 +291,41 @@ export default function SettingsPage() {
               <p><b className="font-mono">D</b> — <b>D</b>istancia = 2 × (almacén → cliente) km (ida y vuelta).</p>
               <p><b className="font-mono">PP</b> — <b>P</b>eso del <b>P</b>edido = suma del peso de los productos (kg).</p>
             </div>
-            <p className="text-gray-500 pt-1">El <b>costo por km</b> y la <b>capacidad</b> salen del vehículo con mayor CKK de la sucursal. La <b>tasa CUP</b> es la de «Monedas» (arriba). El resultado en USD = C ÷ tasa_CUP.</p>
+            <p className="text-gray-500 pt-1">El <b>costo por km</b> y la <b>capacidad</b> salen del vehículo con mayor CKK de la sucursal. La <b>tasa CUP</b> es la de «Monedas» (arriba). El precio final en USD = <b>base + (C ÷ tasa_CUP)</b> — la <b>base</b> (arriba) se suma para que ningún domicilio salga gratis.</p>
+          </div>
+
+          {/* Recalcular todos los pedidos con la configuración actual */}
+          <div className="mt-4 border border-blue-100 bg-blue-50/60 rounded-xl p-4">
+            <div className="flex items-start justify-between gap-4 flex-wrap">
+              <div className="min-w-0">
+                <p className="font-semibold text-gray-800 flex items-center gap-2">
+                  <Icon icon="mdi:calculator-variant-outline" className="text-lg text-primary" />
+                  Recalcular el domicilio de todos los pedidos
+                </p>
+                <p className="text-xs text-gray-500 mt-1 max-w-xl">
+                  Aplica la configuración vigente (mínimo, factor, tarifa del vehículo y tasa CUP)
+                  a <b>todos</b> los pedidos con ubicación. Úsalo cuando cambies algún valor de la
+                  fórmula. Puede tardar unos segundos.
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={recompute.isPending}
+                onClick={() => { setRecomputeMsg(null); recompute.mutate() }}
+                className="px-5 py-3 bg-primary text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 shrink-0"
+              >
+                {recompute.isPending ? (
+                  <><Icon icon="mdi:loading" className="animate-spin text-lg" /> Recalculando…</>
+                ) : (
+                  <><Icon icon="mdi:refresh" className="text-lg" /> Recalcular todos</>
+                )}
+              </button>
+            </div>
+            {recomputeMsg && (
+              <p className={`mt-3 text-sm font-medium ${recomputeMsg.ok ? 'text-green-700' : 'text-red-600'}`}>
+                {recomputeMsg.text}
+              </p>
+            )}
           </div>
         </div>
       </div>

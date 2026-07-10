@@ -20,6 +20,9 @@ interface OrderItem {
   packaging?: string | null
   quantity: number
   packs?: number | null
+  weightKg?: number | null     // peso de la línea (empaques × peso por empaque)
+  unitWeightKg?: number | null // peso por empaque (blister) del almacén
+  matched?: boolean            // false = producto sin match de peso
 }
 
 interface OrderRow {
@@ -220,7 +223,7 @@ export default function OrdersPage() {
                       {o.items && o.items.length > 0 ? (
                         <div className="relative group inline-flex items-center gap-1">
                           <span className="text-[11px] bg-gray-100 rounded-full px-2 py-0.5 truncate max-w-[150px]">
-                            {itemLabel(o.items[0])} <b>×{o.items[0].quantity}</b>
+                            {itemLabel(o.items[0])} <b>×{o.items[0].packs ?? o.items[0].quantity}</b>
                           </span>
                           {o.items.length > 1 && (
                             <span className="text-[11px] bg-blue-100 text-blue-700 rounded-full px-2 py-0.5 whitespace-nowrap font-medium">
@@ -232,7 +235,7 @@ export default function OrdersPage() {
                               {o.items.map((it, i) => (
                                 <div key={i} className="flex items-center justify-between gap-2 text-[11px]">
                                   <span className="truncate text-gray-700">{itemLabel(it)}</span>
-                                  <b className="shrink-0 text-gray-900">×{it.quantity}</b>
+                                  <b className="shrink-0 text-gray-900">×{it.packs ?? it.quantity} <span className="font-normal text-gray-400">emp.</span></b>
                                 </div>
                               ))}
                             </div>
@@ -369,9 +372,19 @@ export default function OrdersPage() {
                       <div key={i} className="flex items-center justify-between gap-2 bg-gray-50 rounded-lg px-3 py-2 text-sm">
                         <div className="min-w-0">
                           <p className="text-gray-800 truncate">{itemLabel(it)}</p>
-                          {it.packs != null && <p className="text-[11px] text-gray-400">{it.packs} pack(s)</p>}
+                          <p className="text-[11px] text-gray-400">
+                            {it.quantity != null && `${it.quantity} unidades`}
+                            {it.unitWeightKg ? ` · ${it.unitWeightKg.toFixed(2)} kg/empaque` : ''}
+                          </p>
                         </div>
-                        <b className="shrink-0 text-gray-900">×{it.quantity}</b>
+                        <div className="shrink-0 text-right">
+                          <b className="text-gray-900">×{it.packs ?? it.quantity} <span className="font-normal text-[11px] text-gray-400">empaques</span></b>
+                          {it.weightKg != null && it.weightKg > 0 ? (
+                            <p className="text-[11px] font-mono text-gray-500">{it.weightKg.toFixed(2)} kg</p>
+                          ) : it.matched === false ? (
+                            <p className="text-[11px] text-amber-500">sin peso</p>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
                   </div>

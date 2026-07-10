@@ -109,7 +109,7 @@ export function calculateDomicilioOficial(
   costoKmUsd: number,
   capacidadKg: number,
   tipoCambio: number,
-  minUsd = 0,
+  baseUsd = 0,
   factorCapacidad = 0.5,
 ): { cup: number; usd: number; ckk: number } {
   if (!capacidadKg || capacidadKg <= 0 || !tipoCambio || tipoCambio <= 0) {
@@ -117,10 +117,11 @@ export function calculateDomicilioOficial(
   }
   const f = factorCapacidad && factorCapacidad > 0 ? factorCapacidad : 0.5
   const ckk = (costoKmUsd * tipoCambio) / (f * capacidadKg)
-  // La app es en USD: se calcula el costo (CUP por la fórmula) y se pasa a USD. El PISO
-  // (mínimo para que no salga gratis) se aplica en USD. El CUP es solo para mostrarlo.
-  let usd = (ckk * (2 * distanceKm) * pesoKg) / tipoCambio
-  usd = Math.max(usd, minUsd || 0)
+  // La app es en USD: se calcula el costo por la fórmula (CUP) y se pasa a USD. La BASE se
+  // SUMA al costo real (para que nunca salga gratis y mantenga variación). El CUP es solo
+  // para mostrarlo.  precio = base + (CKK × D × PP) ÷ tasa
+  const formulaUsd = (ckk * (2 * distanceKm) * pesoKg) / tipoCambio
+  const usd = formulaUsd + (baseUsd || 0)
   return { cup: usd * tipoCambio, usd, ckk }
 }
 

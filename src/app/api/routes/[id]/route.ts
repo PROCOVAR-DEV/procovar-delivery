@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { resolveScope, scopeWhere } from '@/lib/scope'
 import {
   greedyRouteOptimization,
   calculateRouteSegments,
@@ -42,8 +43,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const scope = await resolveScope(req, user)
   const route = await prisma.route.findFirst({
-    where: { id, userId: user.id as string },
+    where: { id, ...scopeWhere(scope) },
     include: {
       orders: { orderBy: { stopOrder: 'asc' } }
     }
@@ -60,8 +62,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const data = await req.json()
 
+  const scope = await resolveScope(req, user)
   const route = await prisma.route.findFirst({
-    where: { id, userId: user.id as string },
+    where: { id, ...scopeWhere(scope) },
     include: { orders: { orderBy: { stopOrder: 'asc' } }, vehicle: true }
   })
   if (!route) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
@@ -131,7 +134,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             items: (Array.isArray(s.items) ? s.items : []) as unknown as Prisma.InputJsonValue,
             tripLeg: 'outbound',
             routeId: id,
-            userId: user.id as string,
+            userId: scope.ownerId,
+            ...(scope.branchId ? { branchId: scope.branchId } : {}),
           }
         })
       )
@@ -212,8 +216,9 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const scope = await resolveScope(req, user)
   const route = await prisma.route.findFirst({
-    where: { id, userId: user.id as string }
+    where: { id, ...scopeWhere(scope) }
   })
   if (!route) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 
@@ -224,8 +229,13 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
   }
 
-  // Orders were created for this route inline; remove them with the route.
-  await prisma.order.deleteMany({ where: { routeId: id } })
+  // Los pedidos IMPORTADOS (source='pedido') solo se desvinculan: vuelven al pool para
+  // poder re-rutearlos. Los creados a mano en esta ruta (source distinto) sí se borran.
+  await prisma.order.updateMany({
+    where: { routeId: id, source: 'pedido' },
+    data: { routeId: null, stopOrder: null, segmentKm: null, tripLeg: 'outbound' },
+  })
+  await prisma.order.deleteMany({ where: { routeId: id, NOT: { source: 'pedido' } } })
   await prisma.route.delete({ where: { id } })
   return NextResponse.json({ success: true })
 }

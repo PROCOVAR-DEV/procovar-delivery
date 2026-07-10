@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { isValidServiceKey } from '@/lib/serviceAuth'
 import {
   OrderQuoteInput,
-  weightFromItems,
+  computeItemsWeights,
   buildOrderData,
   BranchOrigin,
 } from '@/lib/homeDeliveryQuote'
@@ -141,7 +141,8 @@ export async function POST(req: NextRequest) {
       continue
     }
 
-    const weightKg = weightFromItems(input.items, Number(input.weight) || 0, catalog)
+    const { total: itemsTotal, items: weightedItems } = computeItemsWeights(input.items, catalog)
+    const weightKg = itemsTotal > 0 ? itemsTotal : (Number(input.weight) || 0)
     const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
     const dom = calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
     const price = dom.usd // se guarda en USD (base); el front convierte a CUP con la tasa
@@ -171,6 +172,7 @@ export async function POST(req: NextRequest) {
     const computed = {
       weightKg,
       distanceKm,
+      items: weightedItems,
       quote: {
         price, distanceKm, chargeableKm: 0, weightKg,
         breakdown: { base: 0, distance: 0, weight: 0, beforeMin: price, beforeRound: price },

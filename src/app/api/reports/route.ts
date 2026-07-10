@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,9 +26,13 @@ export async function GET(req: NextRequest) {
   // Orders are tied to a vehicle through their route.
   const vehicleFilter = vehicleId ? { route: { vehicleId } } : {}
 
+  // Scopeado por sucursal (dueño + sucursal), igual que el resto de la app. Antes filtraba
+  // por userId del usuario logueado, y un admin de sucursal veía VACÍO (el dato es del owner).
+  const scope = await resolveScope(req, user)
+
   const dbOrders = await prisma.order.findMany({
     where: {
-      userId: user.id as string,
+      ...scopeWhere(scope),
       ...dateFilter,
       ...vehicleFilter,
     },
@@ -37,6 +42,11 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
+  // Ingreso por pedido = su costo de domicilio. `price` se llena al rutear; para los
+  // pedidos aún no ruteados usamos `deliveryPrice` (el costo ya calculado del domicilio).
+  const revenueOf = (o: { price: number | null; deliveryPrice: number | null }) =>
+    (o.price != null ? o.price : (o.deliveryPrice ?? 0))
+
   // Flatten the vehicle from the route for easy display/export.
   const orders = dbOrders.map((o) => ({
     id: o.id,
@@ -44,7 +54,7 @@ export async function GET(req: NextRequest) {
     address: o.address,
     endAddress: o.endAddress,
     weight: o.weight,
-    price: o.price,
+    price: revenueOf(o),
     segmentKm: o.segmentKm,
     createdAt: o.createdAt,
     routeName: o.route?.routeCode || o.route?.name || null,
@@ -65,7 +75,7 @@ export async function GET(req: NextRequest) {
       byVehicle[v.id] = { name: v.name, plate: v.plate, count: 0, revenue: 0, weight: 0 }
     }
     byVehicle[v.id].count++
-    byVehicle[v.id].revenue += o.price || 0
+    byVehicle[v.id].revenue += revenueOf(o)
     byVehicle[v.id].weight += o.weight || 0
   }
 

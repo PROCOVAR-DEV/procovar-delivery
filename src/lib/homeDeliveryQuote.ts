@@ -36,27 +36,57 @@ export interface OrderQuoteInput {
  *    unidades de venta). Lo que no matchea o no tiene peso cargado aporta 0 kg.
  * Devuelve 0 si no se pudo resolver nada (peso "sin calcular" para las rutas).
  */
+/** Item con su peso ya resuelto (para guardarlo y mostrar el desglose por producto). */
+export interface WeightedItem extends QuoteItem {
+  weightKg: number       // peso de la LÍNEA (packs × peso por pack). 0 = sin match / sin peso.
+  unitWeightKg: number   // peso por unidad de venta (pack) del warehouse (informativo).
+  matched: boolean       // true si se resolvió el peso; false = producto sin match.
+  whName?: string | null // nombre del producto en el warehouse con que emparejó.
+}
+
+/**
+ * Resuelve el peso de CADA item de un pedido y el total.
+ *  - Si el item trae `weight` explícito (cotización manual), línea = weight × cantidad.
+ *  - Si no, se resuelve el peso POR UNIDAD DE VENTA en el catálogo del Data Warehouse
+ *    (por SKU o por nombre normalizado/fuzzy) y línea = peso_por_pack × `packs`.
+ *  - Lo que no matchea o no tiene peso cargado aporta 0 kg (matched=false).
+ */
+export function computeItemsWeights(
+  items: QuoteItem[] | undefined,
+  catalog?: WeightCatalog,
+): { total: number; items: WeightedItem[] } {
+  if (!Array.isArray(items) || items.length === 0) return { total: 0, items: [] }
+  let total = 0
+  const out: WeightedItem[] = items.map((it) => {
+    const manual = Number(it.weight) || 0
+    if (manual > 0) {
+      const line = manual * (Number(it.quantity) || 1)
+      total += line
+      return { ...it, weightKg: line, unitWeightKg: manual, matched: true, whName: null }
+    }
+    if (catalog) {
+      const hit = catalog.resolve(it.name, it.sku || it.code)
+      if (hit.weightKg > 0) {
+        const packs = Number(it.packs) || 0
+        const line = hit.weightKg * packs
+        total += line
+        return { ...it, weightKg: line, unitWeightKg: hit.weightKg, matched: true, whName: hit.whName ?? null }
+      }
+    }
+    return { ...it, weightKg: 0, unitWeightKg: 0, matched: false, whName: null }
+  })
+  return { total, items: out }
+}
+
+/** Peso total (kg) de un pedido a partir de sus items. Ver `computeItemsWeights`. */
 export function weightFromItems(
   items: QuoteItem[] | undefined,
   fallback: number,
   catalog?: WeightCatalog,
 ): number {
   if (!Array.isArray(items) || items.length === 0) return fallback || 0
-  let w = 0
-  for (const it of items) {
-    const manual = Number(it.weight) || 0
-    if (manual > 0) {
-      w += manual * (Number(it.quantity) || 1)
-      continue
-    }
-    if (!catalog) continue
-    const hit = catalog.resolve(it.name, it.sku || it.code)
-    if (hit.weightKg > 0) {
-      const packs = Number(it.packs) || 0
-      w += hit.weightKg * packs
-    }
-  }
-  return w > 0 ? w : (fallback || 0)
+  const { total } = computeItemsWeights(items, catalog)
+  return total > 0 ? total : (fallback || 0)
 }
 
 /** Config `dom*` que necesita el cálculo de domicilio. */
@@ -81,6 +111,8 @@ export interface OrderQuoteResult {
   weightKg: number
   distanceKm: number
   quote: HomeDeliveryQuote
+  // Items con el peso ya resuelto por producto (para guardarlo y mostrar el desglose).
+  items: WeightedItem[]
 }
 
 /**
@@ -93,7 +125,8 @@ export function computeOrderQuote(
   settings: DomSettings,
   catalog?: WeightCatalog,
 ): OrderQuoteResult {
-  const weightKg = weightFromItems(input.items, Number(input.weight) || 0, catalog)
+  const { total, items } = computeItemsWeights(input.items, catalog)
+  const weightKg = total > 0 ? total : (Number(input.weight) || 0)
   const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
   const quote = calculateHomeDeliveryPrice(distanceKm, weightKg, {
     domBaseFee: settings.domBaseFee,
@@ -103,7 +136,7 @@ export function computeOrderQuote(
     domMinFee: settings.domMinFee,
     domRoundTo: settings.domRoundTo,
   })
-  return { weightKg, distanceKm, quote }
+  return { weightKg, distanceKm, quote, items }
 }
 
 /** Arma el objeto `data` para crear/actualizar el Order en delivery. */
@@ -124,7 +157,11 @@ export function buildOrderData(
     // Peso REAL para el generador de rutas (capacidad del camión). 0 = sin peso
     // resuelto (producto sin match o SKU sin weightKg en el warehouse).
     weight: computed.weightKg,
-    items: (Array.isArray(input.items) ? input.items : []) as unknown as Prisma.InputJsonValue,
+    // Items con el peso YA resuelto por producto (empaques × peso por empaque). Se guarda
+    // el desglose para verlo en el detalle del pedido cuando lleva varios productos.
+    items: (Array.isArray(computed.items) && computed.items.length
+      ? computed.items
+      : (Array.isArray(input.items) ? input.items : [])) as unknown as Prisma.InputJsonValue,
     notes: input.notes || null,
     deliveryPrice: computed.quote.price,
     deliveryDistanceKm: computed.distanceKm,

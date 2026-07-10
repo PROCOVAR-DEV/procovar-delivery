@@ -80,6 +80,14 @@ interface SavedOrigin {
   lng: number
 }
 
+interface BranchOrigin {
+  id: string
+  name: string
+  address?: string | null
+  lat: number
+  lng: number
+}
+
 interface AvailableOrder {
   id: string
   operationNumber?: string | null
@@ -302,6 +310,17 @@ export default function RoutesPage() {
     enabled: !!token,
   })
 
+  // Sucursales (con su ubicación) — usadas como punto de partida por defecto cuando la
+  // sucursal aún no tiene un origen guardado.
+  const { data: branches = [] } = useQuery({
+    queryKey: ['branches'],
+    queryFn: async () => {
+      const res = await axios.get('/api/branches', { headers: { Authorization: `Bearer ${token}` } })
+      return res.data as BranchOrigin[]
+    },
+    enabled: !!token,
+  })
+
   const { data: availableOrders = [], isLoading: loadingAvailable } = useQuery({
     queryKey: ['orders-available', orderSearch],
     queryFn: async () => {
@@ -314,18 +333,25 @@ export default function RoutesPage() {
     enabled: !!token,
   })
 
-  // When the create modal opens and no depot is set yet, default to the first
-  // saved origin (the branch's start point) so the user needn't locate it manually.
+  // Al abrir el modal, si aún no hay depósito, se pone por defecto el punto de partida de
+  // la sucursal: primero un origen guardado; si no hay, la ubicación de la sucursal misma.
   useEffect(() => {
     if (!showModal) return
     if (depot.lat != null && depot.lng != null) return
     const origins = savedOrigins as SavedOrigin[]
-    if (origins.length === 0) return
-    const first = origins[0]
-    setDepot({ address: first.address, lat: first.lat, lng: first.lng })
-    setSelectedOriginId(first.id)
+    if (origins.length > 0) {
+      const first = origins[0]
+      setDepot({ address: first.address, lat: first.lat, lng: first.lng })
+      setSelectedOriginId(first.id)
+      return
+    }
+    // Fallback: ubicación de la sucursal (la del usuario, o la primera si es admin).
+    const b = (branches as BranchOrigin[]).find((x) => x.id === user?.branchId) ?? (branches as BranchOrigin[])[0]
+    if (b) {
+      setDepot({ address: b.address || b.name, lat: b.lat, lng: b.lng })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showModal, savedOrigins])
+  }, [showModal, savedOrigins, branches])
 
   const createRoute = useMutation({
     mutationFn: async (data: unknown) => {
