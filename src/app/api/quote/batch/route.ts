@@ -100,7 +100,10 @@ export async function POST(req: NextRequest) {
     return best
   }
 
-  const tc = settings.domTipoCambio || 700
+  // Tipo de cambio = la tasa CUP de "Monedas" (no se repite en el domicilio). Fallback: 700.
+  const cupList = Array.isArray(settings.currencies) ? (settings.currencies as Array<{ code?: string; rate?: number }>) : []
+  const cupEntry = cupList.find((c) => String(c.code || '').toUpperCase() === 'CUP')
+  const tc = Number(cupEntry?.rate) || settings.cupRate || settings.domTipoCambio || 700
   const results: Array<Record<string, unknown>> = []
   let quoted = 0
   let persisted = 0

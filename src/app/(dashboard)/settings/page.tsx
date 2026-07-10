@@ -105,8 +105,8 @@ export default function SettingsPage() {
     // La fórmula oficial del domicilio usa el tipo de cambio (CUP por 1 USD). El costo por
     // km y la capacidad salen del vehículo marcado como referencia en cada sucursal.
     // Guardar el tipo de cambio marca la fórmula como configurada.
+    // El tipo de cambio ya vive en "Monedas" (tasa CUP); aquí solo el mínimo.
     updateHome.mutate({
-      domTipoCambio: parseFloat(domForm.domTipoCambio) || 700,
       domMinFee: parseFloat(domForm.domMinFee) || 0,
     })
   }
@@ -216,22 +216,6 @@ export default function SettingsPage() {
           <form onSubmit={handleSubmitHome} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Tipo de cambio
-                <span className="ml-1 text-xs text-gray-400">(CUP por 1 USD)</span>
-              </label>
-              <div className="relative">
-                <input
-                  type="number" step="1" min="0"
-                  value={domForm.domTipoCambio}
-                  onChange={(e) => setDomForm({ ...domForm, domTipoCambio: e.target.value })}
-                  className="w-full pl-4 pr-14 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">CUP</span>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
                 Costo mínimo del domicilio
                 <span className="ml-1 text-xs text-gray-400">(piso, en CUP)</span>
               </label>
@@ -263,11 +247,16 @@ export default function SettingsPage() {
             </div>
           </form>
 
-          <div className="mt-4 bg-gray-50 p-4 rounded-xl font-mono text-xs text-gray-700 space-y-1">
-            <p>CKK = costo_km(USD) × tipo_cambio / (0.5 × capacidad_camión)</p>
-            <p>C   = CKK × (2 × distancia) × peso_pedido      (en CUP)</p>
-            <p>domicilio(USD) = C / tipo_cambio</p>
-            <p className="text-gray-500">// El costo por km y la capacidad salen del vehículo marcado &apos;usar para calcular domicilio&apos; en cada sucursal.</p>
+          <div className="mt-4 bg-gray-50 p-4 rounded-xl text-xs text-gray-700 space-y-2">
+            <p className="font-semibold text-gray-800">Fórmula del costo del domicilio</p>
+            <p className="font-mono text-[13px] text-gray-800">C = CKK × D × PP</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+              <p><b className="font-mono">C</b> — <b>C</b>osto del domicilio (en CUP, se muestra también en USD).</p>
+              <p><b className="font-mono">CKK</b> — <b>C</b>osto por <b>K</b>g por <b>K</b>m = costo_km(USD) × tasa_CUP ÷ (0.5 × capacidad del camión).</p>
+              <p><b className="font-mono">D</b> — <b>D</b>istancia = 2 × (almacén → cliente) km (ida y vuelta).</p>
+              <p><b className="font-mono">PP</b> — <b>P</b>eso del <b>P</b>edido = suma del peso de los productos (kg).</p>
+            </div>
+            <p className="text-gray-500 pt-1">El <b>costo por km</b> y la <b>capacidad</b> salen del vehículo con mayor CKK de la sucursal. La <b>tasa CUP</b> es la de «Monedas» (arriba). El resultado en USD = C ÷ tasa_CUP.</p>
           </div>
         </div>
       </div>
