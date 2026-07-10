@@ -79,12 +79,25 @@ export async function POST(req: NextRequest) {
   const vehiculoCache = new Map<string, RefVehiculo>()
   async function getVehiculoRef(creatorId: string): Promise<RefVehiculo> {
     if (vehiculoCache.has(creatorId)) return vehiculoCache.get(creatorId) as RefVehiculo
-    const v = await prisma.vehicle.findFirst({
-      where: { userId: creatorId, usarParaDomicilio: true, costoKmUsd: { not: null } },
+    const vs = await prisma.vehicle.findMany({
+      where: { userId: creatorId, costoKmUsd: { not: null }, capacity: { gt: 0 } },
+      select: { costoKmUsd: true, capacity: true, usarParaDomicilio: true },
     })
-    const info: RefVehiculo = v && v.costoKmUsd != null ? { costoKmUsd: v.costoKmUsd, capacidadKg: v.capacity } : null
-    vehiculoCache.set(creatorId, info)
-    return info
+    // Decisión del jefe: UN solo CKK para todos los repartos, el MAYOR de la flota
+    // (curarse en salud). CKK ∝ costoKmUsd / capacidad. Un vehículo marcado
+    // `usarParaDomicilio` actúa como override manual y gana.
+    const override = vs.find((v) => v.usarParaDomicilio && v.costoKmUsd != null)
+    let best: RefVehiculo = override ? { costoKmUsd: override.costoKmUsd as number, capacidadKg: override.capacity } : null
+    if (!best) {
+      let bestCkk = -1
+      for (const v of vs) {
+        if (v.costoKmUsd == null) continue
+        const ckk = v.costoKmUsd / v.capacity
+        if (ckk > bestCkk) { bestCkk = ckk; best = { costoKmUsd: v.costoKmUsd, capacidadKg: v.capacity } }
+      }
+    }
+    vehiculoCache.set(creatorId, best)
+    return best
   }
 
   const tc = settings.domTipoCambio || 700

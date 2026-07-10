@@ -22,14 +22,14 @@ export async function PUT(req: NextRequest) {
 
   const {
     baseFee, costPerKm, costPerKg, currency, cupRate, currencies,
-    domBaseFee, domCostPerKm, domCostPerKg, domIncludedKm, domMinFee, domRoundTo,
+    domBaseFee, domCostPerKm, domCostPerKg, domIncludedKm, domMinFee, domRoundTo, domTipoCambio,
   } = await req.json()
 
   let settings = await prisma.settings.findFirst()
 
   // Guardar cualquier campo de la fórmula del domicilio marca la fórmula como
   // CONFIGURADA (habilita el cálculo, junto con el punto de partida).
-  const domProvided = [domBaseFee, domCostPerKm, domCostPerKg, domIncludedKm, domMinFee, domRoundTo]
+  const domProvided = [domBaseFee, domCostPerKm, domCostPerKg, domIncludedKm, domMinFee, domRoundTo, domTipoCambio]
     .some((v) => v !== undefined)
 
   const updateData = {
@@ -45,6 +45,7 @@ export async function PUT(req: NextRequest) {
     ...(domIncludedKm !== undefined && { domIncludedKm }),
     ...(domMinFee !== undefined && { domMinFee }),
     ...(domRoundTo !== undefined && { domRoundTo }),
+    ...(domTipoCambio !== undefined && { domTipoCambio }),
     ...(domProvided && { domConfigured: true }),
   }
 

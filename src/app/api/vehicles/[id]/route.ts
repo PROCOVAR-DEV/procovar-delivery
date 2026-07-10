@@ -33,16 +33,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   })
   if (!vehicle) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const updated = await prisma.vehicle.update({
-    where: { id },
-    data: {
-      ...(data.name !== undefined && { name: data.name }),
-      ...(data.type !== undefined && { type: data.type }),
-      ...(data.plate !== undefined && { plate: data.plate }),
-      ...(data.capacity !== undefined && { capacity: data.capacity }),
-      ...(data.status !== undefined && { status: data.status }),
-      ...(data.notes !== undefined && { notes: data.notes }),
+  const updateData = {
+    ...(data.name !== undefined && { name: data.name }),
+    ...(data.type !== undefined && { type: data.type }),
+    ...(data.plate !== undefined && { plate: data.plate }),
+    ...(data.capacity !== undefined && { capacity: data.capacity }),
+    ...(data.status !== undefined && { status: data.status }),
+    ...(data.notes !== undefined && { notes: data.notes }),
+    ...(data.costoKmUsd !== undefined && { costoKmUsd: data.costoKmUsd }),
+    ...(data.usarParaDomicilio !== undefined && { usarParaDomicilio: data.usarParaDomicilio === true }),
+  }
+
+  const updated = await prisma.$transaction(async (tx) => {
+    // Solo UN vehículo por sucursal puede ser la referencia de cálculo del domicilio.
+    if (data.usarParaDomicilio === true) {
+      await tx.vehicle.updateMany({
+        where: { userId: user.id as string, id: { not: id } },
+        data: { usarParaDomicilio: false },
+      })
     }
+    return tx.vehicle.update({ where: { id }, data: updateData })
   })
 
   // When marking a vehicle as available, auto-complete its active route

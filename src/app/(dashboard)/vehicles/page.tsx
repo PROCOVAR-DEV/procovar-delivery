@@ -17,6 +17,8 @@ interface Vehicle {
   capacity: number
   status: string
   notes: string | null
+  costoKmUsd: number | null
+  usarParaDomicilio: boolean
   _count: { routes: number; orders: number }
   routes?: { id: string; name: string; status: string }[]
 }
@@ -28,6 +30,8 @@ interface VehicleFormData {
   capacity: string
   status: string
   notes: string
+  costoKmUsd: string
+  usarParaDomicilio: boolean
 }
 
 const defaultForm: VehicleFormData = {
@@ -37,6 +41,8 @@ const defaultForm: VehicleFormData = {
   capacity: '1000',
   status: 'available',
   notes: '',
+  costoKmUsd: '',
+  usarParaDomicilio: false,
 }
 
 const vehicleTypes = [
@@ -66,6 +72,9 @@ export default function VehiclesPage() {
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null)
   const [form, setForm] = useState<VehicleFormData>(defaultForm)
   const [search, setSearch] = useState('')
+  // Ayudante para estimar el costo por km a partir de lo que cobra el camionero.
+  const [helperCup, setHelperCup] = useState('')
+  const [helperKm, setHelperKm] = useState('')
 
   const { data: vehicles = [], isLoading } = useQuery({
     queryKey: ['vehicles'],
@@ -77,6 +86,19 @@ export default function VehiclesPage() {
     },
     enabled: !!token
   })
+
+  const { data: settings } = useQuery({
+    queryKey: ['settings'],
+    queryFn: async () => {
+      const res = await axios.get('/api/settings', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      return res.data
+    },
+    enabled: !!token
+  })
+
+  const tipoCambio = Number(settings?.domTipoCambio) || 700
 
   const createMutation = useMutation({
     mutationFn: async (data: unknown) => {
@@ -140,6 +162,8 @@ export default function VehiclesPage() {
       capacity: parseFloat(form.capacity) || 1000,
       status: form.status,
       notes: form.notes || null,
+      costoKmUsd: form.costoKmUsd.trim() === '' ? null : parseFloat(form.costoKmUsd),
+      usarParaDomicilio: form.usarParaDomicilio,
     }
     if (editingVehicle) {
       updateMutation.mutate({ id: editingVehicle.id, data })
@@ -157,14 +181,29 @@ export default function VehiclesPage() {
       capacity: vehicle.capacity.toString(),
       status: vehicle.status,
       notes: vehicle.notes || '',
+      costoKmUsd: vehicle.costoKmUsd != null ? vehicle.costoKmUsd.toString() : '',
+      usarParaDomicilio: vehicle.usarParaDomicilio ?? false,
     })
+    setHelperCup('')
+    setHelperKm('')
     setShowModal(true)
   }
 
   const openCreate = () => {
     setEditingVehicle(null)
     setForm(defaultForm)
+    setHelperCup('')
+    setHelperKm('')
     setShowModal(true)
+  }
+
+  const calcCostoKm = () => {
+    const cup = parseFloat(helperCup)
+    const km = parseFloat(helperKm)
+    if (!cup || !km || km <= 0 || !tipoCambio) return
+    // costo_km(USD) = cobroCup / (2 × km × tipoCambio)   (2× por ida y vuelta)
+    const value = cup / (2 * km * tipoCambio)
+    setForm((f) => ({ ...f, costoKmUsd: value.toFixed(2) }))
   }
 
   const q = search.trim().toLowerCase()
@@ -242,6 +281,18 @@ export default function VehiclesPage() {
                     {t(`veh.status.${vehicle.status}`)}
                   </span>
                 </div>
+
+                {vehicle.usarParaDomicilio && (
+                  <div className="flex flex-wrap items-center gap-2 mb-4">
+                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-primary/10 text-primary">
+                      <Icon icon="mdi:calculator-variant-outline" className="text-sm" />
+                      Cálculo domicilio
+                    </span>
+                    {vehicle.costoKmUsd != null && (
+                      <span className="text-xs font-semibold text-gray-700">${vehicle.costoKmUsd}/km</span>
+                    )}
+                  </div>
+                )}
 
                 <div className="grid grid-cols-2 gap-3 mb-4 text-center">
                   <div className="bg-gray-50 rounded-xl p-2">
@@ -397,6 +448,86 @@ export default function VehiclesPage() {
                     <option value="maintenance">{t('veh.status.maintenance')}</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Configuración del cálculo del domicilio (fórmula oficial) */}
+              <div className="border-t pt-4 space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Costo por km (USD)</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={form.costoKmUsd}
+                      onChange={(e) => setForm({ ...form, costoKmUsd: e.target.value })}
+                      className="w-full pl-8 pr-4 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="1.65"
+                    />
+                  </div>
+                </div>
+
+                <details className="bg-gray-50 rounded-xl p-3 text-sm text-gray-700">
+                  <summary className="cursor-pointer font-medium select-none flex items-center gap-1">
+                    <Icon icon="mdi:calculator-variant-outline" className="text-base" />
+                    ¿No sabes el costo por km?
+                  </summary>
+                  <div className="mt-3 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">El camionero cobra (CUP)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={helperCup}
+                          onChange={(e) => setHelperCup(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="180000"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 mb-1">hasta ___ km (ida)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={helperKm}
+                          onChange={(e) => setHelperKm(e.target.value)}
+                          className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder="72"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={calcCostoKm}
+                        className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700"
+                      >
+                        Calcular
+                      </button>
+                      {form.costoKmUsd && (
+                        <span className="text-sm text-gray-600">
+                          = <span className="font-semibold text-gray-800">${form.costoKmUsd}/km</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400">Tipo de cambio: {tipoCambio} CUP/USD. Se divide entre 2×km (ida y vuelta).</p>
+                  </div>
+                </details>
+
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.usarParaDomicilio}
+                    onChange={(e) => setForm({ ...form, usarParaDomicilio: e.target.checked })}
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-primary focus:ring-blue-500"
+                  />
+                  <span>
+                    <span className="text-sm font-medium text-gray-700">Usar este vehículo para calcular el domicilio</span>
+                    <span className="block text-xs text-gray-400">Solo un vehículo por sucursal.</span>
+                  </span>
+                </label>
               </div>
 
               <div className="bg-blue-50 rounded-xl p-3 text-xs text-blue-700 flex items-center gap-1">

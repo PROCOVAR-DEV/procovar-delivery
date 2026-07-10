@@ -20,6 +20,7 @@ export default function SettingsPage() {
     domIncludedKm: '0',
     domMinFee: '0',
     domRoundTo: '0',
+    domTipoCambio: '700',
   })
   // La tasa se edita como TEXTO (permite vaciar el campo y escribir libre); se convierte
   // a número solo al guardar (cleanList). Si se guardara número, borrar lo dejaba en 0.
@@ -49,6 +50,7 @@ export default function SettingsPage() {
         domIncludedKm: (settings.domIncludedKm ?? 0).toString(),
         domMinFee: (settings.domMinFee ?? 0).toString(),
         domRoundTo: (settings.domRoundTo ?? 0).toString(),
+        domTipoCambio: (settings.domTipoCambio ?? 700).toString(),
       })
       const list: CurrencyDef[] = Array.isArray(settings.currencies) ? settings.currencies : []
       // Seed with legacy CUP rate the first time so existing setup is preserved.
@@ -100,10 +102,11 @@ export default function SettingsPage() {
 
   const handleSubmitHome = (e: React.FormEvent) => {
     e.preventDefault()
-    // La fórmula del domicilio solo usa el costo por km. Guardarlo marca la fórmula
-    // como configurada (habilita el cálculo, junto con el punto de partida por sucursal).
+    // La fórmula oficial del domicilio usa el tipo de cambio (CUP por 1 USD). El costo por
+    // km y la capacidad salen del vehículo marcado como referencia en cada sucursal.
+    // Guardar el tipo de cambio marca la fórmula como configurada.
     updateHome.mutate({
-      domCostPerKm: parseFloat(domForm.domCostPerKm) || 0,
+      domTipoCambio: parseFloat(domForm.domTipoCambio) || 700,
     })
   }
 
@@ -212,17 +215,17 @@ export default function SettingsPage() {
           <form onSubmit={handleSubmitHome} className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                Costo por kilómetro
-                <span className="ml-1 text-xs text-gray-400">(se aplica ×2 por ida y vuelta)</span>
+                Tipo de cambio
+                <span className="ml-1 text-xs text-gray-400">(CUP por 1 USD)</span>
               </label>
               <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
                 <input
-                  type="number" step="0.01" min="0"
-                  value={domForm.domCostPerKm}
-                  onChange={(e) => setDomForm({ ...domForm, domCostPerKm: e.target.value })}
-                  className="w-full pl-8 pr-4 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  type="number" step="1" min="0"
+                  value={domForm.domTipoCambio}
+                  onChange={(e) => setDomForm({ ...domForm, domTipoCambio: e.target.value })}
+                  className="w-full pl-4 pr-14 py-3 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">CUP</span>
               </div>
             </div>
 
@@ -243,9 +246,10 @@ export default function SettingsPage() {
           </form>
 
           <div className="mt-4 bg-gray-50 p-4 rounded-xl font-mono text-xs text-gray-700 space-y-1">
-            <p>peso_carga = suma del peso de TODOS los pedidos del envío (por sucursal)</p>
-            <p>precio = 2 × distancia_almacén→cliente × peso_pedido × costo_km / peso_carga</p>
-            <p className="text-gray-500">// cada pedido paga su fracción de peso del costo del viaje (ida y vuelta)</p>
+            <p>CKK = costo_km(USD) × tipo_cambio / (0.5 × capacidad_camión)</p>
+            <p>C   = CKK × (2 × distancia) × peso_pedido      (en CUP)</p>
+            <p>domicilio(USD) = C / tipo_cambio</p>
+            <p className="text-gray-500">// El costo por km y la capacidad salen del vehículo marcado &apos;usar para calcular domicilio&apos; en cada sucursal.</p>
           </div>
         </div>
       </div>
