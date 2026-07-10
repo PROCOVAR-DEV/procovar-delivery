@@ -1,4 +1,11 @@
 import { create } from 'zustand'
+import axios from 'axios'
+
+// Header que el backend usa para scopear por sucursal (el admin elige una en el panel).
+function applySucursalHeader(id: string | null) {
+  if (id) axios.defaults.headers.common['x-sucursal-id'] = id
+  else delete axios.defaults.headers.common['x-sucursal-id']
+}
 
 export interface BranchInfo {
   id: string
@@ -69,6 +76,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({ language: lang })
   },
   setSucursalId: (id) => {
+    applySucursalHeader(id)
     if (typeof window !== 'undefined') {
       if (id) localStorage.setItem('sucursalId', id)
       else localStorage.removeItem('sucursalId')
@@ -103,6 +111,7 @@ if (typeof window !== 'undefined') {
     useAppStore.setState({ language: storedLang })
   }
   const storedSucursalId = localStorage.getItem('sucursalId')
+  applySucursalHeader(storedSucursalId)
   if (storedSucursalId) {
     useAppStore.setState({ sucursalId: storedSucursalId })
   }

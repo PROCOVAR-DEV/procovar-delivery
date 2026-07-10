@@ -42,7 +42,11 @@ export default function Navbar({ title }: { title: string }) {
             {isAdmin ? (
               <select
                 value={sucursalId ?? ''}
-                onChange={(e) => setSucursalId(e.target.value || null)}
+                onChange={(e) => {
+                  setSucursalId(e.target.value || null)
+                  // Recarga para que TODAS las vistas re-consulten scopeadas a la sucursal.
+                  if (typeof window !== 'undefined') window.location.reload()
+                }}
                 className="text-xs font-semibold bg-transparent text-ink py-1 pr-0.5 focus:outline-none cursor-pointer max-w-[160px]"
                 title={activeBranchName}
               >

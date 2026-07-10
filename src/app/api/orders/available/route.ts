@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,9 +17,10 @@ export async function GET(req: NextRequest) {
 
   const q = new URL(req.url).searchParams.get('q')?.trim().toLowerCase() || ''
 
+  const scope = await resolveScope(req, user)
   const orders = await prisma.order.findMany({
     where: {
-      userId: user.id as string,
+      ...scopeWhere(scope),
       source: 'pedido',
       routeId: null,
       endLat: { not: null },

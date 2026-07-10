@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,8 +9,9 @@ export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const scope = await resolveScope(req, user)
   const orders = await prisma.order.findMany({
-    where: { userId: user.id as string },
+    where: scopeWhere(scope),
     orderBy: { createdAt: 'desc' },
     include: {
       route: {

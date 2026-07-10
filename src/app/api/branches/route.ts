@@ -8,8 +8,12 @@ export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  // Usuario de sucursal: ve SOLO la suya. Admin: ve todas las que creó.
+  const where = user.branchId
+    ? { id: user.branchId }
+    : { creatorId: user.id as string }
   const branches = await prisma.branch.findMany({
-    where: { creatorId: user.id as string },
+    where,
     orderBy: { createdAt: 'desc' },
     include: { _count: { select: { members: true, origins: true } } },
   })

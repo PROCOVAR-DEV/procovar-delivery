@@ -7,6 +7,7 @@ import {
   calculateRouteSegments,
   haversineDistance,
 } from '@/lib/pricing'
+import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -62,6 +63,7 @@ async function createRouteFromExistingOrders(
   opts: {
     name?: string; vehicleId?: string; originAddress?: string
     originLat: number; originLng: number; deliveryDate?: string; orderIds: string[]
+    branchId?: string | null
   },
 ) {
   const { name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds } = opts
@@ -70,11 +72,14 @@ async function createRouteFromExistingOrders(
     where: {
       id: { in: orderIds }, userId, source: 'pedido', routeId: null,
       endLat: { not: null }, endLng: { not: null },
+      ...(opts.branchId ? { branchId: opts.branchId } : {}),
     },
   })
   if (orders.length === 0) {
     return NextResponse.json({ error: 'Los pedidos seleccionados ya no están disponibles' }, { status: 400 })
   }
+  // La ruta pertenece a la sucursal de sus pedidos (o la elegida por el admin).
+  const routeBranchId = opts.branchId ?? orders[0].branchId ?? null
 
   const totalW = orders.reduce((s, o) => s + (o.weight || 0), 0)
   const vehicle = vehicleId ? await prisma.vehicle.findFirst({ where: { id: vehicleId } }) : null
@@ -90,6 +95,7 @@ async function createRouteFromExistingOrders(
     data: {
       name: name || null, routeCode, userId,
       ...(vehicleId && { vehicleId }),
+      ...(routeBranchId ? { branchId: routeBranchId } : {}),
       originAddress: originAddress ?? null, originLat, originLng,
       deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
     },
@@ -142,8 +148,9 @@ export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const scope = await resolveScope(req, user)
   const routes = await prisma.route.findMany({
-    where: { userId: user.id as string },
+    where: scopeWhere(scope),
     orderBy: { createdAt: 'desc' },
     include: {
       vehicle: { select: { id: true, name: true, type: true, plate: true, capacity: true } },
@@ -206,11 +213,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Se requiere un vehículo para crear la ruta' }, { status: 400 })
   }
 
+  const scope = await resolveScope(req, user)
+
   // CAMINO PREFERIDO: armar la ruta con PEDIDOS YA IMPORTADOS (se seleccionan de la
   // lista; ya tienen ubicación, peso y costo de domicilio). No se re-teclea nada.
   if (Array.isArray(orderIds) && orderIds.length > 0) {
-    return await createRouteFromExistingOrders(user.id as string, {
-      name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds,
+    return await createRouteFromExistingOrders(scope.ownerId, {
+      name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds, branchId: scope.branchId,
     })
   }
 
@@ -248,7 +257,8 @@ export async function POST(req: NextRequest) {
     data: {
       name: name || null,
       routeCode,
-      userId: user.id as string,
+      userId: scope.ownerId,
+      ...(scope.branchId ? { branchId: scope.branchId } : {}),
       ...(vehicleId && { vehicleId }),
       originAddress: originAddress ?? null,
       originLat,
@@ -276,7 +286,8 @@ export async function POST(req: NextRequest) {
           items: (Array.isArray(s.items) ? s.items : []) as unknown as Prisma.InputJsonValue,
           tripLeg: 'outbound',
           routeId: route.id,
-          userId: user.id as string,
+          userId: scope.ownerId,
+          ...(scope.branchId ? { branchId: scope.branchId } : {}),
         }
       })
     )

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -8,8 +9,9 @@ export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  const scope = await resolveScope(req, user)
   const vehicles = await prisma.vehicle.findMany({
-    where: { userId: user.id as string },
+    where: scopeWhere(scope),
     orderBy: { createdAt: 'desc' },
     include: {
       _count: { select: { routes: true, orders: true, orderAssignments: true } },
@@ -35,7 +37,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Vehicle name is required' }, { status: 400 })
   }
 
-  const userId = user.id as string
+  const scope = await resolveScope(req, user)
+  const userId = scope.ownerId
+  const branchId = scope.branchId // sucursal del usuario o la elegida por el admin
   const useForDelivery = usarParaDomicilio === true
   const vehicleType = type || 'truck'
 
@@ -58,6 +62,7 @@ export async function POST(req: NextRequest) {
         costoKmUsd: costoKmUsd === undefined ? null : costoKmUsd,
         usarParaDomicilio: useForDelivery,
         userId,
+        ...(branchId ? { branchId } : {}),
       }
     })
   })
