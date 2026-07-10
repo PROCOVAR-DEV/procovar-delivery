@@ -83,18 +83,18 @@ export async function POST(req: NextRequest) {
       where: { userId: creatorId, costoKmUsd: { not: null }, capacity: { gt: 0 } },
       select: { costoKmUsd: true, capacity: true, usarParaDomicilio: true },
     })
-    // Decisión del jefe: UN solo CKK para todos los repartos, el MAYOR de la flota
-    // (curarse en salud). CKK ∝ costoKmUsd / capacidad. Un vehículo marcado
-    // `usarParaDomicilio` actúa como override manual y gana.
-    const override = vs.find((v) => v.usarParaDomicilio && v.costoKmUsd != null)
-    let best: RefVehiculo = override ? { costoKmUsd: override.costoKmUsd as number, capacidadKg: override.capacity } : null
-    if (!best) {
-      let bestCkk = -1
-      for (const v of vs) {
-        if (v.costoKmUsd == null) continue
-        const ckk = v.costoKmUsd / v.capacity
-        if (ckk > bestCkk) { bestCkk = ckk; best = { costoKmUsd: v.costoKmUsd, capacidadKg: v.capacity } }
-      }
+    // Decisión del jefe: UN solo CKK para todos los repartos, el MAYOR (curarse en salud).
+    // CKK ∝ costoKmUsd / capacidad. Si hay vehículos marcados `usarParaDomicilio` (uno por
+    // tipo), se toma el CKK máximo ENTRE LOS MARCADOS; si no hay ninguno marcado, el máximo
+    // de toda la flota.
+    const marcados = vs.filter((v) => v.usarParaDomicilio && v.costoKmUsd != null)
+    const pool = marcados.length ? marcados : vs
+    let best: RefVehiculo = null
+    let bestCkk = -1
+    for (const v of pool) {
+      if (v.costoKmUsd == null) continue
+      const ckk = v.costoKmUsd / v.capacity
+      if (ckk > bestCkk) { bestCkk = ckk; best = { costoKmUsd: v.costoKmUsd, capacidadKg: v.capacity } }
     }
     vehiculoCache.set(creatorId, best)
     return best
