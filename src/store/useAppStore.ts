@@ -24,10 +24,12 @@ interface AppState {
   token: string | null
   displayCurrency: string
   language: Lang
+  sucursalId: string | null
   setUser: (user: User | null) => void
   setToken: (token: string | null) => void
   setDisplayCurrency: (code: string) => void
   setLanguage: (lang: Lang) => void
+  setSucursalId: (id: string | null) => void
   logout: () => void
 }
 
@@ -36,6 +38,7 @@ export const useAppStore = create<AppState>((set) => ({
   token: null,
   displayCurrency: 'USD',
   language: 'es',
+  sucursalId: null,
   setUser: (user) => {
     if (typeof window !== 'undefined') {
       if (user) localStorage.setItem('user', JSON.stringify(user))
@@ -65,6 +68,13 @@ export const useAppStore = create<AppState>((set) => ({
     }
     set({ language: lang })
   },
+  setSucursalId: (id) => {
+    if (typeof window !== 'undefined') {
+      if (id) localStorage.setItem('sucursalId', id)
+      else localStorage.removeItem('sucursalId')
+    }
+    set({ sucursalId: id })
+  },
   logout: () => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('token')
@@ -91,5 +101,9 @@ if (typeof window !== 'undefined') {
   const storedLang = localStorage.getItem('language')
   if (storedLang === 'es' || storedLang === 'en') {
     useAppStore.setState({ language: storedLang })
+  }
+  const storedSucursalId = localStorage.getItem('sucursalId')
+  if (storedSucursalId) {
+    useAppStore.setState({ sucursalId: storedSucursalId })
   }
 }

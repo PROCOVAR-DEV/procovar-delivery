@@ -51,7 +51,7 @@ interface OrderRow {
 }
 
 export default function OrdersPage() {
-  const { token } = useAppStore()
+  const { token, sucursalId } = useAppStore()
   const { format } = useCurrency()
   const t = useT()
   const [search, setSearch] = useState('')
@@ -90,6 +90,7 @@ export default function OrdersPage() {
 
   const q = search.trim().toLowerCase()
   const filtered = orders
+    .filter((o) => !sucursalId || o.branch?.id === sucursalId)
     .filter((o) =>
       !q
       || o.customerName.toLowerCase().includes(q)

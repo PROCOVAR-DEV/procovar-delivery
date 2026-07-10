@@ -4,16 +4,60 @@ import { useAppStore } from '@/store/useAppStore'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
+import axios from 'axios'
+import { useQuery } from '@tanstack/react-query'
+
+interface Branch {
+  id: string
+  name: string
+}
 
 export default function Navbar({ title }: { title: string }) {
-  const { user, language, setLanguage } = useAppStore()
+  const { user, token, language, setLanguage, sucursalId, setSucursalId } = useAppStore()
   const { code, currencies, setDisplayCurrency } = useCurrency()
   const t = useT()
+
+  const { data: branches = [] } = useQuery({
+    queryKey: ['branches'],
+    queryFn: async () => {
+      const res = await axios.get('/api/branches', { headers: { Authorization: `Bearer ${token}` } })
+      return res.data as Branch[]
+    },
+    enabled: !!token,
+  })
+
+  const isAdmin = user?.role === 'admin'
+  const ownBranch = branches.find((b) => b.id === user?.branchId)
+  const activeBranchName = sucursalId
+    ? (branches.find((b) => b.id === sucursalId)?.name ?? 'Sucursal')
+    : 'Todas las sucursales'
 
   return (
     <div className="h-16 bg-paper/80 backdrop-blur border-b border-line px-6 flex items-center justify-between sticky top-0 z-20">
       <h2 className="text-[1.4rem] font-bold text-ink tracking-tight">{title}</h2>
       <div className="flex items-center gap-2.5">
+        {branches.length > 0 && (
+          <div className="flex items-center gap-1 bg-white border border-line rounded-xl pl-2.5 pr-1.5 py-1 shadow-sm">
+            <Icon icon="mdi:store-outline" className="text-ink-soft/60 text-base" />
+            {isAdmin ? (
+              <select
+                value={sucursalId ?? ''}
+                onChange={(e) => setSucursalId(e.target.value || null)}
+                className="text-xs font-semibold bg-transparent text-ink py-1 pr-0.5 focus:outline-none cursor-pointer max-w-[160px]"
+                title={activeBranchName}
+              >
+                <option value="">Todas las sucursales</option>
+                {branches.map((b) => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            ) : (
+              <span className="text-xs font-semibold text-ink py-1 pr-0.5 max-w-[160px] truncate">
+                {ownBranch?.name ?? activeBranchName}
+              </span>
+            )}
+          </div>
+        )}
         <div className="flex items-center gap-1 bg-white border border-line rounded-xl pl-2.5 pr-1.5 py-1 shadow-sm">
           <Icon icon="mdi:translate" className="text-ink-soft/60 text-base" />
           <select
