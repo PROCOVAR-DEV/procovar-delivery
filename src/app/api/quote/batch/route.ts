@@ -144,20 +144,36 @@ export async function POST(req: NextRequest) {
     const { total: itemsTotal, items: weightedItems } = computeItemsWeights(input.items, catalog)
     const weightKg = itemsTotal > 0 ? itemsTotal : (Number(input.weight) || 0)
     const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
-    const dom = calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
-    const price = dom.usd // se guarda en USD (base); el front convierte a CUP con la tasa
-    quoted++
 
-    const base = {
-      ref,
-      status: 'quoted' as const,
-      price,
-      priceCup: dom.cup,
-      distanceKm,
-      weightKg,
-      ckk: dom.ckk,
-      branch: { id: branch.id, name: branch.name },
-    }
+    // Un pedido que NO lleva domicilio no se cotiza: se importa (para rutas/capacidad) pero
+    // SIN costo. Se marca 'sin-domicilio' para que el worker no escriba precio en PEDIDO.
+    const sinDomicilio = input.requiereDomicilio === false
+
+    const dom = sinDomicilio
+      ? { usd: 0, cup: 0, ckk: 0 }
+      : calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
+    const price = dom.usd // se guarda en USD (base); el front convierte a CUP con la tasa
+    if (!sinDomicilio) quoted++
+
+    const base = sinDomicilio
+      ? {
+          ref,
+          status: 'skipped' as const,
+          reason: 'sin-domicilio',
+          distanceKm,
+          weightKg,
+          branch: { id: branch.id, name: branch.name },
+        }
+      : {
+          ref,
+          status: 'quoted' as const,
+          price,
+          priceCup: dom.cup,
+          distanceKm,
+          weightKg,
+          ckk: dom.ckk,
+          branch: { id: branch.id, name: branch.name },
+        }
 
     if (preview) {
       results.push(base)

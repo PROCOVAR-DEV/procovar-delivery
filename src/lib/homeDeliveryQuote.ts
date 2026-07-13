@@ -24,6 +24,8 @@ export interface OrderQuoteInput {
   operationNumber?: string
   externalId?: string
   notes?: string
+  /** false = el pedido NO lleva domicilio -> no se le calcula costo (queda sin precio). */
+  requiereDomicilio?: boolean
   // Payload completo (cliente + pedido) tal como llega de PEDIDO, para guardarlo íntegro.
   meta?: unknown
 }
@@ -163,7 +165,9 @@ export function buildOrderData(
       ? computed.items
       : (Array.isArray(input.items) ? input.items : [])) as unknown as Prisma.InputJsonValue,
     notes: input.notes || null,
-    deliveryPrice: computed.quote.price,
+    // Un pedido SIN domicilio no lleva costo: se importa igual (hace falta para las rutas y
+    // la capacidad del camión) pero con el precio en NULL, no en 0 ni con la base.
+    deliveryPrice: input.requiereDomicilio === false ? null : computed.quote.price,
     deliveryDistanceKm: computed.distanceKm,
     branchId: branch.id,
     source: 'pedido',

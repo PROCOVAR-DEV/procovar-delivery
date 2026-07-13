@@ -103,6 +103,10 @@ async function quoteBatch(pedidos) {
       })),
       operationNumber: pedido.folio,
       externalId: pedido.id,
+      // SOLO los marcados requiere_domicilio=true llevan costo. Los false (y los que no
+      // traen el dato) se importan igual —hacen falta para las rutas y la capacidad del
+      // camión— pero SIN precio de domicilio.
+      requiereDomicilio: pedido.requiereDomicilio === true,
       meta: pedido,
     })),
   };
