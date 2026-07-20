@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Navbar from '@/components/Navbar'
 import { useAppStore } from '@/store/useAppStore'
 import { Icon } from '@iconify/react'
+import axios from 'axios'
 
 interface SyncJob {
   externalId: string
@@ -11,15 +12,21 @@ interface SyncJob {
   customerName: string | null
   status: string
   cost: number | null
+  distanceKm: number | null
   error: string | null
+  attempts: number
   updatedAt: string
 }
 interface Snapshot {
   counts: Record<string, number>
   total: number
-  recent: SyncJob[]
   ready?: { ok: boolean; formulaOk: boolean; originOk: boolean }
   ts: number
+}
+interface JobsResponse {
+  jobs: SyncJob[]
+  counts: Record<string, number>
+  pagination: { page: number; limit: number; total: number; totalPages: number }
 }
 
 const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
@@ -29,13 +36,32 @@ const STATUS: Record<string, { label: string; cls: string; icon: string }> = {
   skipped: { label: 'Omitido', cls: 'bg-gray-100 text-gray-700', icon: 'mdi:minus-circle' },
   error: { label: 'Error', cls: 'bg-red-100 text-red-800', icon: 'mdi:alert-circle' },
 }
+const ORDER = ['pending', 'processing', 'done', 'skipped', 'error']
+
+function fmtTime(iso: string) {
+  try {
+    return new Date(iso).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+  } catch {
+    return '—'
+  }
+}
 
 export default function SyncPage() {
   const { token } = useAppStore()
+
+  // Tarjetas + estado de config: en vivo por SSE.
   const [snap, setSnap] = useState<Snapshot | null>(null)
   const [live, setLive] = useState(false)
   const esRef = useRef<EventSource | null>(null)
 
+  // Tabla: filtros + paginación (REST).
+  const [statusFilter, setStatusFilter] = useState('') // '' = todos
+  const [q, setQ] = useState('')
+  const [debouncedQ, setDebouncedQ] = useState('')
+  const [page, setPage] = useState(1)
+  const [data, setData] = useState<JobsResponse | null>(null)
+
+  // --- SSE (contadores en vivo + aviso de configuración) ---
   useEffect(() => {
     if (!token) return
     const es = new EventSource(`/api/sync/stream?token=${encodeURIComponent(token)}`)
@@ -48,14 +74,38 @@ export default function SyncPage() {
     return () => { es.close(); esRef.current = null }
   }, [token])
 
-  const c = snap?.counts || {}
-  const cards = [
-    { k: 'pending', v: c.pending || 0 },
-    { k: 'processing', v: c.processing || 0 },
-    { k: 'done', v: c.done || 0 },
-    { k: 'skipped', v: c.skipped || 0 },
-    { k: 'error', v: c.error || 0 },
-  ]
+  // Debounce de la búsqueda.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q), 300)
+    return () => clearTimeout(t)
+  }, [q])
+
+  // Al cambiar filtro/búsqueda, volver a la página 1.
+  useEffect(() => { setPage(1) }, [statusFilter, debouncedQ])
+
+  const fetchJobs = useCallback(async () => {
+    if (!token) return
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: '20' })
+      if (statusFilter) params.set('status', statusFilter)
+      if (debouncedQ) params.set('q', debouncedQ)
+      const res = await axios.get(`/api/sync/jobs?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      setData(res.data as JobsResponse)
+    } catch { /* transitorio; el próximo tick reintenta */ }
+  }, [token, page, statusFilter, debouncedQ])
+
+  useEffect(() => { fetchJobs() }, [fetchJobs])
+  // Auto-refresco de la tabla (para que quede en vivo como las tarjetas).
+  useEffect(() => {
+    const t = setInterval(fetchJobs, 3000)
+    return () => clearInterval(t)
+  }, [fetchJobs])
+
+  const counts = snap?.counts || data?.counts || {}
+  const pg = data?.pagination
+  const jobs = data?.jobs || []
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -87,43 +137,130 @@ export default function SyncPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 mb-8 sm:grid-cols-3 lg:grid-cols-5">
-          {cards.map(({ k, v }) => (
-            <div key={k} className="p-4 bg-white border rounded-xl">
-              <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs mb-2 ${STATUS[k].cls}`}>
-                <Icon icon={STATUS[k].icon} /> {STATUS[k].label}
-              </div>
-              <div className="text-3xl font-bold text-gray-900">{v}</div>
-            </div>
-          ))}
+        {/* Tarjetas por estado — clic para filtrar la tabla */}
+        <div className="grid grid-cols-2 gap-3 mb-6 sm:grid-cols-3 lg:grid-cols-5">
+          {ORDER.map((k) => {
+            const activo = statusFilter === k
+            return (
+              <button
+                key={k}
+                onClick={() => setStatusFilter(activo ? '' : k)}
+                className={`p-4 text-left bg-white border rounded-xl transition-all ${activo ? 'ring-2 ring-primary border-primary' : 'hover:border-gray-300'}`}
+                title={activo ? 'Quitar filtro' : `Filtrar por ${STATUS[k].label}`}
+              >
+                <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs mb-2 ${STATUS[k].cls}`}>
+                  <Icon icon={STATUS[k].icon} /> {STATUS[k].label}
+                </div>
+                <div className="text-3xl font-bold text-gray-900">{counts[k] || 0}</div>
+              </button>
+            )
+          })}
         </div>
 
-        <div className="bg-white border rounded-xl">
-          <div className="px-4 py-3 border-b">
-            <h2 className="font-semibold text-gray-800">Últimos pedidos procesados</h2>
+        {/* Filtros de la tabla */}
+        <div className="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <Icon icon="mdi:magnify" className="absolute text-gray-400 -translate-y-1/2 left-3 top-1/2 text-lg" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar por folio, cliente o id…"
+              className="w-full py-2 pl-10 pr-3 text-sm bg-white border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+            />
           </div>
-          <div className="divide-y">
-            {(snap?.recent || []).length === 0 && (
-              <div className="px-4 py-8 text-center text-gray-400">Sin actividad todavía.</div>
-            )}
-            {(snap?.recent || []).map((j) => {
-              const s = STATUS[j.status] || STATUS.pending
-              return (
-                <div key={j.externalId} className="flex items-center justify-between gap-3 px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="font-medium text-gray-900 truncate">{j.folio || j.externalId}</p>
-                    <p className="text-xs text-gray-500 truncate">{j.customerName || '—'}{j.error ? ` · ${j.error}` : ''}</p>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    {j.cost != null && <span className="font-semibold text-gray-900">${j.cost}</span>}
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${s.cls}`}>
-                      <Icon icon={s.icon} /> {s.label}
-                    </span>
-                  </div>
-                </div>
-              )
-            })}
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="px-3 py-2 text-sm bg-white border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary"
+          >
+            <option value="">Todos los estados</option>
+            {ORDER.map((k) => (
+              <option key={k} value={k}>{STATUS[k].label}</option>
+            ))}
+          </select>
+          {(statusFilter || q) && (
+            <button
+              onClick={() => { setStatusFilter(''); setQ('') }}
+              className="px-3 py-2 text-sm text-gray-600 border rounded-xl hover:bg-gray-100"
+            >
+              Limpiar
+            </button>
+          )}
+        </div>
+
+        {/* Tabla */}
+        <div className="overflow-hidden bg-white border rounded-xl">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-gray-500 uppercase bg-gray-50">
+                <tr>
+                  <th className="px-4 py-3 text-left">Pedido</th>
+                  <th className="px-4 py-3 text-left">Cliente</th>
+                  <th className="px-4 py-3 text-right">Distancia</th>
+                  <th className="px-4 py-3 text-right">Costo</th>
+                  <th className="px-4 py-3 text-center">Intentos</th>
+                  <th className="px-4 py-3 text-left">Estado</th>
+                  <th className="px-4 py-3 text-right">Actualizado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {jobs.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10 text-center text-gray-400">
+                      Sin resultados con estos filtros.
+                    </td>
+                  </tr>
+                )}
+                {jobs.map((j) => {
+                  const s = STATUS[j.status] || STATUS.pending
+                  return (
+                    <tr key={j.externalId} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{j.folio || j.externalId}</td>
+                      <td className="max-w-[220px] px-4 py-3 text-gray-600 truncate" title={j.customerName || ''}>
+                        {j.customerName || '—'}
+                        {j.error && <span className="block text-xs text-red-500 truncate">{j.error}</span>}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-right text-gray-700">{j.distanceKm != null ? `${j.distanceKm.toFixed(1)} km` : '—'}</td>
+                      <td className="px-4 py-3 font-mono text-right text-gray-900">{j.cost != null ? `$${j.cost.toFixed(2)}` : '—'}</td>
+                      <td className="px-4 py-3 text-center text-gray-500">{j.attempts}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${s.cls}`}>
+                          <Icon icon={s.icon} /> {s.label}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-right text-gray-400 whitespace-nowrap">{fmtTime(j.updatedAt)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
+
+          {/* Paginación */}
+          {pg && pg.total > 0 && (
+            <div className="flex items-center justify-between gap-3 px-4 py-3 border-t bg-gray-50/60">
+              <span className="text-xs text-gray-500">
+                {(pg.page - 1) * pg.limit + 1}–{Math.min(pg.page * pg.limit, pg.total)} de {pg.total}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  disabled={pg.page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  className="p-1.5 rounded-lg border bg-white disabled:opacity-40 hover:bg-gray-100"
+                >
+                  <Icon icon="mdi:chevron-left" className="text-lg" />
+                </button>
+                <span className="px-2 text-sm text-gray-600">{pg.page} / {pg.totalPages}</span>
+                <button
+                  disabled={pg.page >= pg.totalPages}
+                  onClick={() => setPage((p) => Math.min(pg.totalPages, p + 1))}
+                  className="p-1.5 rounded-lg border bg-white disabled:opacity-40 hover:bg-gray-100"
+                >
+                  <Icon icon="mdi:chevron-right" className="text-lg" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </main>
     </div>
