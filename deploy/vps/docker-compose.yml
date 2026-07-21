@@ -36,9 +36,10 @@ services:
       retries: 5
 
   # ---------------------------------------------------------------------------
-  # Redis: INCLUIDO para el futuro worker BullMQ (documentado). El codigo ACTUAL
-  # NO lo requiere; la cola de delivery hoy es DB-backed (tabla SyncJob).
-  # Se deja listo para no tener que tocar el compose cuando llegue BullMQ.
+  # Redis: backend de colas/eventos (BullMQ) para delivery y su worker
+  # (cotizaciones + sync de pedidos) y para los eventos de entrada de pedidos.
+  # appendonly=yes para que la cola sobreviva reinicios. Todos los servicios que
+  # producen/consumen jobs lo alcanzan como redis://redis:6379.
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
@@ -69,10 +70,12 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       # No re-sembrar en produccion (evita pisar datos reales).
       RUN_SEED: "false"
-      # Reservado para BullMQ; el codigo actual no lo usa.
+      # Redis: publica los eventos de entrada de pedidos (los consume delivery).
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   # ---------------------------------------------------------------------------
@@ -107,12 +110,15 @@ services:
       # delivery LANZA error si falta JWT_SECRET (su login lo exige). SECRETO.
       JWT_SECRET: ${JWT_SECRET}
       PEDIDO_API_URL: http://pedido-api:8400
-      SUCURSAL_CODIGO: ""
+      # Redis: cola/eventos (BullMQ) para cotizaciones y sync de pedidos.
+      REDIS_URL: redis://redis:6379
       WAREHOUSE_API_URL: ${WAREHOUSE_API_URL}
       WAREHOUSE_API_TOKEN: ${WAREHOUSE_API_TOKEN}
       PORT: "3000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       pedido-api:
         condition: service_started
@@ -131,13 +137,16 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/procovar_delivery
       SERVICE_API_KEY: ${SERVICE_API_KEY}
       PEDIDO_API_URL: http://pedido-api:8400
-      SUCURSAL_CODIGO: ""
+      # Redis: de aquí consume la cola de jobs (BullMQ) y publica eventos.
+      REDIS_URL: redis://redis:6379
       WAREHOUSE_API_URL: ${WAREHOUSE_API_URL}
       WAREHOUSE_API_TOKEN: ${WAREHOUSE_API_TOKEN}
       PORT: "3000"
       DELIVERY_URL: http://delivery:3000
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       delivery:
         condition: service_started
@@ -160,7 +169,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/procovar_pedido
       PEDIDO_API_URL: http://pedido-api:8400
       SERVICE_API_KEY: ${SERVICE_API_KEY}
-      # Reservado para BullMQ; el codigo actual no lo usa.
+      # Redis disponible por si analitics encola tareas pesadas (hoy no encola).
       REDIS_URL: redis://redis:6379
     depends_on:
       postgres:
