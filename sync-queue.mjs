@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
+import IORedis from 'ioredis';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,6 +57,31 @@ const SUCURSAL_CODIGO = process.env.SUCURSAL_CODIGO || '';
 const prisma = new PrismaClient();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+
+// --- Redis pub/sub OPCIONAL: avisa al SSE (/api/sync/stream) que la cola cambió, para
+// que refresque por EVENTO en vez de sondear la tabla cada 1.5s. Sin REDIS_URL: no-op.
+const CH_SYNC_CHANGED = 'procovar-delivery:sync:changed';
+let _redisPub = null;
+(function initRedis() {
+  const sentinels = (process.env.REDIS_SENTINELS || '').trim();
+  const master = (process.env.REDIS_MASTER_NAME || '').trim();
+  const url = (process.env.REDIS_URL || '').trim();
+  const opts = { maxRetriesPerRequest: null, retryStrategy: (t) => Math.min(t * 200, 3000) };
+  if (sentinels && master) {
+    const nodes = sentinels.split(',').map((s) => s.trim()).filter(Boolean).map((s) => {
+      const [host, port] = s.split(':');
+      return { host, port: Number(port || 26379) };
+    });
+    _redisPub = new IORedis({ ...opts, sentinels: nodes, name: master });
+  } else if (url) {
+    _redisPub = new IORedis(url, opts);
+  }
+  if (_redisPub) _redisPub.on('error', () => { /* se reintenta en background */ });
+})();
+async function publishSyncChanged() {
+  if (!_redisPub) return;
+  try { await _redisPub.publish(CH_SYNC_CHANGED, '1'); } catch { /* no romper el ciclo */ }
+}
 
 // Descarga los pedidos pendientes de PEDIDO UNA vez (por ciclo).
 async function fetchPending() {
@@ -154,6 +180,7 @@ async function drainQueue(byId, resultsByRef, weightsSource) {
       if (!pedido) {
         // ya no está pendiente (quizá ya tiene costo) -> lo marcamos done sin costo
         await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'skipped', processedAt: new Date(), error: 'ya no pendiente' } });
+        await publishSyncChanged();
         continue;
       }
       const r = resultsByRef.get(job.externalId) || { status: 'skipped', reason: 'sin-resultado' };
@@ -185,6 +212,7 @@ async function drainQueue(byId, resultsByRef, weightsSource) {
       });
       log(`✗ ${job.folio || job.externalId} ${failed ? 'ERROR' : 'reintento'}: ${e.message}`);
     }
+    await publishSyncChanged(); // avisa al SSE que hubo cambios (no-op sin Redis)
     await sleep(DELAY); // suave, despacio
   }
   return procesados;
@@ -204,7 +232,7 @@ async function cycle() {
   const orders = await fetchPending();
   const byId = new Map(orders.map((o) => [o.id, o]));
   const nuevos = await enqueueNew(orders);
-  if (nuevos) log(`encolados ${nuevos} nuevos (de ${orders.length} pendientes)`);
+  if (nuevos) { log(`encolados ${nuevos} nuevos (de ${orders.length} pendientes)`); await publishSyncChanged(); }
 
   // GUARD GLOBAL: sin fórmula, la cola entera espera.
   if (!(await checkFormula())) {
@@ -251,7 +279,7 @@ async function main() {
   if (RECOMPUTE) { await recomputeAll(); return; }
   // Recupera jobs que quedaron 'processing' si el worker murió a mitad.
   const reset = await prisma.syncJob.updateMany({ where: { status: 'processing' }, data: { status: 'pending' } });
-  if (reset.count) log(`recuperados ${reset.count} jobs 'processing' huérfanos -> pending`);
+  if (reset.count) { log(`recuperados ${reset.count} jobs 'processing' huérfanos -> pending`); await publishSyncChanged(); }
   if (ONCE) { await cycle(); return; }
   for (;;) {
     try { await cycle(); } catch (e) { log('ciclo FALLÓ:', e.message); }

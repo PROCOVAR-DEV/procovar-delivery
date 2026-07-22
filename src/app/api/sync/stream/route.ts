@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { verifyToken } from '@/lib/auth'
+import { redisEnabled, getSubscriber, CH_SYNC_CHANGED } from '@/lib/redis'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -52,28 +53,48 @@ export async function GET(req: NextRequest) {
         return { counts, total, recent, ready, ts: Date.now() }
       }
 
-      // primer snapshot inmediato
-      send('sync', await snapshot())
-
-      const interval = setInterval(async () => {
+      const pushSnapshot = async () => {
         if (closed) return
-        try {
-          send('sync', await snapshot())
-        } catch {
-          /* transitorio; el próximo tick reintenta */
-        }
-      }, 1500)
+        try { send('sync', await snapshot()) } catch { /* transitorio; el próximo reintenta */ }
+      }
+
+      // primer snapshot inmediato
+      await pushSnapshot()
 
       // keep-alive comment cada 20s (evita timeouts de proxies)
       const ka = setInterval(() => {
         if (!closed) controller.enqueue(encoder.encode(`: keep-alive\n\n`))
       }, 20000)
 
+      let poll: ReturnType<typeof setInterval> | null = null
+      let debounce: ReturnType<typeof setTimeout> | null = null
+      let onMsg: ((ch: string, msg: string) => void) | null = null
+
+      if (redisEnabled()) {
+        // Camino Redis: el worker (sync-queue.mjs) publica en procovar-delivery:sync:changed
+        // cuando cambia un job; recalculamos el snapshot por EVENTO (cero polling por cliente).
+        const sub = getSubscriber()!
+        await sub.subscribe(CH_SYNC_CHANGED)
+        onMsg = (ch: string) => {
+          if (closed || ch !== CH_SYNC_CHANGED) return
+          if (debounce) clearTimeout(debounce)
+          debounce = setTimeout(pushSnapshot, 300) // agrupa ráfagas de cambios
+        }
+        sub.on('message', onMsg)
+        // Red de seguridad LENTA (30s) por si se pierde algún evento; no 1.5s.
+        poll = setInterval(pushSnapshot, 30000)
+      } else {
+        // Sin Redis: polling a la tabla cada 1.5s (comportamiento original).
+        poll = setInterval(pushSnapshot, 1500)
+      }
+
       const close = () => {
         if (closed) return
         closed = true
-        clearInterval(interval)
+        if (poll) clearInterval(poll)
         clearInterval(ka)
+        if (debounce) clearTimeout(debounce)
+        if (onMsg) { try { getSubscriber()?.off('message', onMsg) } catch { /* noop */ } }
         try { controller.close() } catch { /* ya cerrado */ }
       }
       req.signal.addEventListener('abort', close)
