@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { isValidServiceKey } from '@/lib/serviceAuth'
-import { fetchWeightCatalog } from '@/lib/warehouse'
+import { fetchWeightCatalog, invalidateWeightsCache } from '@/lib/warehouse'
 import { weightFromItems, QuoteItem } from '@/lib/homeDeliveryQuote'
 
 export const dynamic = 'force-dynamic'
@@ -25,6 +25,9 @@ export async function POST(req: NextRequest) {
 
   let catalog
   try {
+    // Recompute exige pesos FRESCOS (se corre justo cuando el warehouse llenó pesos):
+    // invalida el cache para re-bajar el catálogo, no servir uno viejo.
+    await invalidateWeightsCache()
     catalog = await fetchWeightCatalog()
   } catch (e) {
     return NextResponse.json({ error: 'No se pudo leer el catálogo del warehouse (¿VPN?): ' + (e as Error).message }, { status: 502 })

@@ -14,8 +14,12 @@
 //                            OJO: hoy ~70/111 tienen weightKg en null (los están llenando).
 // Scopes del token: accounting.read, axis.read, branch_entries.read, branches.read, warehouses.read
 
+import { cacheGetJSON, cacheSetJSON, cacheDel, K_WAREHOUSE_WEIGHTS } from './redis'
+
 const BASE = process.env.WAREHOUSE_API_URL || 'http://10.188.2.2:3001/api/external-api'
 const TOKEN = process.env.WAREHOUSE_API_TOKEN || ''
+// TTL del cache de pesos (segundos). El catálogo cambia poco; 10 min por defecto.
+const WEIGHTS_TTL = Number(process.env.WAREHOUSE_WEIGHTS_TTL || 600)
 
 export async function whFetch<T = unknown>(pathAndQuery: string): Promise<T> {
   if (!TOKEN) throw new Error('WAREHOUSE_API_TOKEN no configurado (.env)')
@@ -91,9 +95,27 @@ export const warehouse = {
   productWeights: () => whFetch<ProductWeight[]>('/products/weights'),
 }
 
+/**
+ * Igual que warehouse.productWeights() pero CACHEADO en Redis (TTL): evita re-bajar por
+ * VPN el catálogo entero en cada lote de cotización, que era el patrón caro y repetido.
+ * Sin Redis, baja directo (comportamiento actual). Se invalida al importar pesos.
+ */
+export async function productWeightsCached(): Promise<ProductWeight[]> {
+  const cached = await cacheGetJSON<ProductWeight[]>(K_WAREHOUSE_WEIGHTS)
+  if (cached) return cached
+  const list = await warehouse.productWeights()
+  await cacheSetJSON(K_WAREHOUSE_WEIGHTS, list, WEIGHTS_TTL)
+  return list
+}
+
+/** Borra el cache de pesos. Llamar tras importar/actualizar pesos del warehouse. */
+export async function invalidateWeightsCache(): Promise<void> {
+  await cacheDel(K_WAREHOUSE_WEIGHTS)
+}
+
 /** Mapa SKU(mayúsculas) -> weightKg, solo con los productos que tienen peso. */
 export async function fetchWeightMap(): Promise<Map<string, number>> {
-  const list = await warehouse.productWeights()
+  const list = await productWeightsCached()
   const m = new Map<string, number>()
   for (const p of list) {
     if (p.sku && p.weightKg != null) m.set(p.sku.toUpperCase(), p.weightKg)
@@ -107,6 +129,6 @@ export async function fetchWeightMap(): Promise<Map<string, number>> {
  */
 export async function fetchWeightCatalog() {
   const { buildWeightCatalog } = await import('./productMatch')
-  const list = await warehouse.productWeights()
+  const list = await productWeightsCached()
   return buildWeightCatalog(list)
 }
