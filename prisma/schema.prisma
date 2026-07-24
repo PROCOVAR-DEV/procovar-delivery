@@ -37,6 +37,24 @@ model Product {
   createdAt       DateTime @default(now())
 }
 
+// Espejo (mirror) de los clientes GEOLOCALIZADOS de PEDIDO. Se sincroniza SOLO
+// (sync-queue.mjs), no manual: si en PEDIDO aparece/actualiza un cliente con geo, entra
+// aquí en el próximo ciclo. Solo con geo (lat/lng): sin coordenadas no se puede cotizar
+// el domicilio, así que no se traen. Permite armar órdenes SELECCIONANDO el cliente.
+model Customer {
+  id             String   @id @default(cuid())
+  externalId     String   @unique // id del cliente en PEDIDO — clave de upsert idempotente
+  name           String
+  address        String?
+  municipio      String?
+  zona           String?
+  lat            Float
+  lng            Float
+  sucursalCodigo String?
+  syncedAt       DateTime @default(now())
+  createdAt      DateTime @default(now())
+}
+
 model Branch {
   id         String   @id @default(cuid())
   name       String

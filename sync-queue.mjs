@@ -227,8 +227,57 @@ async function checkFormula() {
   return !!settings?.domConfigured;
 }
 
+// Espeja los clientes GEOLOCALIZADOS de PEDIDO en la tabla Customer local (mirror).
+// AUTOMÁTICO (cada ciclo), no manual: un cliente nuevo con geo en PEDIDO aparece aquí
+// solo. Upsert por externalId + borra los que ya no vienen (borrados o sin geo). Si la
+// API falla, LANZA antes de borrar nada (no vaciar el mirror ante un error transitorio).
+async function syncCustomers() {
+  const q = new URLSearchParams();
+  if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
+  const res = await fetch(`${PEDIDO_API_URL}/integration/clients?${q}`, { headers: { 'x-api-key': KEY } });
+  if (!res.ok) throw new Error(`clients ${res.status}: ${await res.text().catch(() => '')}`);
+  const { clients = [] } = await res.json();
+
+  const ids = [];
+  let up = 0;
+  for (const c of clients) {
+    if (c.latitud == null || c.longitud == null) continue; // defensa: solo con geo
+    ids.push(c.id);
+    const data = {
+      name: c.nombre,
+      address: c.direccion ?? null,
+      municipio: c.municipio ?? null,
+      zona: c.zona ?? null,
+      lat: c.latitud,
+      lng: c.longitud,
+      sucursalCodigo: c.sucursalCodigo ?? null,
+    };
+    await prisma.customer.upsert({
+      where: { externalId: c.id },
+      update: { ...data, syncedAt: new Date() },
+      create: { externalId: c.id, ...data },
+    });
+    up++;
+  }
+  // Quitar del mirror los que ya no llegan (borrados o perdieron geo). Con ids vacío,
+  // notIn: ['__none__'] borra todo (0 clientes con geo -> mirror vacío, correcto).
+  const del = await prisma.customer.deleteMany({
+    where: { externalId: { notIn: ids.length ? ids : ['__none__'] } },
+  });
+  return { up, del: del.count };
+}
+
 async function cycle() {
   if (!KEY) throw new Error('Falta SERVICE_API_KEY.');
+
+  // Sincroniza el mirror de clientes SIEMPRE (independiente de la fórmula/cotización).
+  // Aislado en su try: si falla, no rompe el procesamiento de domicilios.
+  try {
+    const r = await syncCustomers();
+    if (r.up || r.del) log(`clientes mirror: ${r.up} sincronizados, ${r.del} quitados`);
+  } catch (e) {
+    log('sync de clientes falló:', e.message);
+  }
   const orders = await fetchPending();
   const byId = new Map(orders.map((o) => [o.id, o]));
   const nuevos = await enqueueNew(orders);
