@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import Navbar from '@/components/Navbar'
 import LocationInput, { LocationValue } from '@/components/LocationInput'
 import ProductPicker from '@/components/ProductPicker'
+import CustomerPicker from '@/components/CustomerPicker'
 import Pagination, { usePagedList } from '@/components/Pagination'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
@@ -149,6 +150,19 @@ function PedidoForm({
 
   return (
     <div className="border rounded-xl p-4 space-y-3 bg-gray-50">
+      {/* Selector de cliente (mirror de PEDIDO, solo geolocalizados): al elegir uno se
+          autocompletan nombre + dirección + lat/lng, y ya sale el costo. Debajo quedan
+          los campos manuales para un cliente que no esté en el mirror. */}
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">Cliente de PEDIDO</label>
+        <CustomerPicker
+          onPick={(c) => {
+            setName(c.name)
+            setLoc({ address: c.address || '', lat: c.lat, lng: c.lng })
+          }}
+        />
+      </div>
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">{t('pedido.customer')}</label>
