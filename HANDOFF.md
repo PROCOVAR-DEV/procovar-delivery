@@ -84,22 +84,22 @@ Bull separadas por dirección (`in:*` entrada / `out:*` salida) para fluir en pa
   consume `procovar-delivery:in:orders` y corre `cycle()` por evento (SIN poll) + red de
   seguridad lenta (`SAFETY_POLL_MS`, default 5min, 0 apaga). Gated por `DELIVERY_EVENTS`
   (false → poll de 15s actual, fallback/rollback).
-- 🔴 **BLOQUEO del cutover — delivery NO tiene Redis:** `REDIS_URL=` VACÍO en el `.env` de
-  delivery Y `procovar-redis` (contenedor docker) **no publica puerto al host**. Delivery
-  corre en el HOST (systemd), así que **no puede alcanzar** el Redis del compose. Consecuencia:
-  **R4a (SSE pub/sub) y R5 (cache) SIEMPRE cayeron a su fallback** (SSE por polling 1.5s,
-  cache off) — funcionan, pero nunca usaron Redis. Y el cutover event-driven crashea el worker
-  ("sin REDIS_URL", `process.exit(1)`) — ya pasó, se revirtió con `DELIVERY_EVENTS=false`.
-- ⬜ **Cutover event-driven CORRECTO (hacer con cuidado, con el devops):**
-  1. Publicar `procovar-redis` al host: añadir `ports: ["127.0.0.1:6379:6379"]` al servicio
-     `redis` del compose del api PEDIDO (`~/projects/pedido/api/docker-compose.yml`) + `up -d`
-     (recrea redis; PEDIDO api/worker reconectan por ioredis; el volumen `redis_data` persiste).
-     El host `:6379` está libre (verificado). Esto también **arregla R4a/R5** (empezarían a usar Redis).
-  2. `REDIS_URL=redis://127.0.0.1:6379` en el `.env` de delivery (`~/projects/delivery/usa/.env`).
-  3. `DELIVERY_EVENTS=true` en el `.env` de delivery **y** en el compose del api PEDIDO (env del
-     servicio api). Reiniciar: `sudo /usr/bin/systemctl restart procovar-delivery-sync` + `up -d` del api.
-  4. Verificar: worker loguea "event-driven: escuchando procovar-delivery:in:orders"; crear un
-     pedido → aparece un job en la cola → delivery lo procesa.
+- ✅ **CUTOVER HECHO — event-driven ACTIVO (verificado e2e):**
+  - **Delivery corre SYSTEMD-NATIVO en el host** (NO docker): `procovar-delivery.service` =
+    `node /root/delivery/usa/.next/standalone/server.js`; `procovar-delivery-sync.service` =
+    `node /root/delivery/usa/sync-queue.mjs`. No hay contenedor delivery en `docker ps`.
+  - Por eso `procovar-redis` (docker) se **publicó al host**: `ports: ["127.0.0.1:6379:6379"]`
+    en el servicio `redis` del compose del api. Delivery usa `REDIS_URL=redis://127.0.0.1:6379`.
+    Esto **también activó R4a/R5** (antes en fallback; ahora sí usan Redis).
+  - `DELIVERY_EVENTS=true` en el `.env` de delivery **y** en el `x-api-env` del compose del api.
+  - Worker loguea `event-driven: escuchando procovar-delivery:in:orders (SIN poll de 15s)`.
+    Test e2e OK: encolar un job → el worker corre un ciclo.
+  - **Rollback**: `DELIVERY_EVENTS=false` en ambos + reiniciar → vuelve al poll de 15s.
+- ⬜ **(Opcional) Dockerizar delivery** (lo pidió el usuario, por consistencia con pedido):
+  migración del devops (systemd→docker). El contenedor necesitaría alcanzar: Postgres NATIVO
+  `:5432`, la VPN del warehouse (10.188.x) y el api `:8400` → probablemente `network_mode: host`
+  o rutas al host. NO hace falta para que funcione (ya funciona nativo). jose NO tiene whitelist
+  de compose para delivery (solo pedido).
 - ⬜ **Slice 3 (colas out) — DIFERIDO a propósito:** separar `out:quote`/`out:writeback` en Bull.
   Bajo valor: la salida YA tiene cola durable con reintentos (tabla `SyncJob`, MAX_ATTEMPTS). No
   vale el riesgo en el hot-path ahora.
