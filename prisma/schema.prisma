@@ -37,22 +37,29 @@ model Product {
   createdAt       DateTime @default(now())
 }
 
-// Espejo (mirror) de los clientes GEOLOCALIZADOS de PEDIDO. Se sincroniza SOLO
-// (sync-queue.mjs), no manual: si en PEDIDO aparece/actualiza un cliente con geo, entra
-// aquí en el próximo ciclo. Solo con geo (lat/lng): sin coordenadas no se puede cotizar
-// el domicilio, así que no se traen. Permite armar órdenes SELECCIONANDO el cliente.
+// Espejo (mirror) de los clientes GEOLOCALIZADOS de PEDIDO. MISMO patrón que Order:
+// source + externalId (idempotencia por [source, externalId], re-sync no duplica) y meta
+// con el payload COMPLETO tal como llega de PEDIDO. Se sincroniza SOLO (sync-queue.mjs),
+// no manual: un cliente nuevo/actualizado con geo en PEDIDO entra en el próximo ciclo.
+// Solo con geo (lat/lng): sin coordenadas no se cotiza. `source=null` => cliente manual.
 model Customer {
   id             String   @id @default(cuid())
-  externalId     String   @unique // id del cliente en PEDIDO — clave de upsert idempotente
+  source         String? // "pedido" si vino de la app PEDIDO, null si es manual
+  externalId     String? // id del cliente en PEDIDO
   name           String
+  phone          String?
   address        String?
   municipio      String?
   zona           String?
   lat            Float
   lng            Float
   sucursalCodigo String?
+  meta           Json? // payload COMPLETO del cliente tal como llega de PEDIDO
   syncedAt       DateTime @default(now())
   createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([source, externalId])
 }
 
 model Branch {

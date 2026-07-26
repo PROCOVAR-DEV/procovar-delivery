@@ -244,25 +244,32 @@ async function syncCustomers() {
     if (c.latitud == null || c.longitud == null) continue; // defensa: solo con geo
     ids.push(c.id);
     const data = {
+      source: 'pedido',
+      externalId: c.id,
       name: c.nombre,
+      phone: c.telefono ?? null,
       address: c.direccion ?? null,
       municipio: c.municipio ?? null,
       zona: c.zona ?? null,
       lat: c.latitud,
       lng: c.longitud,
       sucursalCodigo: c.sucursalCodigo ?? null,
+      meta: c, // payload COMPLETO del cliente (igual que Order.meta)
     };
-    await prisma.customer.upsert({
-      where: { externalId: c.id },
-      update: { ...data, syncedAt: new Date() },
-      create: { externalId: c.id, ...data },
-    });
+    // Idempotente por [source, externalId] — MISMO patrón que las orders.
+    const existing = await prisma.customer.findFirst({ where: { source: 'pedido', externalId: c.id } });
+    if (existing) {
+      await prisma.customer.update({ where: { id: existing.id }, data: { ...data, syncedAt: new Date() } });
+    } else {
+      await prisma.customer.create({ data });
+    }
     up++;
   }
-  // Quitar del mirror los que ya no llegan (borrados o perdieron geo). Con ids vacío,
-  // notIn: ['__none__'] borra todo (0 clientes con geo -> mirror vacío, correcto).
+  // Quitar SOLO los de source='pedido' que ya no vienen (borrados o sin geo). NO toca los
+  // clientes manuales (source=null). Con ids vacío, notIn:['__none__'] borra todos los de
+  // pedido (0 con geo -> mirror de pedido vacío, correcto).
   const del = await prisma.customer.deleteMany({
-    where: { externalId: { notIn: ids.length ? ids : ['__none__'] } },
+    where: { source: 'pedido', externalId: { notIn: ids.length ? ids : ['__none__'] } },
   });
   return { up, del: del.count };
 }
