@@ -374,9 +374,21 @@ async function main() {
     q.process(1, async () => {
       try { await cycle(); } catch (e) { log('ciclo FALLÓ:', e.message); }
     });
-    log(`event-driven: escuchando ${QUEUE_IN_ORDERS} (SIN poll)`);
+    log(`event-driven: escuchando ${QUEUE_IN_ORDERS} (SIN poll de 15s)`);
     await cycle(); // procesa lo que hubiera pendiente al arrancar
-    return; // el proceso queda vivo consumiendo la cola
+
+    // Red de seguridad LENTA (default 5 min; SAFETY_POLL_MS=0 la apaga). NO es polling
+    // cada 5s: reconcilia por si se perdió un evento o cambió la config en delivery
+    // (fórmula/almacén) — eso no dispara evento de PEDIDO, así que sin esto los pendientes
+    // no se reprocesarían hasta el próximo pedido.
+    const safetyMs = process.env.SAFETY_POLL_MS != null ? Number(process.env.SAFETY_POLL_MS) : 300000;
+    if (safetyMs > 0) {
+      for (;;) {
+        await sleep(safetyMs);
+        try { await cycle(); } catch (e) { log('safety cycle FALLÓ:', e.message); }
+      }
+    }
+    return; // (si safety apagado) el proceso queda vivo consumiendo la cola
   }
 
   // FALLBACK (DELIVERY_EVENTS != true): poll cada POLL ms (comportamiento actual).
