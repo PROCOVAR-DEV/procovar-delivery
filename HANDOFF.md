@@ -28,7 +28,9 @@ Rama de trabajo en los 3: **`produccion`**. Remotos:
   - **DEPLOY correcto (desde `~/projects/delivery/usa`):**
     ```
     git pull
-    npx prisma generate && npx prisma migrate deploy      # si hay migración nueva
+    npx prisma generate                                   # SIEMPRE antes del build (si el
+                                                          # cliente queda viejo, tsc del build FALLA)
+    npx prisma migrate deploy                             # si hay migración nueva (NO regenera el cliente)
     BUILD_STANDALONE=1 npm run build                       # OBLIGATORIO el flag
     cp -r .next/static  .next/standalone/.next/static      # standalone NO incluye assets
     cp -r public        .next/standalone/public
@@ -60,7 +62,7 @@ Objetivo: delivery espeja los clientes de PEDIDO (como products del warehouse) p
 - ✅ **UI desplegada**: `CustomerPicker` en `routes/page.tsx` (form `PedidoForm`) → busca el mirror, al elegir autocompleta nombre + dirección + lat/lng → cotiza. Los campos manuales quedan de fallback.
 - ✅ **`Customer` = MISMO patrón que `Order`**: `source` ("pedido" sincronizado / null manual) + `externalId` (idempotente por `[source, externalId]`) + `meta` (payload completo). El sync solo toca/borra los de `source="pedido"` → los clientes manuales (source=null, creados desde delivery) quedan intactos, igual que las orders.
 - ✅ **FEATURE COMPLETA en código.** Solo falta DATA: geolocalizar clientes en PEDIDO (sin geo el picker muestra "no hay clientes geolocalizados").
-- ⬜ Opcional futuro: flujo para GUARDAR un cliente manual (source=null) desde delivery (hoy el form manual crea la orden pero no persiste un Customer).
+- ✅ **Clientes manuales** (source=null, local delivery, NO tocan PEDIDO): se crean desde 2 lados — página **`/customers`** (lista PEDIDO+manuales con badge de origen + form) y botón "Guardar cliente" en crear-ruta (`PedidoForm`). Endpoint `POST /api/customers`. El sync solo borra source="pedido".
 
 ## Bloqueos de DATOS (no de código)
 - **0 de 115 clientes en PEDIDO tienen geo** → el mirror y la cotización quedan vacíos hasta **geolocalizar** (import del Consolidado .xlsx en PEDIDO). El usuario lo cargará luego + está descargando las bases de todas las sucursales.
