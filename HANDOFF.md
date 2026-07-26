@@ -71,7 +71,8 @@ Objetivo: delivery espeja los clientes de PEDIDO (como products del warehouse) p
 5. Futuro: migrar las 3 apps a Go (recursos).
 
 ## Gotchas
-- VPS composes/env/nginx del front **divergen del repo** (secretos + puerto). No sobrescribir a ciegas.
+- 🔴🔴 **SECRETOS DIVERGENTES EN EL VPS (leer o rompés prod):** en el VPS, `~/projects/pedido/api/docker-compose.yml` (y el del front, y los `.env`) tienen **SECRETOS REALES inline** (`JWT_SECRET`, `SERVICE_API_KEY`, etc.) que **NO están en el repo** (el repo tiene placeholders: `JWT_SECRET=change_this...`, sin `SERVICE_API_KEY`/`REDIS_URL`, sin servicios redis/worker). Son cambios de working-tree, **no commiteados**. → **NUNCA** hacer `git clone` de nuevo, `git checkout -- <compose>`, `git reset --hard`, `git stash` en esos dirs: BORRA los secretos → el siguiente `up -d` levanta el api con JWT placeholder (invalida sesiones), sin `SERVICE_API_KEY` (delivery da 401) y sin Redis. **Ya pasó una vez** (un re-clone los borró; se reconstruyó a mano el `2026-07-26`). Los **valores reales NO van aquí** (esto se commitea): están en el compose/`.env` del VPS. `SERVICE_API_KEY` del api == el del `.env` de delivery. **RECOMENDADO (devops):** mover esos secretos a un `.env` gitignoreado (`env_file:` en el compose) para que git no los toque nunca.
+- El compose del api del VPS define 4 servicios: **postgres, redis, api, worker** (worker = misma imagen, `command: node dist/worker.js`). El repo solo tiene postgres+api.
 - EventSource no manda headers → SSE usan `?ticket=` (endpoint `POST /orders/sse-ticket`).
 - `IMPORT_USE_QUEUE=true` **requiere** el worker corriendo (imagen `api-worker`).
-- jose no puede reiniciar `procovar-delivery-sync` (pedir al devops).
+- `SERVICE_API_KEY` debe ser IGUAL en PEDIDO api y en el `.env` de delivery (si difieren → sync de delivery da 401).
