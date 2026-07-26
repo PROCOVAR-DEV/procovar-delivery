@@ -22,8 +22,21 @@ Rama de trabajo en los 3: **`produccion`**. Remotos:
 ## Deploy (qué puede jose)
 - **ANALITICS** (self-serve): `ssh jose@72.60.115.124` → `cd ~/projects/analitics && ./deploy.sh`.
 - **PEDIDO** (self-serve): `cd ~/projects/pedido && git pull` + `sudo docker compose -f /root/pedido/api/docker-compose.yml build && up -d` (idem `front`). `/root/pedido` == `~/projects/pedido` (mismo checkout). Los `docker-compose.yml`/`.env`/`nginx.conf` del VPS **divergen del repo a propósito** (secretos reales; puerto front `5001:5000`).
-- **DELIVERY**: `~/projects/delivery/usa` (git, escribible). Migración: `npx prisma migrate deploy`. Build: `npm run build`. Restart Next: `sudo systemctl restart procovar-delivery` (whitelisted). ⚠️ Restart del worker `procovar-delivery-sync` **NO** está en la whitelist de jose → pedir al devops.
-- Sudo de jose: `docker compose -f /root/pedido/{api,front}/... *`, `docker ps`, `systemctl {start,stop,restart,status,...} procovar-delivery|analitics`, `journalctl -u ...`. NO: git en `/root`, nginx, crear servicios.
+- **DELIVERY** — ⚠️ LEER, aquí es fácil tumbarlo:
+  - `~/projects/delivery` es **BIND MOUNT de `/root/delivery`** (mismo dir, escribible por jose). El código está en `~/projects/delivery/usa` (git, rama produccion).
+  - Corre por **systemd `procovar-delivery`** desde `/root/delivery/usa/.next/standalone/server.js` — Next en **modo STANDALONE** (`output:'standalone'` solo si `BUILD_STANDALONE=1`).
+  - **DEPLOY correcto (desde `~/projects/delivery/usa`):**
+    ```
+    git pull
+    npx prisma generate && npx prisma migrate deploy      # si hay migración nueva
+    BUILD_STANDALONE=1 npm run build                       # OBLIGATORIO el flag
+    cp -r .next/static  .next/standalone/.next/static      # standalone NO incluye assets
+    cp -r public        .next/standalone/public
+    sudo /usr/bin/systemctl restart procovar-delivery      # RUTA COMPLETA (ver abajo)
+    sudo /usr/bin/systemctl restart procovar-delivery-sync # worker sync-queue.mjs
+    ```
+  - 🔴 **NUNCA** `npm run build` sin `BUILD_STANDALONE=1`: borra `.next/standalone` → el servicio no arranca (CHDIR/`server.js` 502). Error ya cometido una vez.
+- Sudo de jose (whitelist exige **RUTA COMPLETA `/usr/bin/systemctl`**, `sudo systemctl` a secas pide password): `start|stop|restart|reload|status|enable|disable` de `procovar-delivery`, `procovar-delivery-sync`, `analitics`; `journalctl -u <esos>`; `docker compose -f /root/pedido/{api,front}/... *`; `docker ps`. NO: `docker logs`/`ps -a`/`is-active` (no whitelisted), git en `/root`, nginx, crear servicios.
 
 ## Estado — Redis rollout (COMPLETO y desplegado)
 - **R1** PEDIDO SSE pedidos por pub/sub (auth por **ticket efímero**, no token en URL). ✅ vivo.
@@ -43,8 +56,8 @@ Objetivo: delivery espeja los clientes de PEDIDO (como products del warehouse) p
 - ✅ DELIVERY modelo `Customer` + migración `20260724150000_add_customer_mirror` (externalId único).
 - ✅ DELIVERY `sync-queue.mjs` → `syncCustomers()` cada ciclo (upsert + borra los que ya no vienen; no borra ante fallo). Auto, sin botón.
 - ✅ DELIVERY `GET /api/customers?q=` (lista/busca el mirror).
-- ⬜ **PENDIENTE deploy DELIVERY**: `prisma migrate deploy` + build + restart Next + **restart del worker sync (devops)**.
-- ⬜ **PENDIENTE UI**: selector de cliente al crear orden **desde la ruta** (`routes/page.tsx`) → autocompleta customerName/address/lat/lng → cotiza.
+- ✅ **DELIVERY desplegado**: migración aplicada (tabla `Customer`), Next rebuild standalone + worker sync reiniciado (corre `syncCustomers()`). El mirror se llena solo cuando haya clientes con geo.
+- ⬜ **PENDIENTE ÚNICO — UI**: selector de cliente al crear orden **desde la ruta** (`src/app/(dashboard)/routes/page.tsx`) → autocompleta customerName/address/lat/lng → cotiza. Consume `GET /api/customers?q=`.
 
 ## Bloqueos de DATOS (no de código)
 - **0 de 115 clientes en PEDIDO tienen geo** → el mirror y la cotización quedan vacíos hasta **geolocalizar** (import del Consolidado .xlsx en PEDIDO). El usuario lo cargará luego + está descargando las bases de todas las sucursales.
