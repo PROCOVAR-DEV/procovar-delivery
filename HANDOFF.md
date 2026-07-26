@@ -80,15 +80,29 @@ Bull separadas por dirección (`in:*` entrada / `out:*` salida) para fluir en pa
   durable `procovar-delivery:in:orders` al crear pedido (POST /orders), importar (bulk) y
   geolocalizar (geo-import). **Gated por `DELIVERY_EVENTS=true`** (off → no encola, nada
   cambia). `queues.ts` ahora tiene `makeQueue()` genérico + `deliveryOrdersQueue()`.
-- ⬜ **Slice 2 (DELIVERY, PENDIENTE — hot-path, hacer con cuidado):** añadir `bull` a
-  delivery; en `sync-queue.mjs`, **consumir** `procovar-delivery:in:orders` (Bull) → correr
-  `cycle()` por evento; **quitar el `setInterval(POLL 15s)`**. Gatear igual por
-  `DELIVERY_EVENTS`: true = event-driven (sin poll), false = poll actual (fallback/rollback).
-  La cola durable = sin eventos perdidos aunque delivery esté caído. **Cutover**: poner
-  `DELIVERY_EVENTS=true` en el compose del api PEDIDO **y** en el `.env` de delivery +
-  reiniciar ambos. (Hoy no urge: sin geo no fluye nada, así que el cutover es de bajo riesgo.)
-- ⬜ **Slice 3 (colas out):** separar `cycle()` en `out:quote` (cotizar) y `out:writeback`
-  (escribir costo a PEDIDO) como colas Bull propias.
+- ✅ **Slice 2 (DELIVERY, código desplegado, INERTE):** `bull` añadido; `sync-queue.mjs`
+  consume `procovar-delivery:in:orders` y corre `cycle()` por evento (SIN poll) + red de
+  seguridad lenta (`SAFETY_POLL_MS`, default 5min, 0 apaga). Gated por `DELIVERY_EVENTS`
+  (false → poll de 15s actual, fallback/rollback).
+- 🔴 **BLOQUEO del cutover — delivery NO tiene Redis:** `REDIS_URL=` VACÍO en el `.env` de
+  delivery Y `procovar-redis` (contenedor docker) **no publica puerto al host**. Delivery
+  corre en el HOST (systemd), así que **no puede alcanzar** el Redis del compose. Consecuencia:
+  **R4a (SSE pub/sub) y R5 (cache) SIEMPRE cayeron a su fallback** (SSE por polling 1.5s,
+  cache off) — funcionan, pero nunca usaron Redis. Y el cutover event-driven crashea el worker
+  ("sin REDIS_URL", `process.exit(1)`) — ya pasó, se revirtió con `DELIVERY_EVENTS=false`.
+- ⬜ **Cutover event-driven CORRECTO (hacer con cuidado, con el devops):**
+  1. Publicar `procovar-redis` al host: añadir `ports: ["127.0.0.1:6379:6379"]` al servicio
+     `redis` del compose del api PEDIDO (`~/projects/pedido/api/docker-compose.yml`) + `up -d`
+     (recrea redis; PEDIDO api/worker reconectan por ioredis; el volumen `redis_data` persiste).
+     El host `:6379` está libre (verificado). Esto también **arregla R4a/R5** (empezarían a usar Redis).
+  2. `REDIS_URL=redis://127.0.0.1:6379` en el `.env` de delivery (`~/projects/delivery/usa/.env`).
+  3. `DELIVERY_EVENTS=true` en el `.env` de delivery **y** en el compose del api PEDIDO (env del
+     servicio api). Reiniciar: `sudo /usr/bin/systemctl restart procovar-delivery-sync` + `up -d` del api.
+  4. Verificar: worker loguea "event-driven: escuchando procovar-delivery:in:orders"; crear un
+     pedido → aparece un job en la cola → delivery lo procesa.
+- ⬜ **Slice 3 (colas out) — DIFERIDO a propósito:** separar `out:quote`/`out:writeback` en Bull.
+  Bajo valor: la salida YA tiene cola durable con reintentos (tabla `SyncJob`, MAX_ATTEMPTS). No
+  vale el riesgo en el hot-path ahora.
 - ⬜ **Productos auto-sync:** el WAREHOUSE es EXTERNO (sin webhooks) → NO puede ser
   event-driven. El devops (dueño) debe exponer: **(A) webhook** `POST /api/products/webhook`
   al cambiar un producto (ideal), o **(B)** `GET /products/weights?updatedSince=<ISO>` para
