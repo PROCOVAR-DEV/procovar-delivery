@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaClient } from '@prisma/client';
 import IORedis from 'ioredis';
+import Queue from 'bull';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,6 +82,31 @@ let _redisPub = null;
 async function publishSyncChanged() {
   if (!_redisPub) return;
   try { await _redisPub.publish(CH_SYNC_CHANGED, '1'); } catch { /* no romper el ciclo */ }
+}
+
+// Event-driven (slice 2): en vez de sondear PEDIDO cada 15s, consumimos la cola DURABLE
+// procovar-delivery:in:orders que PEDIDO llena al crear/importar/geolocalizar un pedido.
+// Gated por DELIVERY_EVENTS: true = event-driven (sin poll), false = poll actual (fallback).
+const DELIVERY_EVENTS = process.env.DELIVERY_EVENTS === 'true';
+const QUEUE_IN_ORDERS = 'procovar-delivery:in:orders';
+
+function makeInOrdersQueue() {
+  const url = (process.env.REDIS_URL || '').trim();
+  const sentinels = (process.env.REDIS_SENTINELS || '').trim();
+  const master = (process.env.REDIS_MASTER_NAME || '').trim();
+  if (!url && !(sentinels && master)) return null;
+  const opts = { enableReadyCheck: false, maxRetriesPerRequest: null };
+  const mk = () => {
+    if (sentinels && master) {
+      const nodes = sentinels.split(',').map((s) => s.trim()).filter(Boolean).map((s) => {
+        const [h, p] = s.split(':');
+        return { host: h, port: Number(p || 26379) };
+      });
+      return new IORedis({ ...opts, sentinels: nodes, name: master });
+    }
+    return new IORedis(url, opts);
+  };
+  return new Queue(QUEUE_IN_ORDERS, { createClient: () => mk() });
 }
 
 // Descarga los pedidos pendientes de PEDIDO UNA vez (por ciclo).
@@ -337,6 +363,23 @@ async function main() {
   const reset = await prisma.syncJob.updateMany({ where: { status: 'processing' }, data: { status: 'pending' } });
   if (reset.count) { log(`recuperados ${reset.count} jobs 'processing' huérfanos -> pending`); await publishSyncChanged(); }
   if (ONCE) { await cycle(); return; }
+
+  if (DELIVERY_EVENTS) {
+    // EVENT-DRIVEN: sin poll. PEDIDO encola en procovar-delivery:in:orders al crear/
+    // importar/geolocalizar; cada job dispara un ciclo. Bull serializa (concurrency 1),
+    // así que ciclos redundantes son baratos (el segundo no encuentra pendientes).
+    const q = makeInOrdersQueue();
+    if (!q) { log('DELIVERY_EVENTS=true pero sin REDIS_URL/Sentinel. Saliendo.'); process.exit(1); }
+    q.on('error', (e) => log('cola in:orders error:', e.message));
+    q.process(1, async () => {
+      try { await cycle(); } catch (e) { log('ciclo FALLÓ:', e.message); }
+    });
+    log(`event-driven: escuchando ${QUEUE_IN_ORDERS} (SIN poll)`);
+    await cycle(); // procesa lo que hubiera pendiente al arrancar
+    return; // el proceso queda vivo consumiendo la cola
+  }
+
+  // FALLBACK (DELIVERY_EVENTS != true): poll cada POLL ms (comportamiento actual).
   for (;;) {
     try { await cycle(); } catch (e) { log('ciclo FALLÓ:', e.message); }
     await sleep(POLL);
