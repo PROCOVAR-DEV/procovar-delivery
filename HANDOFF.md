@@ -72,6 +72,29 @@ reports, routes, sync, vehicles (lista). ⬜ Pendiente si se quiere: convertir l
 de config editables (formula en settings, `costoKmUsd` en el form de vehículos) — hoy se
 editan en USD (convertir bidireccional al editar es aparte, por el redondeo).
 
+## EN CURSO — Event-driven (sin polling) + colas entrada/salida
+Objetivo (pedido del usuario): NADA de polling. Delivery no debe preguntar cada 15s si
+hay pedido/cliente nuevo; PEDIDO **avisa** cuando se crea → delivery reacciona. Colas
+Bull separadas por dirección (`in:*` entrada / `out:*` salida) para fluir en paralelo.
+- ✅ **Slice 1 (PEDIDO, desplegado, INERTE):** `enqueueDeliveryOrders()` encola en la cola
+  durable `procovar-delivery:in:orders` al crear pedido (POST /orders), importar (bulk) y
+  geolocalizar (geo-import). **Gated por `DELIVERY_EVENTS=true`** (off → no encola, nada
+  cambia). `queues.ts` ahora tiene `makeQueue()` genérico + `deliveryOrdersQueue()`.
+- ⬜ **Slice 2 (DELIVERY, PENDIENTE — hot-path, hacer con cuidado):** añadir `bull` a
+  delivery; en `sync-queue.mjs`, **consumir** `procovar-delivery:in:orders` (Bull) → correr
+  `cycle()` por evento; **quitar el `setInterval(POLL 15s)`**. Gatear igual por
+  `DELIVERY_EVENTS`: true = event-driven (sin poll), false = poll actual (fallback/rollback).
+  La cola durable = sin eventos perdidos aunque delivery esté caído. **Cutover**: poner
+  `DELIVERY_EVENTS=true` en el compose del api PEDIDO **y** en el `.env` de delivery +
+  reiniciar ambos. (Hoy no urge: sin geo no fluye nada, así que el cutover es de bajo riesgo.)
+- ⬜ **Slice 3 (colas out):** separar `cycle()` en `out:quote` (cotizar) y `out:writeback`
+  (escribir costo a PEDIDO) como colas Bull propias.
+- ⬜ **Productos auto-sync:** el WAREHOUSE es EXTERNO (sin webhooks) → NO puede ser
+  event-driven. El devops (dueño) debe exponer: **(A) webhook** `POST /api/products/webhook`
+  al cambiar un producto (ideal), o **(B)** `GET /products/weights?updatedSince=<ISO>` para
+  pulls de delta. Con A: `Product` = mirror global auto-actualizado (quitar `userId`). Sin
+  eso, solo pull espaciado / cache R5 (10min).
+
 ## Bloqueos de DATOS (no de código)
 - **0 de 115 clientes en PEDIDO tienen geo** → el mirror y la cotización quedan vacíos hasta **geolocalizar** (import del Consolidado .xlsx en PEDIDO). El usuario lo cargará luego + está descargando las bases de todas las sucursales.
 - DELIVERY sync frenado por: **fórmula del domicilio** (`Settings.domConfigured=false`) + **0 Branches** (punto de partida). Configurar en la UI de delivery.
