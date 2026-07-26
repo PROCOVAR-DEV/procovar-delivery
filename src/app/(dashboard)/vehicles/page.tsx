@@ -6,6 +6,7 @@ import Pagination, { usePagedList } from '@/components/Pagination'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
+import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 
@@ -71,6 +72,7 @@ function getTypeIcon(type: string) {
 
 export default function VehiclesPage() {
   const { token } = useAppStore()
+  const { format } = useCurrency()
   const t = useT()
   const queryClient = useQueryClient()
   const [showModal, setShowModal] = useState(false)
@@ -393,7 +395,7 @@ export default function VehiclesPage() {
                         Cálculo domicilio
                       </span>
                       {vehicle.costoKmUsd != null && (
-                        <span className="text-xs font-semibold text-gray-700">${vehicle.costoKmUsd}/km</span>
+                        <span className="text-xs font-semibold text-gray-700">{format(vehicle.costoKmUsd)}/km</span>
                       )}
                     </>
                   ) : (

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Navbar from '@/components/Navbar'
 import { useAppStore } from '@/store/useAppStore'
+import { useCurrency } from '@/lib/useCurrency'
 import { Icon } from '@iconify/react'
 import axios from 'axios'
 
@@ -48,6 +49,7 @@ function fmtTime(iso: string) {
 
 export default function SyncPage() {
   const { token } = useAppStore()
+  const { format } = useCurrency()
 
   // Tarjetas + estado de config: en vivo por SSE.
   const [snap, setSnap] = useState<Snapshot | null>(null)
@@ -221,7 +223,7 @@ export default function SyncPage() {
                         {j.error && <span className="block text-xs text-red-500 truncate">{j.error}</span>}
                       </td>
                       <td className="px-4 py-3 font-mono text-right text-gray-700">{j.distanceKm != null ? `${j.distanceKm.toFixed(1)} km` : '—'}</td>
-                      <td className="px-4 py-3 font-mono text-right text-gray-900">{j.cost != null ? `$${j.cost.toFixed(2)}` : '—'}</td>
+                      <td className="px-4 py-3 font-mono text-right text-gray-900">{j.cost != null ? format(j.cost) : '—'}</td>
                       <td className="px-4 py-3 text-center text-gray-500">{j.attempts}</td>
                       <td className="px-4 py-3">
                         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs ${s.cls}`}>
