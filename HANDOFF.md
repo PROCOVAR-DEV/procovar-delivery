@@ -64,6 +64,14 @@ Objetivo: delivery espeja los clientes de PEDIDO (como products del warehouse) p
 - ✅ **FEATURE COMPLETA en código.** Solo falta DATA: geolocalizar clientes en PEDIDO (sin geo el picker muestra "no hay clientes geolocalizados").
 - ✅ **Clientes manuales** (source=null, local delivery, NO tocan PEDIDO): se crean desde 2 lados — página **`/customers`** (lista PEDIDO+manuales con badge de origen + form) y botón "Guardar cliente" en crear-ruta (`PedidoForm`). Endpoint `POST /api/customers`. El sync solo borra source="pedido".
 
+## Moneda USD/CUP (delivery)
+`useCurrency()` (`@/lib/useCurrency`) convierte montos USD → moneda elegida por la tasa
+(`Settings.cupRate`); toggle en el Navbar. Los montos se GUARDAN en USD (fuente de
+verdad), solo el display convierte. Aplicado en: PricingSummaryCard, orders, dashboard,
+reports, routes, sync, vehicles (lista). ⬜ Pendiente si se quiere: convertir los INPUTS
+de config editables (formula en settings, `costoKmUsd` en el form de vehículos) — hoy se
+editan en USD (convertir bidireccional al editar es aparte, por el redondeo).
+
 ## Bloqueos de DATOS (no de código)
 - **0 de 115 clientes en PEDIDO tienen geo** → el mirror y la cotización quedan vacíos hasta **geolocalizar** (import del Consolidado .xlsx en PEDIDO). El usuario lo cargará luego + está descargando las bases de todas las sucursales.
 - DELIVERY sync frenado por: **fórmula del domicilio** (`Settings.domConfigured=false`) + **0 Branches** (punto de partida). Configurar en la UI de delivery.
