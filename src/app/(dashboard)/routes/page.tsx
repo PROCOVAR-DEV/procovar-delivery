@@ -124,10 +124,35 @@ function PedidoForm({
   markerColor?: string
 }) {
   const t = useT()
+  const { token } = useAppStore()
+  const queryClient = useQueryClient()
   const [name, setName] = useState('')
   const [manualWeight, setManualWeight] = useState('1')
   const [loc, setLoc] = useState<LocationValue>(emptyLoc)
   const [items, setItems] = useState<OrderItem[]>([])
+  // `fromPicker` = el cliente actual salió del selector (ya existe en el mirror), así no
+  // ofrecemos "Guardar" (evita duplicar). Al editar a mano, vuelve a false.
+  const [fromPicker, setFromPicker] = useState(false)
+  const [savingCustomer, setSavingCustomer] = useState(false)
+
+  // Guarda el cliente manual (source=null) para reusarlo. El sync de PEDIDO no lo toca.
+  const saveManualCustomer = async () => {
+    if (savingCustomer || loc.lat == null || loc.lng == null || !name.trim()) return
+    setSavingCustomer(true)
+    try {
+      await axios.post(
+        '/api/customers',
+        { name: name.trim(), address: loc.address, lat: loc.lat, lng: loc.lng },
+        { headers: { Authorization: `Bearer ${token}` } },
+      )
+      await queryClient.invalidateQueries({ queryKey: ['customers'] })
+      setFromPicker(true) // ya guardado: no volver a ofrecer
+    } catch {
+      /* noop */
+    } finally {
+      setSavingCustomer(false)
+    }
+  }
 
   const computedWeight = items.reduce((s, it) => s + (it.weight || 0) * it.quantity, 0)
   const effectiveWeight = items.length > 0 ? computedWeight : (parseFloat(manualWeight) || 0)
@@ -138,6 +163,7 @@ function PedidoForm({
     setManualWeight('1')
     setLoc(emptyLoc)
     setItems([])
+    setFromPicker(false)
   }
 
   const addProduct = (p: { id: string; name: string; weight: number; packaging?: string | null; category?: string | null }) => {
@@ -159,6 +185,7 @@ function PedidoForm({
           onPick={(c) => {
             setName(c.name)
             setLoc({ address: c.address || '', lat: c.lat, lng: c.lng })
+            setFromPicker(true)
           }}
         />
       </div>
@@ -169,7 +196,7 @@ function PedidoForm({
           <input
             type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => { setName(e.target.value); setFromPicker(false) }}
             className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             placeholder={t('pedido.customerPh')}
           />
@@ -193,7 +220,7 @@ function PedidoForm({
 
       <LocationInput
         value={loc}
-        onChange={setLoc}
+        onChange={(v) => { setLoc(v); setFromPicker(false) }}
         label={t('pedido.address')}
         markerColor={markerColor}
       />
@@ -227,7 +254,21 @@ function PedidoForm({
         <ProductPicker onPick={addProduct} />
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        {/* Guardar como cliente MANUAL local de delivery (source=null) — para reusarlo
+            luego en el selector. NO crea nada en PEDIDO. Solo si se llenó a mano. */}
+        {!fromPicker && canAdd && (
+          <button
+            type="button"
+            disabled={savingCustomer}
+            onClick={saveManualCustomer}
+            className="px-4 py-2 border rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
+            title="Guarda este cliente en delivery para reusarlo (no lo crea en PEDIDO)"
+          >
+            <Icon icon="mdi:content-save-outline" className="inline mr-1" />
+            {savingCustomer ? 'Guardando…' : 'Guardar cliente'}
+          </button>
+        )}
         <button
           type="button"
           disabled={!canAdd}

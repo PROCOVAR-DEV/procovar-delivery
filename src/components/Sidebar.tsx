@@ -11,6 +11,7 @@ const navItems = [
   { href: '/dashboard', icon: 'mdi:view-dashboard-outline', key: 'nav.dashboard' },
   { href: '/routes', icon: 'mdi:map-marker-path', key: 'nav.routes' },
   { href: '/orders', icon: 'mdi:package-variant-closed', key: 'nav.orders' },
+  { href: '/customers', icon: 'mdi:account-multiple-outline', key: 'nav.customers' },
   { href: '/products', icon: 'mdi:tag-multiple-outline', key: 'nav.products' },
   { href: '/vehicles', icon: 'mdi:truck-outline', key: 'nav.vehicles' },
   { href: '/reports', icon: 'mdi:chart-bar', key: 'nav.reports' },

@@ -25,3 +25,36 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({ count: filtered.length, customers: filtered })
 }
+
+// Crea un cliente MANUAL (source=null) desde delivery — para un cliente que no vino de
+// PEDIDO. Igual que las orders manuales. Requiere geo (lat/lng): sin coordenadas no se
+// cotiza. El sync de PEDIDO nunca toca estos (solo borra source="pedido").
+export async function POST(req: NextRequest) {
+  const user = getUserFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = await req.json().catch(() => ({}))
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+  const lat = Number(body.lat)
+  const lng = Number(body.lng)
+  if (!name) return NextResponse.json({ error: 'Falta el nombre del cliente' }, { status: 400 })
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return NextResponse.json({ error: 'Falta la geolocalización (lat/lng) del cliente' }, { status: 400 })
+  }
+
+  const customer = await prisma.customer.create({
+    data: {
+      source: null,
+      externalId: null,
+      name,
+      phone: typeof body.phone === 'string' ? body.phone.trim() || null : null,
+      address: typeof body.address === 'string' ? body.address.trim() || null : null,
+      municipio: typeof body.municipio === 'string' ? body.municipio.trim() || null : null,
+      zona: typeof body.zona === 'string' ? body.zona.trim() || null : null,
+      lat,
+      lng,
+    },
+  })
+
+  return NextResponse.json({ customer }, { status: 201 })
+}
