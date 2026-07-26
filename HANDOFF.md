@@ -56,8 +56,9 @@ Objetivo: delivery espeja los clientes de PEDIDO (como products del warehouse) p
 - ✅ DELIVERY modelo `Customer` + migración `20260724150000_add_customer_mirror` (externalId único).
 - ✅ DELIVERY `sync-queue.mjs` → `syncCustomers()` cada ciclo (upsert + borra los que ya no vienen; no borra ante fallo). Auto, sin botón.
 - ✅ DELIVERY `GET /api/customers?q=` (lista/busca el mirror).
-- ✅ **DELIVERY desplegado**: migración aplicada (tabla `Customer`), Next rebuild standalone + worker sync reiniciado (corre `syncCustomers()`). El mirror se llena solo cuando haya clientes con geo.
-- ⬜ **PENDIENTE ÚNICO — UI**: selector de cliente al crear orden **desde la ruta** (`src/app/(dashboard)/routes/page.tsx`) → autocompleta customerName/address/lat/lng → cotiza. Consume `GET /api/customers?q=`.
+- ✅ **DELIVERY desplegado**: migración aplicada (tabla `Customer`), Next standalone + worker sync (corre `syncCustomers()`). El mirror se llena solo cuando haya clientes con geo.
+- ✅ **UI desplegada**: `CustomerPicker` en `routes/page.tsx` (form `PedidoForm`) → busca el mirror, al elegir autocompleta nombre + dirección + lat/lng → cotiza. Los campos manuales quedan de fallback.
+- ✅ **FEATURE COMPLETA en código.** Solo falta DATA: geolocalizar clientes en PEDIDO (sin geo el picker muestra "no hay clientes geolocalizados").
 
 ## Bloqueos de DATOS (no de código)
 - **0 de 115 clientes en PEDIDO tienen geo** → el mirror y la cotización quedan vacíos hasta **geolocalizar** (import del Consolidado .xlsx en PEDIDO). El usuario lo cargará luego + está descargando las bases de todas las sucursales.
