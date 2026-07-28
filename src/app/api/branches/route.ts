@@ -44,7 +44,20 @@ export async function POST(req: NextRequest) {
       // Crear con coords = el usuario fijó el punto de partida (habilita el cálculo).
       originConfigured: true,
       creatorId: user.id as string,
+      // Auto-crea el PUNTO DE PARTIDA por defecto desde la ubicación de la sucursal:
+      // al guardar una sucursal con coords ya queda su punto de partida listo (antes
+      // quedaba en "0"). El usuario puede agregar más puntos después.
+      origins: {
+        create: [{
+          name,
+          address: address || `${lat}, ${lng}`,
+          lat,
+          lng,
+          userId: user.id as string,
+        }],
+      },
     },
+    include: { _count: { select: { origins: true } } },
   })
 
   return NextResponse.json(branch, { status: 201 })

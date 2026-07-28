@@ -31,6 +31,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     },
   })
 
+  // Backfill del PUNTO DE PARTIDA: si la sucursal tiene coords pero 0 puntos de partida,
+  // crea el por defecto desde su ubicación (igual que al crear). Cubre sucursales viejas
+  // que quedaron en "0": al re-guardarlas ya les queda su punto de partida.
+  if (updated.lat != null && updated.lng != null) {
+    const originCount = await prisma.savedOrigin.count({ where: { branchId: id } })
+    if (originCount === 0) {
+      await prisma.savedOrigin.create({
+        data: {
+          name: updated.name,
+          address: updated.address || `${updated.lat}, ${updated.lng}`,
+          lat: updated.lat,
+          lng: updated.lng,
+          userId: user.id as string,
+          branchId: id,
+        },
+      })
+    }
+  }
+
   return NextResponse.json(updated)
 }
 
