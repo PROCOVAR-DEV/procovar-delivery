@@ -257,12 +257,38 @@ async function checkFormula() {
 // AUTOMÁTICO (cada ciclo), no manual: un cliente nuevo con geo en PEDIDO aparece aquí
 // solo. Upsert por externalId + borra los que ya no vienen (borrados o sin geo). Si la
 // API falla, LANZA antes de borrar nada (no vaciar el mirror ante un error transitorio).
+// Cuántos clientes se piden por página. Traerlos todos de golpe eran 2.17 MB
+// en una sola respuesta; por páginas la memoria se mantiene plana y una
+// respuesta cortada a medias no deja el proceso con datos incompletos.
+const PAGINA_CLIENTES = 1000;
+
+async function traerClientesPaginado() {
+  const clients = [];
+  let cursor = null;
+  for (;;) {
+    const q = new URLSearchParams();
+    if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
+    q.set('limit', String(PAGINA_CLIENTES));
+    if (cursor) q.set('cursor', cursor);
+
+    const res = await fetch(`${PEDIDO_API_URL}/integration/clients?${q}`, { headers: { 'x-api-key': KEY } });
+    if (!res.ok) throw new Error(`clients ${res.status}: ${await res.text().catch(() => '')}`);
+    const data = await res.json();
+    clients.push(...(data.clients || []));
+
+    // Si el api es anterior a la paginación no manda nextCursor y devuelve
+    // todo de una: se corta el bucle y funciona igual.
+    if (!data.nextCursor) break;
+    cursor = data.nextCursor;
+  }
+  return clients;
+}
+
 async function syncCustomers() {
-  const q = new URLSearchParams();
-  if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
-  const res = await fetch(`${PEDIDO_API_URL}/integration/clients?${q}`, { headers: { 'x-api-key': KEY } });
-  if (!res.ok) throw new Error(`clients ${res.status}: ${await res.text().catch(() => '')}`);
-  const { clients = [] } = await res.json();
+  // El recorrido se completa ANTES de tocar nada: el borrado de abajo usa la
+  // lista entera de ids. Si fallara a mitad, la excepción sube y no se borra
+  // nada — vaciar el espejo por una página perdida sería el peor final posible.
+  const clients = await traerClientesPaginado();
 
   const ids = [];
   let up = 0;
