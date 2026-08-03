@@ -120,20 +120,29 @@ async function fetchPending() {
 }
 
 // 1) ENCOLAR: por cada pendiente crea SyncJob(pending) si no existe (idempotente).
+//
+// Antes esto era idempotente A BASE DE EXCEPCIONES: se lanzaba el INSERT de cada
+// pedido y se tragaba el choque de clave única. Como casi todos los pendientes YA
+// estaban encolados, cada ciclo provocaba un error por pedido — y Postgres los
+// escribe todos en su log. Medido en producción: 1.500 errores por vuelta, más de
+// un MILLÓN de líneas de log en tres horas, con el gasto de disco y de trabajo de
+// base de datos que eso supone, y ahogando cualquier error de verdad.
+//
+// Ahora es una sola sentencia con ON CONFLICT DO NOTHING (skipDuplicates): ni un
+// error, ni una excepción, y una ida y vuelta en vez de N.
 async function enqueueNew(orders) {
-  let nuevos = 0;
-  for (const p of orders) {
-    try {
-      await prisma.syncJob.create({
-        data: { externalId: p.id, folio: p.folio, customerName: p.cliente?.nombre || p.encargado || null },
-      });
-      nuevos++;
-    } catch (e) {
-      // unique externalId -> ya estaba encolado; ignorar
-      if (!String(e.message).includes('Unique') && e.code !== 'P2002') throw e;
-    }
-  }
-  return nuevos;
+  if (!orders.length) return 0;
+
+  const { count } = await prisma.syncJob.createMany({
+    data: orders.map((p) => ({
+      externalId: p.id,
+      folio: p.folio,
+      customerName: p.cliente?.nombre || p.encargado || null,
+    })),
+    skipDuplicates: true,
+  });
+
+  return count;
 }
 
 // Cotiza TODO el lote en UNA sola llamada. Es imprescindible: el precio de cada pedido
