@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { signToken } from '@/lib/auth'
 import { canjearCodigo, rolDeDelivery } from '@/lib/procovar-auth'
-import { origenPublico } from '@/lib/origen-publico'
+import { origenPublico, destinoSeguro } from '@/lib/origen-publico'
 
 export const dynamic = 'force-dynamic'
 
@@ -77,7 +77,9 @@ export async function GET(req: NextRequest) {
       branchId: usuario.branchId,
     })
 
-    const volverA = persona.returnTo ?? `${origen}/dashboard`
+    // Se vuelve a comprobar aquí, no solo al salir: `returnTo` ha ido y
+    // vuelto por auth, y lo que se comprueba es lo que se usa.
+    const volverA = destinoSeguro(persona.returnTo, origen)
     const res = NextResponse.redirect(volverA)
 
     // El token viaja en una cookie que el navegador guarda solo: delivery lo

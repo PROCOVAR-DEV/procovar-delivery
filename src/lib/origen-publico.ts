@@ -7,13 +7,48 @@ import { NextRequest } from 'next/server'
  * contenedor la petición llega a `0.0.0.0:3000`, así que la vuelta del login se
  * construía como `https://0.0.0.0:3000/...` y no llevaba a ninguna parte.
  *
- * Traefik pone la dirección real en `x-forwarded-host` y `x-forwarded-proto`.
- * Se usan esas, y solo si no vienen se cae a la dirección de la petición — que
- * es lo correcto en local, donde no hay proxy delante.
+ * Manda `PROCOVAR_PUBLIC_URL` si está puesta. Es lo preferible porque las
+ * cabeceras `x-forwarded-*` las escribe el proxy, y si algún día el contenedor
+ * quedara alcanzable por otro camino, alguien podría mandarlas a mano y
+ * conseguir que construyéramos direcciones apuntando a su servidor.
  */
 export function origenPublico(req: NextRequest): string {
+  const declarado = process.env.PROCOVAR_PUBLIC_URL
+  if (declarado) return declarado.replace(/\/+$/, '')
+
   const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host')
   const protocolo = req.headers.get('x-forwarded-proto') ?? 'https'
   if (host) return `${protocolo}://${host}`
   return new URL(req.url).origin
+}
+
+/**
+ * A dónde se puede mandar a alguien después de entrar.
+ *
+ * Solo a esta misma aplicación. `volverA` viaja en la dirección y lo puede
+ * escribir cualquiera: sin esta comprobación, un enlace del tipo
+ * `…/api/auth/entrar?volverA=https://sitio-falso/` haría que, tras identificarse
+ * de verdad en Procovar, la persona acabara en una copia del sistema pidiéndole
+ * la contraseña — y habiendo pasado por nuestro dominio, que es justo lo que da
+ * confianza.
+ *
+ * Se aceptan rutas (`/dashboard`) y direcciones completas de este mismo origen.
+ * Cualquier otra cosa cae a `/dashboard`, en silencio: quien lo intenta no
+ * merece una explicación y quien llega por error tampoco la necesita.
+ */
+export function destinoSeguro(candidato: string | null | undefined, origen: string): string {
+  if (!candidato) return `${origen}/dashboard`
+
+  // Una ruta relativa es segura por definición, pero `//otro-sitio.com` también
+  // empieza por barra y el navegador la lee como otro dominio.
+  if (candidato.startsWith('/') && !candidato.startsWith('//')) {
+    return `${origen}${candidato}`
+  }
+
+  try {
+    if (new URL(candidato).origin === origen) return candidato
+  } catch {
+    // No es una dirección válida.
+  }
+  return `${origen}/dashboard`
 }

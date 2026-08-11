@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { pedirRedireccion, loginUnicoDisponible } from '@/lib/procovar-auth'
-import { origenPublico } from '@/lib/origen-publico'
+import { origenPublico, destinoSeguro } from '@/lib/origen-publico'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +22,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${origen}/login?sso=nodisponible`)
   }
 
-  const volverA = req.nextUrl.searchParams.get('volverA') ?? `${origen}/dashboard`
+  // Comprobado: `volverA` lo escribe quien quiera en la dirección.
+  const volverA = destinoSeguro(req.nextUrl.searchParams.get('volverA'), origen)
 
   try {
     const { redirectUrl } = await pedirRedireccion(`${origen}/api/auth/callback`, volverA)
