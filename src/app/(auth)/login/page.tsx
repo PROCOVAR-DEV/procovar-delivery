@@ -16,6 +16,18 @@ export default function LoginPage() {
   const t = useT()
   const router = useRouter()
 
+  // Si el login único devolvió a esta pantalla, dice por qué. Sin esto, quien
+  // pulsa "Entrar con Procovar" y vuelve aquí sin más cree que ha pulsado mal.
+  const motivoSso =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('sso')
+      : null
+  const AVISOS: Record<string, string> = {
+    nodisponible: 'El acceso con la cuenta de Procovar todavía no está configurado. Entra con tu correo y contraseña.',
+    error: 'No se pudo entrar con la cuenta de Procovar. Inténtalo otra vez o entra con tu correo y contraseña.',
+    sincodigo: 'La vuelta desde Procovar llegó incompleta. Vuelve a intentarlo.',
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -49,6 +61,29 @@ export default function LoginPage() {
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl p-8">
+          {/* La entrada de la casa va primero y en grande: quien tiene cuenta de
+              Procovar es todo el mundo, y el correo y la contraseña de aquí son
+              ya solo la puerta de atrás para cuando algo falle. */}
+          <a
+            href="/api/auth/entrar"
+            className="mb-5 flex w-full items-center justify-center gap-2 rounded-xl bg-[#054C74] py-3 font-semibold text-white shadow-md transition-colors hover:bg-[#04324C]"
+          >
+            <Icon icon="mdi:shield-account" className="text-xl" />
+            Entrar con mi cuenta de Procovar
+          </a>
+
+          <div className="mb-5 flex items-center gap-3">
+            <span className="h-px flex-1 bg-line" />
+            <span className="text-xs uppercase tracking-wider text-ink-soft/70">o</span>
+            <span className="h-px flex-1 bg-line" />
+          </div>
+
+          {motivoSso && AVISOS[motivoSso] && (
+            <div className="mb-4 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+              {AVISOS[motivoSso]}
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <div className="bg-red-50 text-red-600 px-4 py-3 rounded-xl text-sm border border-red-100">
