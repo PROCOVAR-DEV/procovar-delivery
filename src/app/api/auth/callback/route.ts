@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { signToken } from '@/lib/auth'
 import { canjearCodigo, rolDeDelivery } from '@/lib/procovar-auth'
+import { origenPublico } from '@/lib/origen-publico'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,9 +22,9 @@ export const dynamic = 'force-dynamic'
  */
 export async function GET(req: NextRequest) {
   const code = req.nextUrl.searchParams.get('code')
-  const origen = new URL(req.url).origin
+  const origen = origenPublico(req)
 
-  if (!code) return NextResponse.redirect(new URL('/login?sso=sincodigo', req.url))
+  if (!code) return NextResponse.redirect(`${origen}/login?sso=sincodigo`)
 
   try {
     const persona = await canjearCodigo(code)
@@ -92,7 +93,8 @@ export async function GET(req: NextRequest) {
       maxAge: 60 * 60 * 24 * 7,
     })
     return res
-  } catch {
-    return NextResponse.redirect(new URL('/login?sso=error', req.url))
+  } catch (e) {
+    console.error('[login unico] fallo el canje del codigo:', (e as Error).message)
+    return NextResponse.redirect(`${origen}/login?sso=error`)
   }
 }
