@@ -1,66 +1,17 @@
-import { NextRequest, NextResponse } from 'next/server'
-import bcrypt from 'bcryptjs'
-import { prisma } from '@/lib/prisma'
-import { getUserFromRequest } from '@/lib/auth'
-
+/**
+ * Ni editar ni borrar cuentas: se gestionan en el sistema de accesos.
+ *
+ * Editarlas aquí no serviría de nada aunque se dejara. El rol y la sucursal se
+ * refrescan desde accesos **cada vez que la persona entra**, así que cualquier
+ * cambio hecho aquí duraría hasta su siguiente inicio de sesión — que es la peor
+ * clase de fallo: el que parece que funcionó.
+ *
+ * Y borrar, menos: estas fichas son a las que apuntan los pedidos, las rutas y
+ * los vehículos que cada uno creó. Quitarle el acceso a alguien se hace en
+ * accesos; la ficha se queda aquí, sosteniendo el histórico.
+ *
+ * El fichero se conserva sin métodos para que quede escrito el porqué. Borrarlo
+ * dejaría el hueco sin explicación, y dentro de tres meses alguien volvería a
+ * añadir un PATCH sin saber por qué no estaba.
+ */
 export const dynamic = 'force-dynamic'
-
-function ensureAdmin(req: NextRequest) {
-  const user = getUserFromRequest(req)
-  if (!user) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }), user: null }
-  if (user.role !== 'admin') return { error: NextResponse.json({ error: 'Admin access required' }, { status: 403 }), user: null }
-  return { error: null, user }
-}
-
-export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = ensureAdmin(req)
-  if (auth.error) return auth.error
-
-  const { id } = await params
-  const { name, role, password, branchId } = await req.json()
-
-  const existing = await prisma.user.findUnique({ where: { id } })
-  if (!existing) {
-    return NextResponse.json({ error: 'User not found' }, { status: 404 })
-  }
-
-  const data: { name?: string; role?: string; password?: string; branchId?: string | null } = {}
-
-  if (name !== undefined) data.name = name
-  if (role !== undefined) data.role = role
-  if (branchId !== undefined) data.branchId = branchId || null
-  if (password) data.password = await bcrypt.hash(password, 10)
-
-  const updated = await prisma.user.update({
-    where: { id },
-    data,
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      createdAt: true,
-    }
-  })
-
-  return NextResponse.json(updated)
-}
-
-export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = ensureAdmin(req)
-  if (auth.error) return auth.error
-
-  const { id } = await params
-
-  if (id === auth.user!.id) {
-    return NextResponse.json({ error: 'You cannot delete your own account' }, { status: 400 })
-  }
-
-  const existing = await prisma.user.findUnique({ where: { id } })
-  if (!existing) {
-    return NextResponse.json({ error: 'User not found' }, { status: 404 })
-  }
-
-  await prisma.user.delete({ where: { id } })
-  return NextResponse.json({ success: true })
-}

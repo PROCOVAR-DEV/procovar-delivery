@@ -218,7 +218,7 @@ export async function POST(req: NextRequest) {
   // CAMINO PREFERIDO: armar la ruta con PEDIDOS YA IMPORTADOS (se seleccionan de la
   // lista; ya tienen ubicación, peso y costo de domicilio). No se re-teclea nada.
   if (Array.isArray(orderIds) && orderIds.length > 0) {
-    return await createRouteFromExistingOrders(scope.ownerId, {
+    return await createRouteFromExistingOrders(scope.actorId, {
       name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds, branchId: scope.branchId,
     })
   }
@@ -257,7 +257,7 @@ export async function POST(req: NextRequest) {
     data: {
       name: name || null,
       routeCode,
-      userId: scope.ownerId,
+      userId: scope.actorId,
       ...(scope.branchId ? { branchId: scope.branchId } : {}),
       ...(vehicleId && { vehicleId }),
       originAddress: originAddress ?? null,
@@ -286,7 +286,7 @@ export async function POST(req: NextRequest) {
           items: (Array.isArray(s.items) ? s.items : []) as unknown as Prisma.InputJsonValue,
           tripLeg: 'outbound',
           routeId: route.id,
-          userId: scope.ownerId,
+          userId: scope.actorId,
           ...(scope.branchId ? { branchId: scope.branchId } : {}),
         }
       })

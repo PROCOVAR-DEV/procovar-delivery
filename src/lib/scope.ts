@@ -1,33 +1,57 @@
 import { NextRequest } from 'next/server'
-import { prisma } from '@/lib/prisma'
 import { AuthUser } from '@/lib/auth'
 
 export interface Scope {
-  /** Dueño de los datos (la "organización"): el creador de la sucursal. Para el admin
-   *  es él mismo; para un usuario de sucursal, el creador de su sucursal. */
-  ownerId: string
-  /** Sucursal a la que se limita la consulta. null = todas (solo admin sin filtro). */
+  /**
+   * Sucursal a la que se limita la consulta. `null` = todas.
+   *
+   * Es lo ÚNICO que decide qué se ve. Aquí nada pertenece a una persona: los
+   * pedidos entran solos desde PEDIDO y son de la sucursal que los originó.
+   */
   branchId: string | null
+  /**
+   * Quién está haciendo la petición. Se usa para dejar constancia de quién creó
+   * algo —y nada más—. **No filtra.** Ver abajo por qué.
+   */
+  actorId: string
 }
 
 /**
- * Resuelve el alcance (scope) de una petición para el modelo multi-sucursal de delivery:
- *  - Usuario de SUCURSAL (tiene branchId): forzado a SU sucursal; el dueño de los datos es
- *    el creador de esa sucursal (la organización), así ve los datos de su sucursal aunque
- *    los haya creado el admin.
- *  - ADMIN (sin branchId): ve TODO; opcionalmente filtra por la sucursal elegida en el
- *    header `x-sucursal-id` (el selector del panel). Sin header = todas.
+ * A qué datos llega quien pide.
+ *
+ * - Quien pertenece a una sucursal: solo la suya, siempre.
+ * - Quien no pertenece a ninguna (el Super Admin): todas, o la que elija en el
+ *   selector (`x-sucursal-id`).
  */
 export async function resolveScope(req: NextRequest, user: AuthUser): Promise<Scope> {
-  if (user.branchId) {
-    const b = await prisma.branch.findUnique({ where: { id: user.branchId }, select: { creatorId: true } })
-    return { ownerId: b?.creatorId ?? user.id, branchId: user.branchId }
-  }
-  const h = req.headers.get('x-sucursal-id')?.trim()
-  return { ownerId: user.id, branchId: h && h.length ? h : null }
+  if (user.branchId) return { branchId: user.branchId, actorId: user.id }
+
+  const elegida = req.headers.get('x-sucursal-id')?.trim()
+  return { branchId: elegida && elegida.length ? elegida : null, actorId: user.id }
 }
 
-/** where de Prisma para scopear por dueño + (opcional) sucursal. */
-export function scopeWhere(scope: Scope): { userId: string; branchId?: string } {
-  return { userId: scope.ownerId, ...(scope.branchId ? { branchId: scope.branchId } : {}) }
+/**
+ * El filtro de Prisma. **Por sucursal, nunca por cuenta.**
+ *
+ * # Qué había antes y por qué estaba mal
+ *
+ * Filtraba por `userId`, usando como "dueño" al creador de la sucursal. Como las
+ * ocho sucursales las creó el Super Admin, los 3.528 pedidos que entraron desde
+ * PEDIDO quedaron todos a su nombre — no porque sean suyos, sino porque la
+ * sincronización tenía que poner a alguien y ponía al creador.
+ *
+ * Eso no era solo feo: escondía datos. Un pedido creado por una operadora de
+ * Holguín llevaba SU identificador, así que no casaba con el del creador y sus
+ * propios compañeros de Holguín no lo veían. El mismo fallo, al revés, con dos
+ * administradores: cada uno veía solo lo suyo.
+ *
+ * Aquí nada es de nadie. Los pedidos llegan solos desde PEDIDO y pertenecen a la
+ * sucursal que los originó, que es lo que `Order.branchId` ya guardaba bien
+ * desde el principio.
+ *
+ * `userId` se sigue escribiendo al crear algo a mano, y sirve para saber quién
+ * lo hizo. Para eso, y para nada más.
+ */
+export function scopeWhere(scope: Scope): { branchId?: string } {
+  return scope.branchId ? { branchId: scope.branchId } : {}
 }

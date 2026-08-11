@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
 
@@ -39,38 +38,16 @@ export async function GET(req: NextRequest) {
   return NextResponse.json(users)
 }
 
-export async function POST(req: NextRequest) {
-  const auth = ensureAdmin(req)
-  if (auth.error) return auth.error
-
-  const { email, password, name, role, branchId } = await req.json()
-
-  if (!email || !password || !name) {
-    return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
-  }
-
-  const existing = await prisma.user.findUnique({ where: { email } })
-  if (existing) {
-    return NextResponse.json({ error: 'Email already in use' }, { status: 400 })
-  }
-
-  const hashed = await bcrypt.hash(password, 10)
-  const created = await prisma.user.create({
-    data: {
-      email,
-      password: hashed,
-      name,
-      role: typeof role === 'string' && role ? role : 'operator',
-      branchId: branchId || null,
-    },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      createdAt: true,
-    }
-  })
-
-  return NextResponse.json(created, { status: 201 })
-}
+/**
+ * Aquí ya no se crean cuentas.
+ *
+ * Las personas viven en el sistema de accesos de Procovar; esta tabla es su
+ * reflejo, y se rellena sola cuando alguien entra. Crear una cuenta aquí daría
+ * una persona que no existe en ninguna otra aplicación y que no podría entrar,
+ * porque el login ya no está en delivery.
+ *
+ * Las cuentas que ya había NO se tocan: llevan colgados los pedidos, las rutas
+ * y los vehículos que cada uno creó. Se emparejan con las de accesos **por el
+ * correo**, así que quien ya trabaje aquí tiene que tener en accesos el mismo
+ * correo que tiene en esta lista, o su trabajo se quedará en la ficha antigua.
+ */

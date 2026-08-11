@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   }
 
   const scope = await resolveScope(req, user)
-  const userId = scope.ownerId
+  const userId = scope.actorId
   const branchId = scope.branchId // sucursal del usuario o la elegida por el admin
   const useForDelivery = usarParaDomicilio === true
   const vehicleType = type || 'truck'

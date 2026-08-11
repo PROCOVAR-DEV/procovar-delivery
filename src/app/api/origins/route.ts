@@ -14,9 +14,8 @@ export async function GET(req: NextRequest) {
 
   const origins = await prisma.savedOrigin.findMany({
     where: {
-      // Scopeado al dueño de la sucursal (no al usuario logueado): un admin de sucursal
-      // ve los orígenes de su sucursal aunque los haya creado el Super Admin.
-      userId: scope.ownerId,
+      // Por SUCURSAL, no por cuenta: un origen es de la sucursal donde está, lo
+      // haya guardado quien lo haya guardado.
       ...(scope.branchId ? { branchId: scope.branchId } : branchId ? { branchId } : {}),
     },
     orderBy: { createdAt: 'desc' },
@@ -44,11 +43,17 @@ export async function POST(req: NextRequest) {
   // Un usuario de sucursal solo puede crear orígenes en SU sucursal.
   const targetBranchId = scope.branchId ?? branchId ?? null
 
-  // Validate the branch belongs to this org before linking (prevents IDOR on the FK).
+  // Que la sucursal exista y sea una a la que se llegue, para que nadie cuelgue
+  // un origen en la sucursal de otro mandando su identificador en la petición.
+  //
+  // Se comprueba contra el ALCANCE. Antes se miraba el creador de la sucursal,
+  // y como las ocho las creó el Super Admin, esa comprobación no comprobaba nada.
   let validBranchId: string | null = null
   if (targetBranchId) {
     const branch = await prisma.branch.findFirst({
-      where: { id: targetBranchId, OR: [{ creatorId: scope.ownerId }, { members: { some: { id: user.id } } }] },
+      where: scope.branchId
+        ? { id: scope.branchId }
+        : { id: targetBranchId },
       select: { id: true },
     })
     if (!branch) {
@@ -58,7 +63,8 @@ export async function POST(req: NextRequest) {
   }
 
   const origin = await prisma.savedOrigin.create({
-    data: { name, address, lat, lng, userId: scope.ownerId, branchId: validBranchId },
+    // `userId` deja constancia de quién lo guardó. No filtra nada.
+    data: { name, address, lat, lng, userId: scope.actorId, branchId: validBranchId },
   })
 
   return NextResponse.json(origin, { status: 201 })

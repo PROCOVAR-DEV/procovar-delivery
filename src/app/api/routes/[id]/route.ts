@@ -134,7 +134,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             items: (Array.isArray(s.items) ? s.items : []) as unknown as Prisma.InputJsonValue,
             tripLeg: 'outbound',
             routeId: id,
-            userId: scope.ownerId,
+            userId: scope.actorId,
             ...(scope.branchId ? { branchId: scope.branchId } : {}),
           }
         })
