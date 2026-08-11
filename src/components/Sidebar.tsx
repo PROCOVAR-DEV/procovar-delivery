@@ -3,7 +3,6 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAppStore } from '@/store/useAppStore'
-import { useRouter } from 'next/navigation'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 
@@ -21,7 +20,6 @@ const navItems = [
 export default function Sidebar() {
   const pathname = usePathname()
   const { logout, user } = useAppStore()
-  const router = useRouter()
   const t = useT()
 
   const items = user?.role === 'admin'
@@ -34,8 +32,11 @@ export default function Sidebar() {
     : navItems
 
   const handleLogout = () => {
+    // Se limpia lo del navegador y se manda al servidor a cerrar de verdad: la
+    // sesión está en una cookie httpOnly que el JavaScript no puede borrar, así
+    // que sin esta llamada el botón limpiaba localStorage y no cerraba nada.
     logout()
-    router.push('/login')
+    window.location.assign('/api/auth/salir')
   }
 
   return (
@@ -69,6 +70,23 @@ export default function Sidebar() {
           )
         })}
       </nav>
+      {user?.role === 'admin' && (
+        <div className="border-t border-line p-3">
+          {/* Las personas se gestionan en Accesos, no aquí. Se deja el enlace
+              —y abre en otra pestaña— para que quien venía a buscarlas sepa
+              adónde ir, en vez de encontrarse con que la opción desapareció. */}
+          <a
+            href="https://auth.procovar.cloud/dashboard/organizations"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium text-ink-soft transition-colors hover:bg-ink/[0.035] hover:text-ink"
+          >
+            <Icon icon="mdi:account-group-outline" className="shrink-0 text-xl" />
+            <span className="flex-1 text-left">{t('nav.users')}</span>
+            <Icon icon="mdi:open-in-new" className="shrink-0 text-sm opacity-50" />
+          </a>
+        </div>
+      )}
       <div className="p-3 border-t border-line">
         <button
           onClick={handleLogout}
