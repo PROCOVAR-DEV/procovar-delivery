@@ -39,7 +39,17 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * Aquí ya no se crean cuentas.
+ * Solo lectura. Aquí ya no se crean, editan ni borran cuentas.
+ *
+ * Editarlas no serviría de nada aunque se dejara: el rol y la sucursal se
+ * refrescan desde Accesos CADA VEZ que la persona entra, así que un cambio hecho
+ * aquí duraría hasta su siguiente inicio de sesión — la peor clase de fallo, el
+ * que parece que funcionó. Y borrar, menos: estas fichas son a las que apuntan
+ * los pedidos, las rutas y los vehículos de cada uno. Quitar el acceso se hace
+ * en Accesos; la ficha se queda sosteniendo el histórico.
+ *
+ * (`/api/users/[id]` se eliminó entero: un fichero de ruta sin ningún método
+ * exportado no compila en Next, así que la explicación vive aquí.)
  *
  * Las personas viven en el sistema de accesos de Procovar; esta tabla es su
  * reflejo, y se rellena sola cuando alguien entra. Crear una cuenta aquí daría
