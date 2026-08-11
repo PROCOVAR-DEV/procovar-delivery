@@ -16,6 +16,23 @@ export function origenPublico(req: NextRequest): string {
   const declarado = process.env.PROCOVAR_PUBLIC_URL
   if (declarado) return declarado.replace(/\/+$/, '')
 
+  // Sin `PROCOVAR_PUBLIC_URL` hay que creerse la cabecera, y la cabecera la
+  // manda quien haga la petición. Detrás de Traefik es seguro —la reescribe
+  // él—, pero si el contenedor quedara alcanzable por otro camino, alguien
+  // podría mandarla a mano y conseguir que construyéramos la dirección de
+  // vuelta apuntando a su servidor.
+  //
+  // Queda un cortafuegos más: auth solo acepta direcciones de vuelta que estén
+  // en su lista blanca, así que una falsa la rechaza. Aun así, en producción
+  // esto no debería pasar nunca — y si pasa, tiene que verse en el registro y
+  // no descubrirse cuando alguien lo aproveche.
+  if (process.env.NODE_ENV === 'production') {
+    console.warn(
+      '[login unico] PROCOVAR_PUBLIC_URL no esta configurada: la direccion publica ' +
+        'se esta deduciendo de las cabeceras del proxy. Configurala.',
+    )
+  }
+
   const host = req.headers.get('x-forwarded-host') ?? req.headers.get('host')
   const protocolo = req.headers.get('x-forwarded-proto') ?? 'https'
   if (host) return `${protocolo}://${host}`
