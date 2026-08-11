@@ -139,6 +139,25 @@ export default function UsersPage() {
     <div className="flex flex-col">
       <Navbar title={t('usr.title')} />
       <div className="p-6 space-y-4">
+          {/* Las cuentas vienen del sistema de accesos y esta lista es su
+              reflejo. Decirlo aqui evita que alguien busque el boton de crear
+              durante diez minutos antes de preguntar. */}
+          <div className="flex items-start gap-2 rounded-xl border border-sky-100 bg-sky-50 px-4 py-3 text-sm text-sky-900">
+            <Icon icon="mdi:information-outline" className="mt-0.5 shrink-0 text-base" />
+            <span>
+              Las personas, sus roles y sus permisos se gestionan en{' '}
+              <a
+                href="https://auth.procovar.cloud"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold underline"
+              >
+                Accesos de Procovar
+              </a>
+              . Esta lista se rellena sola cuando alguien entra, y su rol y su
+              sucursal se actualizan en cada entrada.
+            </span>
+          </div>
         <div className="flex flex-wrap justify-between items-center gap-3">
           <h3 className="text-lg font-semibold text-gray-700">{t('usr.admin')}</h3>
           <div className="flex items-center gap-3">
@@ -152,12 +171,18 @@ export default function UsersPage() {
                 className="pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
-            <button
-              onClick={() => setShowCreate(true)}
-              className="bg-primary text-white px-4 py-2 rounded-xl font-medium hover:bg-blue-700"
+            {/* Aqui ya no se crean cuentas: las personas viven en Accesos y
+                esta lista es su reflejo. Se enlaza en vez de esconderlo, para
+                que quien venia a dar de alta a alguien sepa adonde ir. */}
+            <a
+              href="https://auth.procovar.cloud/dashboard/organizations"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 rounded-xl bg-[#054C74] px-4 py-2 font-medium text-white hover:bg-[#04324C]"
             >
-              {t('usr.new')}
-            </button>
+              <Icon icon="mdi:shield-account" />
+              Gestionar en Accesos
+            </a>
           </div>
         </div>
 
