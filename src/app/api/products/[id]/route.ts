@@ -9,7 +9,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const existing = await prisma.product.findFirst({ where: { id, userId: user.id as string } })
+  const existing = await prisma.product.findFirst({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 
   const { name, weight, packaging, unitsPerPackage, category } = await req.json()
@@ -33,7 +33,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const existing = await prisma.product.findFirst({ where: { id, userId: user.id as string } })
+  const existing = await prisma.product.findFirst({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'No encontrado' }, { status: 404 })
 
   await prisma.product.delete({ where: { id } })

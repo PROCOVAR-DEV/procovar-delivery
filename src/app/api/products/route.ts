@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,14 +20,19 @@ export async function GET(req: NextRequest) {
   const q = new URL(req.url).searchParams.get('q')?.trim().toLowerCase() || ''
 
   const products = await prisma.product.findMany({
-    where: { userId: user.id as string },
+    // El catálogo es de la casa: los productos no tienen sucursal en el
+    // esquema, y filtrarlos por quien los creó hacía que cada persona viera
+    // solo los suyos.
+    where: {},
     orderBy: { name: 'asc' },
   })
 
   // Tally how many units of each product have been transported across all orders,
   // so the UI can surface the most-used products first.
+  // Esto son PEDIDOS, no productos: se cuentan los de la sucursal de quien
+  // mira, para que "lo más transportado" signifique algo en su sucursal.
   const orders = await prisma.order.findMany({
-    where: { userId: user.id as string },
+    where: scopeWhere(await resolveScope(req, user)),
     select: { items: true },
   })
   const usage: Record<string, number> = {}
