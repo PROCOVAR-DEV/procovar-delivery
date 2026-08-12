@@ -59,6 +59,13 @@ export async function POST(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+  // El catálogo es de la casa: lo que se añada aquí lo ven las ocho sucursales,
+  // así que lo toca quien administra. La importación masiva de más abajo hace
+  // esto todavía más importante — de una vez se meten cientos de filas.
+  if (user.role !== 'admin') {
+    return NextResponse.json({ error: 'Solo un administrador puede tocar el catálogo' }, { status: 403 })
+  }
+
   const body = await req.json()
 
   // Bulk import: { bulk: [{...}] }
