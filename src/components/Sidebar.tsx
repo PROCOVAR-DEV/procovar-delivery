@@ -27,7 +27,6 @@ export default function Sidebar() {
         ...navItems,
         { href: '/sync', icon: 'mdi:sync', key: 'nav.sync' },
         { href: '/branches', icon: 'mdi:office-building-marker-outline', key: 'nav.branches' },
-        { href: '/users', icon: 'mdi:account-group-outline', key: 'nav.users' },
       ]
     : navItems
 
