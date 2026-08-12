@@ -26,10 +26,9 @@ export async function GET(req: NextRequest) {
 
   const [totalOrders, totalVehicles, orders] = await Promise.all([
     prisma.order.count({ where }),
-    // Los vehículos NO tienen sucursal en el esquema: solo quién los creó. Así
-    // que la flota es de la casa y se cuenta entera. El día que cada sucursal
-    // tenga la suya, habrá que añadirles `branchId` y filtrar aquí también.
-    prisma.vehicle.count(),
+    // Los vehículos SÍ tienen sucursal (`Vehicle.branchId`): se cuentan los de
+    // la de quien mira. Antes esto contaba la flota entera por un despiste mío.
+    prisma.vehicle.count({ where }),
     prisma.order.findMany({
       where,
       select: { price: true, weight: true },

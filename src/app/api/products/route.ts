@@ -19,11 +19,17 @@ export async function GET(req: NextRequest) {
 
   const q = new URL(req.url).searchParams.get('q')?.trim().toLowerCase() || ''
 
+  // Los de la sucursal de quien mira, MÁS los que no tienen ninguna. Esos
+  // últimos son los que ya existían antes de que el campo existiera: dejarlos
+  // fuera vaciaría el catálogo de golpe para todo el mundo.
+  //
+  // El Super Admin no tiene sucursal, así que `where` viene vacío y los ve
+  // todos, de todas las sucursales.
+  const alcance = scopeWhere(await resolveScope(req, user))
   const products = await prisma.product.findMany({
-    // El catálogo es de la casa: los productos no tienen sucursal en el
-    // esquema, y filtrarlos por quien los creó hacía que cada persona viera
-    // solo los suyos.
-    where: {},
+    where: alcance.branchId
+      ? { OR: [{ branchId: alcance.branchId }, { branchId: null }] }
+      : {},
     orderBy: { name: 'asc' },
   })
 
@@ -66,6 +72,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Solo un administrador puede tocar el catálogo' }, { status: 403 })
   }
 
+  // El producto nace en la sucursal de quien lo crea. El Super Admin no tiene
+  // ninguna, así que lo suyo nace sin asignar y lo ven todas — que es lo que
+  // toca cuando lo da de alta quien manda en las ocho.
+  const sucursalDeAlta = (await resolveScope(req, user)).branchId
+
   const body = await req.json()
 
   // Bulk import: { bulk: [{...}] }
@@ -79,6 +90,7 @@ export async function POST(req: NextRequest) {
         unitsPerPackage: p.unitsPerPackage != null && p.unitsPerPackage !== ('' as unknown) ? Number(p.unitsPerPackage) : null,
         category: p.category?.toString().trim() || null,
         userId: user.id as string,
+      branchId: sucursalDeAlta,
       }))
     if (rows.length === 0) return NextResponse.json({ error: 'No hay productos válidos' }, { status: 400 })
     await prisma.product.createMany({ data: rows })
@@ -98,6 +110,7 @@ export async function POST(req: NextRequest) {
       unitsPerPackage: unitsPerPackage != null ? Number(unitsPerPackage) : null,
       category: category?.toString().trim() || null,
       userId: user.id as string,
+      branchId: sucursalDeAlta,
     },
   })
   return NextResponse.json(product, { status: 201 })
