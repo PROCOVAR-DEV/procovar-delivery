@@ -34,11 +34,8 @@ model Product {
   category        String?
   userId          String
   user            User     @relation(fields: [userId], references: [id])
-  // Sucursal dueña del producto, igual que en Vehicle. `null` = de todas, que
-  // es como quedan los que ya existían: nadie los había asignado porque el
-  // campo no estaba.
-  branchId        String?
-  branch          Branch?  @relation("BranchProducts", fields: [branchId], references: [id])
+  // SIN sucursal, a propósito: los productos vienen del almacén de datos y son
+  // los mismos para toda la empresa. No son de ninguna en particular.
   createdAt       DateTime @default(now())
 }
 
@@ -86,7 +83,6 @@ model Branch {
   origins    SavedOrigin[]
   orders     Order[]
   vehicles   Vehicle[] @relation("BranchVehicles")
-  products   Product[] @relation("BranchProducts")
   routes     Route[]   @relation("BranchRoutes")
   createdAt  DateTime @default(now())
 }

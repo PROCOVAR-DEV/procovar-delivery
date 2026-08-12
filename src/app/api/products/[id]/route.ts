@@ -1,28 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { esSuperAdmin } from '@/lib/es-super-admin'
 
 export const dynamic = 'force-dynamic'
 
-/**
- * El catálogo lo LEE todo el mundo, pero solo lo TOCA quien administra.
+/*
+ * El catálogo lo LEE todo el mundo y lo TOCA solo el Super Admin.
  *
- * Los productos no tienen sucursal en el esquema: son de la casa. Al hacerlos
- * comunes se quedaron sin ninguna comprobación —antes al menos hacía falta ser
- * quien lo creó—, así que cualquiera con sesión podía editar o borrar un
- * producto del catálogo entero. Un borrado ahí se lo lleva de todas las
- * sucursales a la vez.
+ * Los productos vienen del almacén de datos: son los mismos para toda la
+ * empresa, así que un borrado aquí se los quita a las ocho sucursales a la vez.
+ * Eso no es cosa de quien manda en una.
  */
-function soloAdministra(user: { role?: string } | null) {
-  return user?.role === 'admin'
-}
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!soloAdministra(user)) {
-    return NextResponse.json({ error: 'Solo un administrador puede tocar el catálogo' }, { status: 403 })
+  if (!esSuperAdmin(user)) {
+    return NextResponse.json({ error: 'Solo el Super Admin puede tocar el catálogo' }, { status: 403 })
   }
 
   const existing = await prisma.product.findFirst({ where: { id } })
@@ -48,8 +44,8 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   const { id } = await params
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!soloAdministra(user)) {
-    return NextResponse.json({ error: 'Solo un administrador puede tocar el catálogo' }, { status: 403 })
+  if (!esSuperAdmin(user)) {
+    return NextResponse.json({ error: 'Solo el Super Admin puede tocar el catálogo' }, { status: 403 })
   }
 
   const existing = await prisma.product.findFirst({ where: { id } })

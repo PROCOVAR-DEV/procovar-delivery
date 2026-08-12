@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { esSuperAdmin } from '@/lib/es-super-admin'
 import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
@@ -19,17 +20,10 @@ export async function GET(req: NextRequest) {
 
   const q = new URL(req.url).searchParams.get('q')?.trim().toLowerCase() || ''
 
-  // Los de la sucursal de quien mira, MÁS los que no tienen ninguna. Esos
-  // últimos son los que ya existían antes de que el campo existiera: dejarlos
-  // fuera vaciaría el catálogo de golpe para todo el mundo.
-  //
-  // El Super Admin no tiene sucursal, así que `where` viene vacío y los ve
-  // todos, de todas las sucursales.
-  const alcance = scopeWhere(await resolveScope(req, user))
+  // El catálogo es GLOBAL: los productos vienen del almacén de datos y son los
+  // mismos para toda la empresa. No se filtran por sucursal porque no son de
+  // ninguna.
   const products = await prisma.product.findMany({
-    where: alcance.branchId
-      ? { OR: [{ branchId: alcance.branchId }, { branchId: null }] }
-      : {},
     orderBy: { name: 'asc' },
   })
 
@@ -65,17 +59,13 @@ export async function POST(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // El catálogo es de la casa: lo que se añada aquí lo ven las ocho sucursales,
-  // así que lo toca quien administra. La importación masiva de más abajo hace
-  // esto todavía más importante — de una vez se meten cientos de filas.
-  if (user.role !== 'admin') {
-    return NextResponse.json({ error: 'Solo un administrador puede tocar el catálogo' }, { status: 403 })
+  // El catálogo viene del almacén de datos y es el mismo para toda la empresa:
+  // lo LEE todo el mundo y lo importa SOLO el Super Admin. Un Administrador
+  // manda en su sucursal, no en el catálogo de las ocho — y la importación
+  // masiva mete cientos de filas de una vez.
+  if (!esSuperAdmin(user)) {
+    return NextResponse.json({ error: 'Solo el Super Admin puede importar productos' }, { status: 403 })
   }
-
-  // El producto nace en la sucursal de quien lo crea. El Super Admin no tiene
-  // ninguna, así que lo suyo nace sin asignar y lo ven todas — que es lo que
-  // toca cuando lo da de alta quien manda en las ocho.
-  const sucursalDeAlta = (await resolveScope(req, user)).branchId
 
   const body = await req.json()
 
@@ -90,7 +80,6 @@ export async function POST(req: NextRequest) {
         unitsPerPackage: p.unitsPerPackage != null && p.unitsPerPackage !== ('' as unknown) ? Number(p.unitsPerPackage) : null,
         category: p.category?.toString().trim() || null,
         userId: user.id as string,
-      branchId: sucursalDeAlta,
       }))
     if (rows.length === 0) return NextResponse.json({ error: 'No hay productos válidos' }, { status: 400 })
     await prisma.product.createMany({ data: rows })
@@ -110,7 +99,6 @@ export async function POST(req: NextRequest) {
       unitsPerPackage: unitsPerPackage != null ? Number(unitsPerPackage) : null,
       category: category?.toString().trim() || null,
       userId: user.id as string,
-      branchId: sucursalDeAlta,
     },
   })
   return NextResponse.json(product, { status: 201 })
