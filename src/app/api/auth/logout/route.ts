@@ -17,25 +17,22 @@ export const dynamic = 'force-dynamic'
  * botón: la operadora se levanta creyendo que ha salido y la siguiente persona
  * se encuentra su sesión abierta.
  *
- * Se cierra en los dos sitios: se borra la cookie de aquí y se manda a cerrar
- * también en Accesos. Cerrar solo aquí dejaría la sesión de Procovar abierta, y
- * el botón de entrar la devolvería adentro sin pedirle nada.
+ * Se cierra en los dos sitios, y en este orden: primero se manda a Accesos, que
+ * es donde vive la sesión y donde está el cartel de "¿seguro?", y la cookie de
+ * aquí se borra al VOLVER (`/api/auth/logout/done`).
+ *
+ * El orden importa. Antes se borraba la cookie ANTES de ir, y entonces decir que
+ * no en el cartel dejaba a la persona a medias: sesión de Accesos abierta pero
+ * sin cookie aquí, o sea fuera de la aplicación por haber dicho que no quería
+ * salir. Ahora cancelar no toca nada.
  */
 export async function GET(req: NextRequest) {
-  const origen = origenPublico(req)
-  const accesos = (process.env.PROCOVAR_AUTH_URL ?? 'https://auth.procovar.cloud').replace(/\/+$/, '')
+    const origen = origenPublico(req)
+    const accesos = (process.env.PROCOVAR_AUTH_URL ?? 'https://auth.procovar.cloud').replace(/\/+$/, '')
 
-  const res = NextResponse.redirect(`${accesos}/logout`)
-
-  // `maxAge: 0` la borra. Los demás valores tienen que coincidir con los de
-  // cuando se puso, o el navegador la trata como otra cookie distinta y deja la
-  // buena donde estaba.
-  res.cookies.set('token', '', {
-    httpOnly: true,
-    secure: origen.startsWith('https://'),
-    sameSite: 'lax',
-    path: '/',
-    maxAge: 0,
-  })
-  return res
+    const params = new URLSearchParams({
+        returnTo: `${origen}/api/auth/logout/done`,
+        cancelUrl: `${origen}/`,
+    })
+    return NextResponse.redirect(`${accesos}/logout?${params.toString()}`)
 }

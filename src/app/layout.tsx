@@ -23,8 +23,18 @@ const mono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'ProCovar Delivery',
+  title: 'Procovar Delivery',
   description: 'Delivery Route Optimization & Pricing Platform',
+  // El mismo isotipo que el resto de las aplicaciones de Procovar. En claro sale
+  // el cuadrado azul; en oscuro se invierte, porque sobre una pestaña negra el
+  // azul se pierde. Lo único que cambia entre aplicaciones es el nombre.
+  icons: {
+    icon: [
+      { url: '/favicon-oscuro.svg', type: 'image/svg+xml', media: '(prefers-color-scheme: dark)' },
+      { url: '/favicon-claro.svg', type: 'image/svg+xml' },
+    ],
+    apple: '/logo-512.png',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

@@ -31,11 +31,11 @@ export default function Sidebar() {
     : navItems
 
   const handleLogout = () => {
-    // Se limpia lo del navegador y se manda al servidor a cerrar de verdad: la
+    // Se limpia lo del navegador y se manda a Accesos, que pregunta y cierra: la
     // sesión está en una cookie httpOnly que el JavaScript no puede borrar, así
     // que sin esta llamada el botón limpiaba localStorage y no cerraba nada.
     logout()
-    window.location.assign('/api/auth/salir')
+    window.location.assign('/api/auth/logout')
   }
 
   return (
