@@ -112,7 +112,10 @@ async function main() {
       .filter((r) => r.status === 'quoted' && r.ref && r.price != null)
       .map((r) => ({ id: r.ref, costo: r.price, distanceKm: r.distanceKm }));
 
-    if (!DRY && updates.length) {
+    // El costo lo escribe la APK; aquí sólo se cotiza para las rutas de delivery.
+    if (String(process.env.DELIVERY_ESCRIBE_COSTO || '') !== 'true') {
+      if (updates.length) console.log(`  ${updates.length} cotizados, NO se escriben en PEDIDO (los escribe la APK).`);
+    } else if (!DRY && updates.length) {
       const wres = await fetch(`${PEDIDO_API_URL}/integration/orders/domicilio`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': KEY },

@@ -185,8 +185,31 @@ async function quoteBatch(pedidos) {
 // se dejan EN ESPERA para reintentar cuando se configure esa sucursal.
 const ESPERA = new Set(['sucursal-no-mapeada', 'sucursal-sin-punto-de-partida', 'sucursal-sin-vehiculo-de-calculo']);
 
+
+// Delivery ya NO calcula el costo de domicilio: lo hace la APK, que se lo manda a PEDIDO
+// por su webhook. Delivery se queda con lo suyo —las rutas manuales y ver los pedidos—.
+//
+// Se apaga la ESCRITURA, no el ciclo entero: delivery sigue trayéndose los pedidos y
+// cotizándolos para su propia planificación de rutas. Si las dos cosas escribieran el
+// costo, el último en pasar pisaría al otro y nadie sabría cuál de los dos precios está
+// viendo el cliente.
+//
+// Queda tras un interruptor, y no borrado, porque el día que la APK falle esto es el
+// plan B: se pone DELIVERY_ESCRIBE_COSTO=true y vuelve a escribir como antes.
+const ESCRIBE_COSTO = String(process.env.DELIVERY_ESCRIBE_COSTO || '') === 'true';
+let avisoEscritura = false;
+function escrituraApagada() {
+  if (!avisoEscritura) {
+    avisoEscritura = true;
+    console.log('[delivery] el costo de domicilio lo escribe la APK: writeback DESACTIVADO ' +
+                '(DELIVERY_ESCRIBE_COSTO=true para volver a escribir).');
+  }
+  return true;
+}
+
 // Escribe el costo de vuelta en PEDIDO para un pedido.
 async function writeback(externalId, cost, distanceKm) {
+  if (!ESCRIBE_COSTO) return escrituraApagada() && { updated: 0, apagado: true };
   const res = await fetch(`${PEDIDO_API_URL}/integration/orders/domicilio`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': KEY },
     body: JSON.stringify({ updates: [{ id: externalId, costo: cost, distanceKm }] }),
@@ -378,6 +401,11 @@ async function recomputeAll() {
   for (const o of orders) {
     const r = byRef.get(o.id);
     if (r && r.status === 'quoted' && r.price != null) updates.push({ id: o.id, costo: r.price, distanceKm: r.distanceKm });
+  }
+  if (!ESCRIBE_COSTO) {
+    escrituraApagada();
+    log(`recompute: ${updates.length} recosteados, NO se escriben en PEDIDO (los escribe la APK).`);
+    return;
   }
   log(`recompute: ${updates.length} recosteados, escribiendo en PEDIDO...`);
   for (let i = 0; i < updates.length; i += 200) {
