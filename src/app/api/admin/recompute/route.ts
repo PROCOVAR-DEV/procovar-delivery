@@ -82,28 +82,22 @@ export async function POST(req: NextRequest) {
   const byRef = new Map<string, { status?: string; price?: number; distanceKm?: number }>()
   for (const r of (quoteJson.results || [])) if (r.ref != null) byRef.set(r.ref, r)
 
-  // 3) Reescribir el costo en PEDIDO (en lotes).
-  const updates: Array<{ id: string; costo: number; distanceKm?: number }> = []
+  // 3) Contar lo recosteado. Antes esto lo escribía en PEDIDO; ya no.
+  //
+  // El costo del domicilio lo pone la APK. Que delivery lo reescribiera desde aquí
+  // significaba que un botón de administración podía pisar, en silencio y de golpe, el
+  // precio de todos los pedidos que la APK ya había cotizado.
+  let recosteados = 0
   for (const o of orders as Array<{ id: string }>) {
     const r = byRef.get(o.id)
-    if (r && r.status === 'quoted' && r.price != null) updates.push({ id: o.id, costo: r.price, distanceKm: r.distanceKm })
-  }
-  for (let i = 0; i < updates.length; i += 200) {
-    const chunk = updates.slice(i, i + 200)
-    const wb = await fetch(`${PEDIDO_API_URL}/integration/orders/domicilio`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-api-key': KEY },
-      body: JSON.stringify({ updates: chunk }),
-    })
-    if (!wb.ok) {
-      return NextResponse.json({ error: `Escritura en PEDIDO ${wb.status}: ${(await wb.text().catch(() => '')).slice(0, 200)}` }, { status: 502 })
-    }
+    if (r && r.status === 'quoted' && r.price != null) recosteados++
   }
 
   return NextResponse.json({
     total: orders.length,
-    recosteados: updates.length,
-    actualizados: updates.length,
+    recosteados,
+    // "actualizados" era cuántos se escribieron en PEDIDO. Ya no se escribe ninguno, así
+    // que el campo se va en vez de quedarse informando un cero que se leería como un fallo.
     weightsSource: quoteJson.weightsSource,
     sucursal: sucursalCodigo || 'todas',
   })

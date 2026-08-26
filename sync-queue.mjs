@@ -186,40 +186,21 @@ async function quoteBatch(pedidos) {
 const ESPERA = new Set(['sucursal-no-mapeada', 'sucursal-sin-punto-de-partida', 'sucursal-sin-vehiculo-de-calculo']);
 
 
-// Delivery ya NO calcula el costo de domicilio: lo hace la APK, que se lo manda a PEDIDO
-// por su webhook. Delivery se queda con lo suyo —las rutas manuales y ver los pedidos—.
-//
-// Se apaga la ESCRITURA, no el ciclo entero: delivery sigue trayéndose los pedidos y
-// cotizándolos para su propia planificación de rutas. Si las dos cosas escribieran el
-// costo, el último en pasar pisaría al otro y nadie sabría cuál de los dos precios está
-// viendo el cliente.
-//
-// Queda tras un interruptor, y no borrado, porque el día que la APK falle esto es el
-// plan B: se pone DELIVERY_ESCRIBE_COSTO=true y vuelve a escribir como antes.
-const ESCRIBE_COSTO = String(process.env.DELIVERY_ESCRIBE_COSTO || '') === 'true';
-let avisoEscritura = false;
-function escrituraApagada() {
-  if (!avisoEscritura) {
-    avisoEscritura = true;
-    console.log('[delivery] el costo de domicilio lo escribe la APK: writeback DESACTIVADO ' +
-                '(DELIVERY_ESCRIBE_COSTO=true para volver a escribir).');
-  }
-  return true;
-}
+/**
+ * Delivery NO le escribe nada a PEDIDO. Nunca más.
+ *
+ * El costo del domicilio lo pone la APK, que se lo manda a PEDIDO por su webhook. Esto
+ * está BORRADO y no detrás de un interruptor a propósito: mientras existiera la forma de
+ * reactivarlo, existía la forma de que dos sistemas escribieran el mismo campo y que el
+ * último en pasar pisara al otro sin que nadie se enterara.
+ *
+ * Lo que sigue haciendo este proceso es traerse los pedidos para que delivery pueda
+ * planificar sus rutas a mano. El precio que calcula es SUYO, para repartir la carga
+ * del camión, y se queda en su base de datos.
+ */
 
-// Escribe el costo de vuelta en PEDIDO para un pedido.
-async function writeback(externalId, cost, distanceKm) {
-  if (!ESCRIBE_COSTO) return escrituraApagada() && { updated: 0, apagado: true };
-  const res = await fetch(`${PEDIDO_API_URL}/integration/orders/domicilio`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': KEY },
-    body: JSON.stringify({ updates: [{ id: externalId, costo: cost, distanceKm }] }),
-  });
-  if (!res.ok) throw new Error(`writeback ${res.status}: ${await res.text().catch(() => '')}`);
-  return res.json();
-}
-
-// 2) ESCRIBIR de vuelta los costos, de a uno con delay (suave) para el SSE. El precio
-// ya viene cotizado en el LOTE (`resultsByRef`), aquí solo se escribe en PEDIDO.
+// 2) Registrar el resultado de cada pedido, de a uno con delay (suave) para el SSE. El
+// precio ya viene del LOTE (`resultsByRef`); aquí sólo se anota en la cola de delivery.
 async function drainQueue(byId, resultsByRef, weightsSource) {
   let procesados = 0;
   // Pedidos de sucursales aún sin configurar: se saltan SOLO en este ciclo (para no
@@ -243,7 +224,6 @@ async function drainQueue(byId, resultsByRef, weightsSource) {
       }
       const r = resultsByRef.get(job.externalId) || { status: 'skipped', reason: 'sin-resultado' };
       if (r.status === 'quoted' && r.price != null) {
-        await writeback(job.externalId, r.price, r.distanceKm);
         await prisma.syncJob.update({
           where: { id: job.id },
           data: { status: 'done', cost: r.price, distanceKm: r.distanceKm, weightsSource, processedAt: new Date(), error: null },
@@ -387,8 +367,11 @@ async function cycle() {
   if (done) log(`procesados ${done} en este ciclo`);
 }
 
-// RECOMPUTE: recotiza TODOS los pedidos (con la fórmula vigente) y reescribe el costo en
-// PEDIDO, aunque ya tuvieran costo. Úsalo tras cambiar la fórmula/tarifa/vehículo.
+// RECOMPUTE: recotiza TODOS los pedidos con la fórmula vigente y refresca los Order de
+// delivery. Úsalo tras cambiar la fórmula, la tarifa o el vehículo de cálculo.
+//
+// Ya NO escribe nada en PEDIDO: el costo que ve el cliente lo pone la APK. Lo que se
+// recalcula aquí es el reparto de carga para las rutas de delivery, y se queda aquí.
 async function recomputeAll() {
   const q = new URLSearchParams(); // sin onlyPending => todos los que tienen geolocalización
   if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
@@ -397,26 +380,12 @@ async function recomputeAll() {
   const { orders = [] } = await res.json();
   log(`recompute: ${orders.length} pedidos con geo`);
   const { byRef } = await quoteBatch(orders); // recotiza + persiste los Order de delivery
-  const updates = [];
+  let n = 0;
   for (const o of orders) {
     const r = byRef.get(o.id);
-    if (r && r.status === 'quoted' && r.price != null) updates.push({ id: o.id, costo: r.price, distanceKm: r.distanceKm });
+    if (r && r.status === 'quoted' && r.price != null) n++;
   }
-  if (!ESCRIBE_COSTO) {
-    escrituraApagada();
-    log(`recompute: ${updates.length} recosteados, NO se escriben en PEDIDO (los escribe la APK).`);
-    return;
-  }
-  log(`recompute: ${updates.length} recosteados, escribiendo en PEDIDO...`);
-  for (let i = 0; i < updates.length; i += 200) {
-    const chunk = updates.slice(i, i + 200);
-    const wb = await fetch(`${PEDIDO_API_URL}/integration/orders/domicilio`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': KEY },
-      body: JSON.stringify({ updates: chunk }),
-    });
-    if (!wb.ok) throw new Error(`writeback ${wb.status}: ${await wb.text().catch(() => '')}`);
-  }
-  log(`recompute LISTO: ${updates.length} domicilios actualizados.`);
+  log(`recompute LISTO: ${n} pedidos recosteados en delivery (PEDIDO no se toca).`);
 }
 
 async function main() {
