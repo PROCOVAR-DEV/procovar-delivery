@@ -1,18 +1,18 @@
-// Worker de COLA de delivery (reemplaza el sync bulk por procesamiento suave).
+// Espejo de PEDIDO en delivery: trae los pedidos y los clientes, y nada más.
 //
-// Modelo "redis sin redis": la tabla SyncJob (Postgres) es el bus.
-//   1) ENCOLAR: cada ciclo pregunta a PEDIDO por pedidos pendientes con geo y
-//      crea un SyncJob(pending) por cada uno que no esté ya encolado (idempotente
-//      por externalId = id del pedido en PEDIDO).
-//   2) PROCESAR: toma los pending de a UNO, con un delay entre cada uno (suave,
-//      no en bulk), lo cotiza en delivery (/api/quote/batch con 1 orden, que
-//      resuelve el peso vía warehouse) y ESCRIBE el costo de vuelta en PEDIDO.
-//   3) El endpoint SSE (/api/sync/stream) lee SyncJob y transmite el estado en vivo.
+// Antes esto era una COLA (tabla SyncJob) que procesaba los pedidos de uno en uno con
+// una pausa entre cada uno. Esa lentitud era a propósito: alimentaba una pantalla de
+// sincronización que enseñaba el progreso en vivo. Quitada la pantalla, la cola no
+// servía a nadie — sólo hacía que traerse 600 pedidos tardara quince minutos en vez de
+// unos segundos.
 //
-// Corre como proceso PM2 (procovar-delivery-sync). Env desde procovar-delivery/.env.
+// Lo que queda es lo único que hacía falta: pedirle a PEDIDO sus pedidos y sus clientes,
+// y guardarlos aquí para poder planificar las rutas a mano.
 //
-// Uso:  node sync-queue.mjs [--once] [--delay 1500] [--poll 15000]
-//   --once   un solo ciclo (encolar + vaciar la cola) y salir. Sin esto, corre en bucle.
+// El costo del domicilio NO se toca. Lo pone delivery-apk directamente en PEDIDO. Lo que
+// se calcula aquí es el reparto de carga del camión, y se queda aquí.
+//
+// Uso:  node sync-queue.mjs [--once] [--poll 15000] [--recompute]
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -46,9 +46,7 @@ function arg(name, def = undefined) {
 }
 const ONCE = !!arg('once', false);
 const RECOMPUTE = !!arg('recompute', false); // recotiza TODOS (no solo pendientes) y reescribe el costo
-const DELAY = arg('delay') ? parseInt(arg('delay'), 10) : 1500;      // pausa entre pedidos (suave)
 const POLL = arg('poll') ? parseInt(arg('poll'), 10) : 15000;        // cada cuánto busca pedidos nuevos
-const MAX_ATTEMPTS = 3;
 
 const PEDIDO_API_URL = process.env.PEDIDO_API_URL || 'http://localhost:8400';
 const DELIVERY_URL = process.env.DELIVERY_URL || 'http://localhost:3002';
@@ -59,9 +57,6 @@ const prisma = new PrismaClient();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
-// --- Redis pub/sub OPCIONAL: avisa al SSE (/api/sync/stream) que la cola cambió, para
-// que refresque por EVENTO en vez de sondear la tabla cada 1.5s. Sin REDIS_URL: no-op.
-const CH_SYNC_CHANGED = 'procovar-delivery:sync:changed';
 let _redisPub = null;
 (function initRedis() {
   const sentinels = (process.env.REDIS_SENTINELS || '').trim();
@@ -79,10 +74,6 @@ let _redisPub = null;
   }
   if (_redisPub) _redisPub.on('error', () => { /* se reintenta en background */ });
 })();
-async function publishSyncChanged() {
-  if (!_redisPub) return;
-  try { await _redisPub.publish(CH_SYNC_CHANGED, '1'); } catch { /* no romper el ciclo */ }
-}
 
 // Event-driven (slice 2): en vez de sondear PEDIDO cada 15s, consumimos la cola DURABLE
 // procovar-delivery:in:orders que PEDIDO llena al crear/importar/geolocalizar un pedido.
@@ -110,8 +101,16 @@ function makeInOrdersQueue() {
 }
 
 // Descarga los pedidos pendientes de PEDIDO UNA vez (por ciclo).
-async function fetchPending() {
-  const q = new URLSearchParams({ onlyPending: '1' });
+/**
+ * TODOS los pedidos, no sólo los que están sin costo.
+ *
+ * Antes pedía `onlyPending=1` porque delivery era quien los cotizaba: le interesaban los
+ * que aún no tenían precio. Ahora el precio lo pone delivery-apk, y con ese filtro
+ * delivery se perdería justo los pedidos que la APK ya cotizó — que son la mayoría, y
+ * los que hacen falta para armar una ruta.
+ */
+async function traerPedidos() {
+  const q = new URLSearchParams();
   if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
   const res = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY } });
   if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);
@@ -119,31 +118,6 @@ async function fetchPending() {
   return orders;
 }
 
-// 1) ENCOLAR: por cada pendiente crea SyncJob(pending) si no existe (idempotente).
-//
-// Antes esto era idempotente A BASE DE EXCEPCIONES: se lanzaba el INSERT de cada
-// pedido y se tragaba el choque de clave única. Como casi todos los pendientes YA
-// estaban encolados, cada ciclo provocaba un error por pedido — y Postgres los
-// escribe todos en su log. Medido en producción: 1.500 errores por vuelta, más de
-// un MILLÓN de líneas de log en tres horas, con el gasto de disco y de trabajo de
-// base de datos que eso supone, y ahogando cualquier error de verdad.
-//
-// Ahora es una sola sentencia con ON CONFLICT DO NOTHING (skipDuplicates): ni un
-// error, ni una excepción, y una ida y vuelta en vez de N.
-async function enqueueNew(orders) {
-  if (!orders.length) return 0;
-
-  const { count } = await prisma.syncJob.createMany({
-    data: orders.map((p) => ({
-      externalId: p.id,
-      folio: p.folio,
-      customerName: p.cliente?.nombre || p.encargado || null,
-    })),
-    skipDuplicates: true,
-  });
-
-  return count;
-}
 
 // Cotiza TODO el lote en UNA sola llamada. Es imprescindible: el precio de cada pedido
 // es su FRACCIÓN DE PESO del costo de transporte, así que depende del PESO DE CARGA total
@@ -199,62 +173,6 @@ const ESPERA = new Set(['sucursal-no-mapeada', 'sucursal-sin-punto-de-partida', 
  * del camión, y se queda en su base de datos.
  */
 
-// 2) Registrar el resultado de cada pedido, de a uno con delay (suave) para el SSE. El
-// precio ya viene del LOTE (`resultsByRef`); aquí sólo se anota en la cola de delivery.
-async function drainQueue(byId, resultsByRef, weightsSource) {
-  let procesados = 0;
-  // Pedidos de sucursales aún sin configurar: se saltan SOLO en este ciclo (para no
-  // reprocesarlos en bucle) pero quedan 'pending' y se reintentan en el próximo.
-  const enEspera = [];
-  for (;;) {
-    const job = await prisma.syncJob.findFirst({
-      where: { status: 'pending', attempts: { lt: MAX_ATTEMPTS }, id: { notIn: enEspera } },
-      orderBy: { createdAt: 'asc' },
-    });
-    if (!job) break;
-
-    await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'processing', attempts: { increment: 1 } } });
-    try {
-      const pedido = byId.get(job.externalId);
-      if (!pedido) {
-        // ya no está pendiente (quizá ya tiene costo) -> lo marcamos done sin costo
-        await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'skipped', processedAt: new Date(), error: 'ya no pendiente' } });
-        await publishSyncChanged();
-        continue;
-      }
-      const r = resultsByRef.get(job.externalId) || { status: 'skipped', reason: 'sin-resultado' };
-      if (r.status === 'quoted' && r.price != null) {
-        await prisma.syncJob.update({
-          where: { id: job.id },
-          data: { status: 'done', cost: r.price, distanceKm: r.distanceKm, weightsSource, processedAt: new Date(), error: null },
-        });
-        log(`✓ ${job.folio || job.externalId} -> $${Number(r.price).toFixed(2)} (${weightsSource})`);
-        procesados++;
-      } else if (ESPERA.has(r.reason)) {
-        // La sucursal de este pedido aún no tiene almacén/punto de partida configurado:
-        // se deja EN ESPERA (pending, sin gastar el intento). Las DEMÁS sucursales que
-        // sí estén listas se siguen procesando en este mismo ciclo.
-        await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'pending', attempts: { decrement: 1 }, error: `esperando: ${r.reason}` } });
-        enEspera.push(job.id);
-        log(`… ${job.folio || job.externalId} en espera (${r.reason})`);
-        continue; // no dormir: pasa al siguiente pedido
-      } else {
-        await prisma.syncJob.update({ where: { id: job.id }, data: { status: 'skipped', weightsSource, processedAt: new Date(), error: r.reason || r.status || 'sin cotizar' } });
-        log(`- ${job.folio || job.externalId} skipped (${r.reason || r.status})`);
-      }
-    } catch (e) {
-      const failed = job.attempts + 1 >= MAX_ATTEMPTS;
-      await prisma.syncJob.update({
-        where: { id: job.id },
-        data: { status: failed ? 'error' : 'pending', error: String(e.message).slice(0, 300) },
-      });
-      log(`✗ ${job.folio || job.externalId} ${failed ? 'ERROR' : 'reintento'}: ${e.message}`);
-    }
-    await publishSyncChanged(); // avisa al SSE que hubo cambios (no-op sin Redis)
-    await sleep(DELAY); // suave, despacio
-  }
-  return procesados;
-}
 
 // La FÓRMULA (settings.domConfigured) es GLOBAL: sin ella no se calcula nada, en
 // ninguna sucursal. El PUNTO DE PARTIDA ya NO se chequea aquí: es por-sucursal y lo
@@ -349,10 +267,7 @@ async function cycle() {
   } catch (e) {
     log('sync de clientes falló:', e.message);
   }
-  const orders = await fetchPending();
-  const byId = new Map(orders.map((o) => [o.id, o]));
-  const nuevos = await enqueueNew(orders);
-  if (nuevos) { log(`encolados ${nuevos} nuevos (de ${orders.length} pendientes)`); await publishSyncChanged(); }
+  const orders = await traerPedidos();
 
   // GUARD GLOBAL: sin fórmula, la cola entera espera.
   if (!(await checkFormula())) {
@@ -360,11 +275,13 @@ async function cycle() {
     return;
   }
 
-  // Cotiza TODO el lote de una vez (el precio de cada pedido depende del peso de carga
-  // total del envío). Luego se escriben los costos de a uno (suave) para el SSE.
-  const { byRef, weightsSource } = await quoteBatch(orders);
-  const done = await drainQueue(byId, byRef, weightsSource);
-  if (done) log(`procesados ${done} en este ciclo`);
+  // El lote entero de una vez. Además de calcular, ESTA llamada es la que guarda los
+  // pedidos en delivery: quoteBatch hace el upsert de cada Order por su externalId.
+  //
+  // Y va en un solo envío porque el precio de cada pedido es su fracción de peso del
+  // costo del camión: cotizarlos de uno en uno daría un reparto distinto y mal.
+  const { byRef } = await quoteBatch(orders);
+  log(`${orders.length} pedidos al día (${byRef.size} con reparto de carga)`);
 }
 
 // RECOMPUTE: recotiza TODOS los pedidos con la fórmula vigente y refresca los Order de
@@ -389,11 +306,8 @@ async function recomputeAll() {
 }
 
 async function main() {
-  log(`sync-queue arrancado. PEDIDO=${PEDIDO_API_URL} delay=${DELAY}ms poll=${POLL}ms once=${ONCE}`);
+  log(`espejo arrancado. PEDIDO=${PEDIDO_API_URL} poll=${POLL}ms once=${ONCE}`);
   if (RECOMPUTE) { await recomputeAll(); return; }
-  // Recupera jobs que quedaron 'processing' si el worker murió a mitad.
-  const reset = await prisma.syncJob.updateMany({ where: { status: 'processing' }, data: { status: 'pending' } });
-  if (reset.count) { log(`recuperados ${reset.count} jobs 'processing' huérfanos -> pending`); await publishSyncChanged(); }
   if (ONCE) { await cycle(); return; }
 
   if (DELIVERY_EVENTS) {

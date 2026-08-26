@@ -10,7 +10,6 @@
 import { Redis, type RedisOptions } from 'ioredis'
 
 export const PREFIX = 'procovar-delivery'
-export const CH_SYNC_CHANGED = `${PREFIX}:sync:changed`
 /** Cache del catálogo de pesos del warehouse (se baja por VPN, es caro y repetido). */
 export const K_WAREHOUSE_WEIGHTS = `${PREFIX}:warehouse:weights`
 

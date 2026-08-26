@@ -247,24 +247,8 @@ model Settings {
   currencies Json @default("[]")
 }
 
-// Cola de sincronización de pedidos desde PEDIDO (procesamiento suave, uno a uno).
-// Actúa como "redis sin redis": la tabla es el bus. Un pedido = un job idempotente
-// (unique externalId). El worker sync-queue.mjs encola pendientes y los procesa de
-// a uno con delay; el endpoint SSE lee esta tabla para transmitir el estado en vivo.
-model SyncJob {
-  id          String    @id @default(cuid())
-  externalId  String    @unique   // id del Pedido en PEDIDO (idempotencia)
-  folio       String?
-  customerName String?
-  status      String    @default("pending") // pending | processing | done | error | skipped
-  cost        Float?
-  distanceKm  Float?
-  weightsSource String?
-  attempts    Int       @default(0)
-  error       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  processedAt DateTime?
-
-  @@index([status, createdAt])
-}
+// La tabla SyncJob se va con la pantalla de sincronización.
+//
+// Era la cola que procesaba los pedidos de uno en uno para que esa pantalla pudiera
+// enseñar el progreso en vivo. Sin pantalla que mirar, la cola sólo servía para tardar
+// más: el espejo ahora se trae el lote entero de una vez.
