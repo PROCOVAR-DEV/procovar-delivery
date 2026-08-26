@@ -90,9 +90,40 @@ let _redisPub = null;
  */
 const DIAS = Number(process.env.SYNC_DIAS || 15);
 
+/**
+ * Un día por petición, no los quince de golpe.
+ *
+ * Pedir los 15 días juntos son ~7.000 pedidos con todas sus líneas en UNA respuesta, y
+ * PEDIDO tiene que construir ese JSON entero en memoria antes de mandarlo: le agotó el
+ * heap y tiró la API. Arreglar aquí el consumo de memoria mandándoselo al otro no es
+ * arreglarlo.
+ *
+ * Por día son unos 470 pedidos, un tamaño que ninguno de los dos lados nota.
+ */
 async function traerPedidos() {
-  const desde = new Date(Date.now() - DIAS * 86400000).toISOString().slice(0, 10);
-  const q = new URLSearchParams({ desde });
+  const dias = [];
+
+  for (let d = DIAS - 1; d >= 0; d--) {
+    dias.push(new Date(Date.now() - d * 86400000).toISOString().slice(0, 10));
+  }
+
+  const todos = [];
+
+  for (const dia of dias) {
+    try {
+      todos.push(...(await traerPedidosDeUnDia(dia)));
+    } catch (e) {
+      // Un día que falla no tumba los otros catorce.
+      log(`día ${dia} falló: ${e.message}`);
+    }
+    await sleep(150);
+  }
+
+  return todos;
+}
+
+async function traerPedidosDeUnDia(dia) {
+  const q = new URLSearchParams({ desde: dia, hasta: dia });
   if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
   const res = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY } });
   if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);
