@@ -299,11 +299,17 @@ async function recomputeAll() {
   if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);
   const { orders = [] } = await res.json();
   log(`recompute: ${orders.length} pedidos con geo`);
-  const { byRef } = await quoteBatch(orders); // recotiza + persiste los Order de delivery
+  // Por lotes, por lo mismo que el ciclo normal: todo de una vez agota la memoria.
   let n = 0;
-  for (const o of orders) {
-    const r = byRef.get(o.id);
-    if (r && r.status === 'quoted' && r.price != null) n++;
+  for (let i = 0; i < orders.length; i += 200) {
+    const { byRef } = await quoteBatch(orders.slice(i, i + 200));
+
+    for (const o of orders.slice(i, i + 200)) {
+      const r = byRef.get(o.id);
+
+      if (r && r.status === 'quoted' && r.price != null) n++;
+    }
+    await sleep(200);
   }
   log(`recompute LISTO: ${n} pedidos recosteados en delivery (PEDIDO no se toca).`);
 }
