@@ -76,15 +76,23 @@ let _redisPub = null;
 })();
 
 /**
- * TODOS los pedidos, no sólo los que están sin costo.
+ * Los pedidos RECIENTES, no los pendientes ni todos.
  *
- * Antes pedía `onlyPending=1` porque delivery era quien los cotizaba: le interesaban los
- * que aún no tenían precio. Ahora el precio lo pone delivery-apk, y con ese filtro
- * delivery se perdería justo los pedidos que la APK ya cotizó — que son la mayoría, y
- * los que hacen falta para armar una ruta.
+ * Antes pedía `onlyPending=1` porque delivery era quien cotizaba: le interesaban los que
+ * aún no tenían precio. Ahora el precio lo pone delivery-apk, y con ese filtro delivery
+ * se perdería justo los ya cotizados —la mayoría, y los que hacen falta para armar una
+ * ruta—.
+ *
+ * Pero quitar el filtro y ya fue un error mío que tiró el proceso: son ~55.000 pedidos,
+ * y traerlos enteros para mandarlos en UNA llamada agotó la memoria de Node. Lo que hace
+ * falta aquí son los de los últimos días: una ruta se arma con lo que hay que repartir
+ * ahora, no con el histórico de dos años.
  */
+const DIAS = Number(process.env.SYNC_DIAS || 15);
+
 async function traerPedidos() {
-  const q = new URLSearchParams();
+  const desde = new Date(Date.now() - DIAS * 86400000).toISOString().slice(0, 10);
+  const q = new URLSearchParams({ desde });
   if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
   const res = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY } });
   if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);
@@ -254,8 +262,29 @@ async function cycle() {
   //
   // Y va en un solo envío porque el precio de cada pedido es su fracción de peso del
   // costo del camión: cotizarlos de uno en uno daría un reparto distinto y mal.
-  const { byRef } = await quoteBatch(orders);
-  log(`${orders.length} pedidos al día (${byRef.size} con reparto de carga)`);
+  /**
+   * Por lotes, y no todo de una vez.
+   *
+   * El reparto de carga se calcula por envío, así que idealmente iría junto; pero
+   * mandar miles de pedidos en un solo POST es lo que reventó la memoria. Un lote de
+   * 200 es un tamaño realista de camión y mantiene el cálculo con sentido.
+   */
+  const LOTE = 200;
+  let guardados = 0;
+
+  for (let i = 0; i < orders.length; i += LOTE) {
+    const trozo = orders.slice(i, i + LOTE);
+
+    try {
+      const { byRef } = await quoteBatch(trozo);
+
+      guardados += byRef.size;
+    } catch (e) {
+      log(`lote ${i / LOTE + 1} falló: ${e.message}`);
+    }
+    await sleep(200);   // sin esto, veinte lotes seguidos ahogan a delivery
+  }
+  log(`${orders.length} pedidos de los últimos ${DIAS} días (${guardados} con reparto)`);
 }
 
 // RECOMPUTE: recotiza TODOS los pedidos con la fórmula vigente y refresca los Order de
