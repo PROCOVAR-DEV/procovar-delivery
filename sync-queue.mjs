@@ -46,7 +46,7 @@ function arg(name, def = undefined) {
 }
 const ONCE = !!arg('once', false);
 const RECOMPUTE = !!arg('recompute', false); // recotiza TODOS (no solo pendientes) y reescribe el costo
-const POLL = arg('poll') ? parseInt(arg('poll'), 10) : 15000;        // cada cuánto busca pedidos nuevos
+const POLL = arg('poll') ? parseInt(arg('poll'), 10) : 300000;   // 5 min
 
 const PEDIDO_API_URL = process.env.PEDIDO_API_URL || 'http://localhost:8400';
 const DELIVERY_URL = process.env.DELIVERY_URL || 'http://localhost:3002';
@@ -75,32 +75,6 @@ let _redisPub = null;
   if (_redisPub) _redisPub.on('error', () => { /* se reintenta en background */ });
 })();
 
-// Event-driven (slice 2): en vez de sondear PEDIDO cada 15s, consumimos la cola DURABLE
-// procovar-delivery:in:orders que PEDIDO llena al crear/importar/geolocalizar un pedido.
-// Gated por DELIVERY_EVENTS: true = event-driven (sin poll), false = poll actual (fallback).
-const DELIVERY_EVENTS = process.env.DELIVERY_EVENTS === 'true';
-const QUEUE_IN_ORDERS = 'procovar-delivery:in:orders';
-
-function makeInOrdersQueue() {
-  const url = (process.env.REDIS_URL || '').trim();
-  const sentinels = (process.env.REDIS_SENTINELS || '').trim();
-  const master = (process.env.REDIS_MASTER_NAME || '').trim();
-  if (!url && !(sentinels && master)) return null;
-  const opts = { enableReadyCheck: false, maxRetriesPerRequest: null };
-  const mk = () => {
-    if (sentinels && master) {
-      const nodes = sentinels.split(',').map((s) => s.trim()).filter(Boolean).map((s) => {
-        const [h, p] = s.split(':');
-        return { host: h, port: Number(p || 26379) };
-      });
-      return new IORedis({ ...opts, sentinels: nodes, name: master });
-    }
-    return new IORedis(url, opts);
-  };
-  return new Queue(QUEUE_IN_ORDERS, { createClient: () => mk() });
-}
-
-// Descarga los pedidos pendientes de PEDIDO UNA vez (por ciclo).
 /**
  * TODOS los pedidos, no sólo los que están sin costo.
  *
@@ -310,34 +284,12 @@ async function main() {
   if (RECOMPUTE) { await recomputeAll(); return; }
   if (ONCE) { await cycle(); return; }
 
-  if (DELIVERY_EVENTS) {
-    // EVENT-DRIVEN: sin poll. PEDIDO encola en procovar-delivery:in:orders al crear/
-    // importar/geolocalizar; cada job dispara un ciclo. Bull serializa (concurrency 1),
-    // así que ciclos redundantes son baratos (el segundo no encuentra pendientes).
-    const q = makeInOrdersQueue();
-    if (!q) { log('DELIVERY_EVENTS=true pero sin REDIS_URL/Sentinel. Saliendo.'); process.exit(1); }
-    q.on('error', (e) => log('cola in:orders error:', e.message));
-    q.process(1, async () => {
-      try { await cycle(); } catch (e) { log('ciclo FALLÓ:', e.message); }
-    });
-    log(`event-driven: escuchando ${QUEUE_IN_ORDERS} (SIN poll de 15s)`);
-    await cycle(); // procesa lo que hubiera pendiente al arrancar
-
-    // Red de seguridad LENTA (default 5 min; SAFETY_POLL_MS=0 la apaga). NO es polling
-    // cada 5s: reconcilia por si se perdió un evento o cambió la config en delivery
-    // (fórmula/almacén) — eso no dispara evento de PEDIDO, así que sin esto los pendientes
-    // no se reprocesarían hasta el próximo pedido.
-    const safetyMs = process.env.SAFETY_POLL_MS != null ? Number(process.env.SAFETY_POLL_MS) : 300000;
-    if (safetyMs > 0) {
-      for (;;) {
-        await sleep(safetyMs);
-        try { await cycle(); } catch (e) { log('safety cycle FALLÓ:', e.message); }
-      }
-    }
-    return; // (si safety apagado) el proceso queda vivo consumiendo la cola
-  }
-
-  // FALLBACK (DELIVERY_EVENTS != true): poll cada POLL ms (comportamiento actual).
+  // Se quitó el modo event-driven: escuchaba la cola procovar-delivery:in:orders y
+  // PEDIDO ya no publica ahí. Un proceso esperando avisos que nunca llegan no da error
+  // —simplemente no hace nada—, y eso es peor que no tenerlo: parece que funciona.
+  //
+  // Un repaso cada POLL ms. Es un espejo para planificar rutas a mano: nadie necesita
+  // que un pedido aparezca aquí en menos de unos minutos.
   for (;;) {
     try { await cycle(); } catch (e) { log('ciclo FALLÓ:', e.message); }
     await sleep(POLL);
