@@ -1,0 +1,11 @@
+-- Quita la tabla SyncJob.
+--
+-- Era la cola que procesaba los pedidos de uno en uno, con una pausa entre cada uno, para
+-- que la pantalla de sincronización pudiera enseñar el progreso en vivo. Esa pantalla ya
+-- no existe: el espejo se trae los pedidos por lotes y no hay nada que mirar.
+--
+-- No se pierde nada de negocio. Aquí sólo vivía el estado de un trabajo en curso
+-- (pending/processing/done) — el pedido de verdad está en Order, y en PEDIDO.
+--
+-- Ninguna otra tabla la referencia, así que no hace falta tocar claves foráneas.
+DROP TABLE IF EXISTS "SyncJob";
