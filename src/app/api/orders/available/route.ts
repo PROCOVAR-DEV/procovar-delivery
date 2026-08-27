@@ -76,19 +76,56 @@ export async function GET(req: NextRequest) {
     },
   })
 
-  // Expone el municipio (del cliente, viene en meta) para poder filtrar por él.
-  const conMunicipio = orders.map((o) => {
+  /**
+   * El municipio y el VENDEDOR salen de `meta`, que guarda el pedido tal como llegó.
+   *
+   * El vendedor ya viaja en el payload de PEDIDO y aquí se estaba ignorando. Es uno de
+   * los filtros que más falta hacen: una ruta se suele armar con los clientes de un
+   * vendedor, porque son los que caen cerca unos de otros.
+   */
+  const conExtras = orders.map((o) => {
     const { meta, ...rest } = o
-    return { ...rest, municipio: ((meta as { cliente?: { municipio?: string } } | null)?.cliente?.municipio) || null }
+    const m = meta as { cliente?: { municipio?: string }; vendedor?: { nombre?: string; codigo?: string } } | null
+
+    return {
+      ...rest,
+      municipio: m?.cliente?.municipio || null,
+      vendedor: m?.vendedor?.nombre || m?.vendedor?.codigo || null,
+    }
   })
 
-  const filtered = q
-    ? conMunicipio.filter((o) =>
+  /**
+   * Filtros para acotar qué pedidos entran en la ruta.
+   *
+   * Con miles en la lista, elegir a ojo es el trabajo de verdad. Cada uno responde a una
+   * pregunta que se hace al armar una ruta: de quién son, dónde caen, cuánto pesan y si
+   * el domicilio compensa el viaje.
+   */
+  const vendedor = params.get('vendedor')?.trim().toLowerCase() || ''
+  const numero = (v: string | null) => { const n = Number(v); return Number.isFinite(n) ? n : null }
+  const kmMax = numero(params.get('kmMax'))
+  const costoMin = numero(params.get('costoMin'))
+
+  const filtered = conExtras.filter((o) => {
+    if (q) {
+      // Una sola caja que busca por folio, cliente, dirección y municipio: quien la usa
+      // no se para a pensar en qué campo está lo que recuerda.
+      const cuadra =
         o.customerName.toLowerCase().includes(q) ||
         (o.endAddress || o.address || '').toLowerCase().includes(q) ||
         (o.operationNumber || '').toLowerCase().includes(q) ||
-        (o.municipio || '').toLowerCase().includes(q))
-    : conMunicipio
+        (o.municipio || '').toLowerCase().includes(q) ||
+        (o.vendedor || '').toLowerCase().includes(q)
+
+      if (!cuadra) return false
+    }
+    if (vendedor && (o.vendedor || '').toLowerCase() !== vendedor) return false
+    // Sin distancia medida no se descarta por distancia: no saberla no es estar lejos.
+    if (kmMax != null && o.deliveryDistanceKm != null && o.deliveryDistanceKm > kmMax) return false
+    if (costoMin != null && (o.deliveryPrice ?? 0) < costoMin) return false
+
+    return true
+  })
 
   return NextResponse.json(filtered)
 }

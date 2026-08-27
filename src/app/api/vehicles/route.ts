@@ -44,10 +44,23 @@ export async function POST(req: NextRequest) {
   const vehicleType = type || 'truck'
 
   const vehicle = await prisma.$transaction(async (tx) => {
-    // Solo UN vehículo por TIPO puede ser la referencia de cálculo del domicilio.
+    /**
+     * Un vehículo de referencia por TIPO y por SUCURSAL, no por persona.
+     *
+     * Estaba acotado por `userId`, y eso significa que cada administrador tendría el
+     * suyo: dos personas de la misma sucursal marcan cada una un camión distinto como
+     * referencia, ninguna desmarca la de la otra, y el domicilio sale a un precio u otro
+     * según quién lo calcule. Nada avisa — los dos números son plausibles.
+     *
+     * El vehículo pertenece a la sucursal, así que la exclusividad es de la sucursal.
+     */
     if (useForDelivery) {
       await tx.vehicle.updateMany({
-        where: { userId, type: vehicleType, usarParaDomicilio: true },
+        where: {
+          type: vehicleType,
+          usarParaDomicilio: true,
+          ...(branchId ? { branchId } : {}),
+        },
         data: { usarParaDomicilio: false },
       })
     }

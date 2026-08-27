@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import Navbar from '@/components/Navbar'
 import LocationInput, { LocationValue } from '@/components/LocationInput'
@@ -10,6 +10,7 @@ import Pagination, { usePagedList } from '@/components/Pagination'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
+import { useAvisos } from '@/components/Avisos'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
@@ -101,6 +102,8 @@ interface AvailableOrder {
   deliveryPrice?: number | null
   deliveryDistanceKm?: number | null
   municipio?: string | null
+  /** Sale del pedido de PEDIDO: ya viajaba y aquí se estaba ignorando. */
+  vendedor?: string | null
   items?: OrderItem[]
 }
 
@@ -308,7 +311,15 @@ export default function RoutesPage() {
   const [selectedVehicleId, setSelectedVehicleId] = useState('')
   const [deliveryDate, setDeliveryDate] = useState('')
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
-  const [apiError, setApiError] = useState('')
+  /**
+   * Los errores salen como aviso emergente, no dentro del modal.
+   *
+   * Estaban arriba del formulario, y en uno de cuatro pasos eso queda fuera de pantalla
+   * en cuanto has bajado un poco: pulsas Crear, no pasa nada visible, y vuelves a
+   * pulsar. El aviso tiene que aparecer donde estás mirando.
+   */
+  const avisar = useAvisos()
+  const setApiError = (texto: string) => { if (texto) avisar(texto, 'error') }
 
   // Depot (punto de partida)
   const [depot, setDepot] = useState<LocationValue>(emptyLoc)
@@ -329,6 +340,10 @@ export default function RoutesPage() {
    */
   const [sucursalRuta, setSucursalRuta] = useState('')
   const [diaPedidos, setDiaPedidos] = useState('')
+  // Los demás filtros de la lista de pedidos: vendedor, distancia máxima y costo mínimo.
+  const [filtroVendedor, setFiltroVendedor] = useState('')
+  const [kmMax, setKmMax] = useState('')
+  const [costoMin, setCostoMin] = useState('')
 
   // Existing available orders to pick for the route
   const [orderSearch, setOrderSearch] = useState('')
@@ -393,13 +408,16 @@ export default function RoutesPage() {
   const { data: availableOrders = [], isLoading: loadingAvailable } = useQuery({
     // La sucursal y el día entran en la clave: si no, al cambiarlos se seguiría viendo
     // la lista anterior en cache y parecería que el filtro no hace nada.
-    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos],
+    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos, filtroVendedor, kmMax, costoMin],
     queryFn: async () => {
       const res = await axios.get('/api/orders/available', {
         params: {
           q: orderSearch,
           ...(sucursalRuta ? { branchId: sucursalRuta } : {}),
           ...(diaPedidos ? { fecha: diaPedidos } : {}),
+          ...(filtroVendedor ? { vendedor: filtroVendedor } : {}),
+          ...(kmMax ? { kmMax } : {}),
+          ...(costoMin ? { costoMin } : {}),
         },
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -407,6 +425,17 @@ export default function RoutesPage() {
     },
     enabled: !!token,
   })
+
+  /**
+   * Los vendedores que aparecen en los pedidos disponibles.
+   *
+   * Se sacan de la propia lista y no de un catálogo: así el desplegable sólo ofrece
+   * vendedores que de verdad tienen algo que repartir hoy, en vez de los ochenta y dos.
+   */
+  const vendedoresEnLista = useMemo(
+    () => [...new Set((availableOrders as AvailableOrder[]).map((o) => o.vendedor).filter(Boolean))].sort() as string[],
+    [availableOrders],
+  )
 
   /**
    * Si la persona sólo tiene una sucursal, se elige sola.
@@ -1075,10 +1104,6 @@ export default function RoutesPage() {
 
             <div className="space-y-6">
 
-              {apiError && (
-                <div className="bg-red-50 text-red-600 px-3 py-2 rounded-xl text-sm">{apiError}</div>
-              )}
-
               {/*
                 Paso 1: la sucursal.
                 
@@ -1370,6 +1395,53 @@ export default function RoutesPage() {
                             className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
                           >
                             Todos los días
+                          </button>
+                        )}
+                      </div>
+
+                      {/*
+                        Vendedor, distancia y costo.
+                        
+                        Cada uno responde a una pregunta real al armar la ruta: de quién
+                        son los clientes —los de un mismo vendedor caen cerca unos de
+                        otros—, hasta dónde llega el camión, y si el domicilio compensa
+                        el viaje. El vendedor ya venía en el pedido de PEDIDO y aquí se
+                        estaba ignorando.
+                      */}
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        <select
+                          value={filtroVendedor}
+                          onChange={(e) => setFiltroVendedor(e.target.value)}
+                          className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 min-w-[9rem]"
+                        >
+                          <option value="">Todos los vendedores</option>
+                          {vendedoresEnLista.map((v) => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="number" min="0" step="0.5"
+                          value={kmMax}
+                          onChange={(e) => setKmMax(e.target.value)}
+                          placeholder="km máx."
+                          className="w-24 px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          aria-label="Distancia máxima en kilómetros"
+                        />
+                        <input
+                          type="number" min="0" step="0.5"
+                          value={costoMin}
+                          onChange={(e) => setCostoMin(e.target.value)}
+                          placeholder="costo mín."
+                          className="w-28 px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          aria-label="Costo mínimo del domicilio"
+                        />
+                        {(filtroVendedor || kmMax || costoMin) && (
+                          <button
+                            type="button"
+                            onClick={() => { setFiltroVendedor(''); setKmMax(''); setCostoMin('') }}
+                            className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
+                          >
+                            Limpiar
                           </button>
                         )}
                       </div>

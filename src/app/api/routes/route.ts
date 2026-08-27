@@ -68,15 +68,40 @@ async function createRouteFromExistingOrders(
 ) {
   const { name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds } = opts
 
+  /**
+   * Los pedidos se buscan por SUCURSAL, nunca por quién los creó.
+   *
+   * Aquí estaba `userId` y era la razón de "los pedidos seleccionados ya no están
+   * disponibles": estos pedidos los trae la sincronización desde PEDIDO, así que su
+   * `userId` es el de quien la lanzó, no el de quien está creando la ruta. La consulta
+   * no cuadraba con ninguno y el formulario lo contaba como si los pedidos hubieran
+   * desaparecido — cuando estaban ahí, en la lista, recién elegidos.
+   *
+   * Es el mismo fallo que ya se había corregido para LEER (ver el comentario de
+   * `scopeWhere` en lib/scope.ts) y que aquí, al escribir, se quedó puesto.
+   */
   const orders = await prisma.order.findMany({
     where: {
-      id: { in: orderIds }, userId, source: 'pedido', routeId: null,
+      id: { in: orderIds }, source: 'pedido', routeId: null,
       endLat: { not: null }, endLng: { not: null },
       ...(opts.branchId ? { branchId: opts.branchId } : {}),
     },
   })
+
   if (orders.length === 0) {
     return NextResponse.json({ error: 'Los pedidos seleccionados ya no están disponibles' }, { status: 400 })
+  }
+
+  // Si alguno se coló en otra ruta mientras se elegía, se dice CUÁL y no se calla: con
+  // el mensaje genérico, alguien crea la ruta creyendo que lleva diez paradas y lleva
+  // nueve.
+  if (orders.length < orderIds.length) {
+    const faltan = orderIds.filter((id) => !orders.some((o) => o.id === id)).length
+
+    return NextResponse.json(
+      { error: `${faltan} de los ${orderIds.length} pedidos ya están en otra ruta. Vuelve a elegirlos.` },
+      { status: 409 },
+    )
   }
   // La ruta pertenece a la sucursal de sus pedidos (o la elegida por el admin).
   const routeBranchId = opts.branchId ?? orders[0].branchId ?? null
