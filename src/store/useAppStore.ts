@@ -110,9 +110,45 @@ if (typeof window !== 'undefined') {
   if (storedLang === 'es' || storedLang === 'en') {
     useAppStore.setState({ language: storedLang })
   }
+  /**
+   * La sucursal guardada, pero COMPROBANDO que todavía exista.
+   *
+   * Antes se aplicaba a ciegas, y eso dejaba la aplicación entera en blanco sin decir
+   * por qué: el id viaja en la cabecera x-sucursal-id, el backend filtra por él, y si
+   * ese id ya no está en la tabla NADA cuadra — cero pedidos, cero clientes, cero
+   * vehículos, y las rutas sin nada que planificar. Todo con 200 y sin un solo error.
+   *
+   * Pasa de verdad: las sucursales se recrearon en algún momento (unas tienen id de
+   * cuid y otras hexadecimal), así que cualquier navegador que hubiera elegido una antes
+   * se quedó con un id que ya no apunta a ninguna parte, y para siempre — nada lo
+   * limpiaba.
+   *
+   * Si no cuadra se borra y se pasa a "todas", que para un administrador es lo correcto.
+   */
   const storedSucursalId = localStorage.getItem('sucursalId')
-  applySucursalHeader(storedSucursalId)
+
   if (storedSucursalId) {
+    applySucursalHeader(storedSucursalId)
     useAppStore.setState({ sucursalId: storedSucursalId })
+    comprobarSucursalGuardada(storedSucursalId)
   }
+}
+
+function comprobarSucursalGuardada(guardada: string) {
+  void (async () => {
+    try {
+      const { data } = await axios.get('/api/branches')
+      const existe = Array.isArray(data) && data.some((b: { id: string }) => b.id === guardada)
+
+      if (!existe) {
+        localStorage.removeItem('sucursalId')
+        applySucursalHeader(null)
+        useAppStore.setState({ sucursalId: null })
+        console.warn('[sucursal] la guardada ya no existe: se pasa a todas las sucursales')
+      }
+    } catch {
+      // Si la comprobación falla —sin red, sesión caducada— se deja lo que había. Es
+      // mejor que borrar la elección de alguien por un fallo pasajero.
+    }
+  })()
 }
