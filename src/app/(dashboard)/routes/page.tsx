@@ -107,200 +107,15 @@ interface AvailableOrder {
   items?: OrderItem[]
 }
 
-interface PendingStop {
-  customerName: string
-  weight: number
-  address: string
-  lat: number
-  lng: number
-  items: OrderItem[]
-}
-
+/** Punto de partida vacío: lo usa el depósito de la ruta antes de elegir uno. */
 const emptyLoc: LocationValue = { address: '', lat: null, lng: null }
 
-// ---- Inline pedido (client order) draft form ----
-function PedidoForm({
-  onAdd,
-  markerColor = '#2563eb',
-}: {
-  onAdd: (stop: PendingStop) => void
-  markerColor?: string
-}) {
-  const t = useT()
-  const { token } = useAppStore()
-  const queryClient = useQueryClient()
-  const [name, setName] = useState('')
-  const [manualWeight, setManualWeight] = useState('1')
-  const [loc, setLoc] = useState<LocationValue>(emptyLoc)
-  const [items, setItems] = useState<OrderItem[]>([])
-  // `fromPicker` = el cliente actual salió del selector (ya existe en el mirror), así no
-  // ofrecemos "Guardar" (evita duplicar). Al editar a mano, vuelve a false.
-  const [fromPicker, setFromPicker] = useState(false)
-  const [savingCustomer, setSavingCustomer] = useState(false)
-
-  // Guarda el cliente manual (source=null) para reusarlo. El sync de PEDIDO no lo toca.
-  const saveManualCustomer = async () => {
-    if (savingCustomer || loc.lat == null || loc.lng == null || !name.trim()) return
-    setSavingCustomer(true)
-    try {
-      await axios.post(
-        '/api/customers',
-        { name: name.trim(), address: loc.address, lat: loc.lat, lng: loc.lng },
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      await queryClient.invalidateQueries({ queryKey: ['customers'] })
-      setFromPicker(true) // ya guardado: no volver a ofrecer
-    } catch {
-      /* noop */
-    } finally {
-      setSavingCustomer(false)
-    }
-  }
-
-  const computedWeight = items.reduce((s, it) => s + (it.weight || 0) * it.quantity, 0)
-  const effectiveWeight = items.length > 0 ? computedWeight : (parseFloat(manualWeight) || 0)
-  const canAdd = name.trim() !== '' && loc.lat != null && loc.lng != null
-
-  const reset = () => {
-    setName('')
-    setManualWeight('1')
-    setLoc(emptyLoc)
-    setItems([])
-    setFromPicker(false)
-  }
-
-  const addProduct = (p: { id: string; name: string; weight: number; packaging?: string | null; category?: string | null }) => {
-    setItems((prev) => {
-      const existing = prev.find((x) => x.productId === p.id)
-      if (existing) return prev.map((x) => x.productId === p.id ? { ...x, quantity: x.quantity + 1 } : x)
-      return [...prev, { productId: p.id, name: p.name, weight: p.weight, packaging: p.packaging, category: p.category, quantity: 1 }]
-    })
-  }
-
-  return (
-    <div className="border rounded-xl p-4 space-y-3 bg-gray-50">
-      {/* Selector de cliente (mirror de PEDIDO, solo geolocalizados): al elegir uno se
-          autocompletan nombre + dirección + lat/lng, y ya sale el costo. Debajo quedan
-          los campos manuales para un cliente que no esté en el mirror. */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Cliente de PEDIDO</label>
-        <CustomerPicker
-          onPick={(c) => {
-            setName(c.name)
-            setLoc({ address: c.address || '', lat: c.lat, lng: c.lng })
-            setFromPicker(true)
-          }}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">{t('pedido.customer')}</label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => { setName(e.target.value); setFromPicker(false) }}
-            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            placeholder={t('pedido.customerPh')}
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            {items.length > 0 ? t('prod.autoWeight') : t('pedido.weight')}
-          </label>
-          {items.length > 0 ? (
-            <div className="w-full px-3 py-2 border rounded-xl text-sm bg-gray-100 text-gray-700 font-mono">{computedWeight.toFixed(2)} kg</div>
-          ) : (
-            <input
-              type="number" step="0.1" min="0"
-              value={manualWeight}
-              onChange={(e) => setManualWeight(e.target.value)}
-              className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            />
-          )}
-        </div>
-      </div>
-
-      <LocationInput
-        value={loc}
-        onChange={(v) => { setLoc(v); setFromPicker(false) }}
-        label={t('pedido.address')}
-        markerColor={markerColor}
-      />
-
-      {/* Product breakdown — search the catalog; weight auto-sums */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">{t('routes.items')}</label>
-        {items.length > 0 && (
-          <div className="space-y-1.5 mb-2">
-            {items.map((it, idx) => (
-              <div key={idx} className="flex items-center gap-2 bg-white border rounded-xl px-2.5 py-1.5">
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium truncate">{it.name}</p>
-                  <p className="text-[11px] text-gray-400 truncate">
-                    {it.packaging ? `${it.packaging} · ` : ''}{((it.weight || 0) * it.quantity).toFixed(2)} kg
-                  </p>
-                </div>
-                <input
-                  type="number" min="1"
-                  value={it.quantity}
-                  onChange={(e) => setItems(items.map((x, i) => i === idx ? { ...x, quantity: parseInt(e.target.value) || 1 } : x))}
-                  className="w-16 px-2 py-1 border rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button type="button" onClick={() => setItems(items.filter((_, i) => i !== idx))} className="text-red-400 hover:text-red-600">
-                  <Icon icon="mdi:close" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <ProductPicker onPick={addProduct} />
-      </div>
-
-      <div className="flex justify-end gap-2">
-        {/* Guardar como cliente MANUAL local de delivery (source=null) — para reusarlo
-            luego en el selector. NO crea nada en PEDIDO. Solo si se llenó a mano. */}
-        {!fromPicker && canAdd && (
-          <button
-            type="button"
-            disabled={savingCustomer}
-            onClick={saveManualCustomer}
-            className="px-4 py-2 border rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50"
-            title="Guarda este cliente en delivery para reusarlo (no lo crea en PEDIDO)"
-          >
-            <Icon icon="mdi:content-save-outline" className="inline mr-1" />
-            {savingCustomer ? 'Guardando…' : 'Guardar cliente'}
-          </button>
-        )}
-        <button
-          type="button"
-          disabled={!canAdd}
-          onClick={() => {
-            onAdd({
-              customerName: name.trim(),
-              weight: effectiveWeight || 1,
-              address: loc.address,
-              lat: loc.lat!,
-              lng: loc.lng!,
-              items: items.map((it) => ({
-                productId: it.productId,
-                name: it.name,
-                weight: it.weight,
-                packaging: it.packaging,
-                category: it.category,
-                quantity: it.quantity || 1,
-              })),
-            })
-            reset()
-          }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-        >
-          {t('pedido.addThis')}
-        </button>
-      </div>
-    </div>
-  )
-}
+// Aquí vivían `PendingStop` y `PedidoForm`: el alta de una entrega A MANO, con cliente,
+// dirección, productos y peso tecleados en el propio modal de crear ruta.
+//
+// Se fueron con el flujo manual. Esa entrega la crea delivery-apk, que es donde está el
+// repartidor; tenerlo en los dos sitios permitía que la misma entrega existiera dos veces
+// sin que nada las relacionara.
 
 export default function RoutesPage() {
   const { token, user } = useAppStore()
@@ -350,9 +165,6 @@ export default function RoutesPage() {
   const [availMunicipio, setAvailMunicipio] = useState('todos')
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
 
-  // Pending client stops to create with the route (manual flow)
-  const [pendingStops, setPendingStops] = useState<PendingStop[]>([])
-  const [showPedidoForm, setShowPedidoForm] = useState(false)
   // Accordion: which step of the create modal is expanded (1=depot, 2=vehicle, 3=orders)
   const [expandedStep, setExpandedStep] = useState(1)
   const [showStopsModal, setShowStopsModal] = useState(false)
@@ -561,8 +373,6 @@ export default function RoutesPage() {
     setSelectedOriginId('')
     setShowSaveOrigin(false)
     setNewOriginName('')
-    setPendingStops([])
-    setShowPedidoForm(false)
     setExpandedStep(1)
     setApiError('')
     setSelectedOrderIds(new Set())
@@ -583,9 +393,7 @@ export default function RoutesPage() {
   }
 
   const depotSet = depot.lat != null && depot.lng != null
-  const pendingWeight = pendingStops.reduce((s, p) => s + p.weight, 0)
   const selectedVehicle = (vehicles as Vehicle[]).find((v) => v.id === selectedVehicleId)
-  const pendingOverCapacity = selectedVehicle != null && pendingWeight > selectedVehicle.capacity
 
   // Municipios distintos (no vacíos) de los pedidos disponibles, ordenados.
   const availMunicipios = Array.from(
@@ -623,11 +431,9 @@ export default function RoutesPage() {
   }
 
   const handleCreateRoute = () => {
-    if (!depotSet || !selectedVehicleId || (!hasSelectedOrders && pendingStops.length === 0)) return
-    const overCap = hasSelectedOrders ? selectedOverCapacity : pendingOverCapacity
-    if (overCap) {
-      const w = hasSelectedOrders ? selectedWeight : pendingWeight
-      setApiError(t('routes.overCapWarn', { w: w.toFixed(1), c: selectedVehicle!.capacity }))
+    if (!depotSet || !selectedVehicleId || !hasSelectedOrders) return
+    if (selectedOverCapacity) {
+      setApiError(t('routes.overCapWarn', { w: selectedWeight.toFixed(1), c: selectedVehicle!.capacity }))
       return
     }
     setApiError('')
@@ -642,11 +448,7 @@ export default function RoutesPage() {
       originLat: depot.lat,
       originLng: depot.lng,
     }
-    if (hasSelectedOrders) {
-      createRoute.mutate({ ...base, orderIds: [...selectedOrderIds] })
-    } else {
-      createRoute.mutate({ ...base, stops: pendingStops })
-    }
+    createRoute.mutate({ ...base, orderIds: [...selectedOrderIds] })
   }
 
   const selectedRoute = (routes as Route[]).find((r) => r.id === selectedRouteId) ?? null
@@ -1083,7 +885,7 @@ export default function RoutesPage() {
                 { n: 1, nombre: 'Sucursal', hecho: !!sucursalRuta },
                 { n: 2, nombre: 'Salida', hecho: depotSet },
                 { n: 3, nombre: 'Vehículo', hecho: !!selectedVehicleId },
-                { n: 4, nombre: 'Pedidos', hecho: selectedOrderIds.size + pendingStops.length > 0 },
+                { n: 4, nombre: 'Pedidos', hecho: selectedOrderIds.size > 0 },
               ].map((p) => (
                 <li key={p.n} className="flex-1">
                   <div
@@ -1341,10 +1143,10 @@ export default function RoutesPage() {
                   className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50 disabled:cursor-not-allowed"
                 >
                   <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">4</span>
-                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step3Orders', { n: selectedOrderIds.size + pendingStops.length })}</h4>
+                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step3Orders', { n: selectedOrderIds.size })}</h4>
                   {expandedStep !== 4 && (
                     <span className="ml-auto flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-gray-500 truncate max-w-[240px]">{t('routes.ordersSummary', { n: selectedOrderIds.size + pendingStops.length })}</span>
+                      <span className="text-xs text-gray-500 truncate max-w-[240px]">{t('routes.ordersSummary', { n: selectedOrderIds.size })}</span>
                       {depotSet && selectedVehicleId && <span className="text-xs text-blue-600 shrink-0">{t('common.edit')}</span>}
                     </span>
                   )}
@@ -1573,44 +1375,19 @@ export default function RoutesPage() {
                       )}
                     </div>
 
-                    {/* Secondary: manual order entry */}
-                    <details className="border rounded-xl">
-                      <summary className="cursor-pointer select-none p-3 text-sm font-medium text-gray-700 hover:bg-gray-50">
-                        {t('routes.manualOrderSection', { n: pendingStops.length })}
-                      </summary>
-                      <div className="p-3 border-t">
-                        {pendingStops.length > 0 && (
-                          <div className="space-y-2 mb-3">
-                            {pendingStops.map((s, i) => (
-                              <div key={i} className="flex items-center gap-3 p-2.5 border rounded-xl bg-white">
-                                <span className="w-6 h-6 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-xs font-bold shrink-0">{i + 1}</span>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium truncate">{s.customerName}</p>
-                                  <p className="text-xs text-gray-500 truncate">{s.address}</p>
-                                </div>
-                                <span className="text-xs text-gray-500 shrink-0">{s.weight} kg</span>
-                                <button onClick={() => setPendingStops(pendingStops.filter((_, idx) => idx !== i))} className="text-xs text-red-400 hover:text-red-600 shrink-0">{t('common.remove')}</button>
-                              </div>
-                            ))}
-                            {pendingOverCapacity && (
-                              <p className="text-xs text-amber-600 font-medium flex items-center gap-1"><Icon icon="mdi:alert-outline" />{t('routes.overCapWarn', { w: pendingWeight.toFixed(1), c: selectedVehicle!.capacity })}</p>
-                            )}
-                          </div>
-                        )}
-
-                        {showPedidoForm ? (
-                          <PedidoForm onAdd={(stop) => { setPendingStops((prev) => [...prev, stop]); setShowPedidoForm(false) }} />
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => setShowPedidoForm(true)}
-                            className="w-full py-2.5 border-2 border-dashed border-blue-300 text-blue-600 rounded-xl text-sm font-medium hover:bg-blue-50"
-                          >
-                            {t('routes.addOrder')}
-                          </button>
-                        )}
-                      </div>
-                    </details>
+                    {/*
+                      Aquí se creaba una entrega A MANO: cliente, dirección, productos y
+                      peso tecleados en este formulario.
+                      
+                      Se quita porque eso lo hace delivery-apk, que es donde está el
+                      repartidor. Tenerlo en los dos sitios significa que la misma entrega
+                      puede existir dos veces —una tecleada aquí y otra en el teléfono— y
+                      nada las relaciona: dos paradas, dos cobros, y ningún sistema sabe
+                      que son la misma.
+                      
+                      Las rutas se arman con los pedidos que llegan de PEDIDO, que ya
+                      traen cliente, ubicación y peso sin que nadie los vuelva a escribir.
+                    */}
                   </div>
                 )}
               </div>
@@ -1620,7 +1397,7 @@ export default function RoutesPage() {
                 <button onClick={resetModal} className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-50">{t('common.cancel')}</button>
                 <button
                   onClick={handleCreateRoute}
-                  disabled={!depotSet || !selectedVehicleId || (!hasSelectedOrders && pendingStops.length === 0) || (hasSelectedOrders ? selectedOverCapacity : pendingOverCapacity) || createRoute.isPending}
+                  disabled={!depotSet || !selectedVehicleId || !hasSelectedOrders || selectedOverCapacity || createRoute.isPending}
                   className="px-4 py-2 bg-primary text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
                 >
                   <Icon icon="mdi:map-marker-path" />{createRoute.isPending ? t('routes.generating') : t('routes.generate')}
