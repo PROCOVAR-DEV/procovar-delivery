@@ -102,7 +102,22 @@ export async function GET(req: NextRequest) {
    * el domicilio compensa el viaje.
    */
   const vendedor = params.get('vendedor')?.trim().toLowerCase() || ''
-  const numero = (v: string | null) => { const n = Number(v); return Number.isFinite(n) ? n : null }
+  /**
+   * Convierte a número SÓLO si venía algo. `Number(null)` es 0, no NaN.
+   *
+   * Ese cero se colaba como "distancia máxima 0 km" cuando el filtro ni siquiera se
+   * había usado, y descartaba todos los pedidos que tuvieran alguna distancia medida:
+   * la lista salía vacía sin que nadie hubiera filtrado nada. Con un filtro puesto sí
+   * funcionaba, que es lo que lo hacía difícil de ver — parecía que los filtros iban
+   * bien y que lo roto era la lista.
+   */
+  const numero = (v: string | null) => {
+    if (v == null || v.trim() === '') return null
+
+    const n = Number(v)
+
+    return Number.isFinite(n) ? n : null
+  }
   const kmMax = numero(params.get('kmMax'))
   const costoMin = numero(params.get('costoMin'))
 
