@@ -15,12 +15,45 @@ export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const q = new URL(req.url).searchParams.get('q')?.trim().toLowerCase() || ''
+  const params = new URL(req.url).searchParams
+  const q = params.get('q')?.trim().toLowerCase() || ''
+
+  /**
+   * Filtros por sucursal y por día, para armar una ruta.
+   *
+   * Una ruta se hace con los pedidos de UNA sucursal y de UN día. Sin poder acotar por
+   * eso hay que buscarlos a ojo entre miles, que es lo que hacía la pantalla inservible
+   * aunque el servidor conteste rápido.
+   *
+   * La sucursal pedida se aplica ADEMÁS del alcance, nunca en su lugar: quien sólo ve
+   * una sucursal no puede pedir los pedidos de otra pasando el parámetro a mano.
+   */
+  const branchId = params.get('branchId')?.trim() || ''
+  const fecha = params.get('fecha')?.trim() || ''
 
   const scope = await resolveScope(req, user)
+  const alcance = scopeWhere(scope)
+
+  let porDia: { gte: Date; lt: Date } | undefined
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    const desde = new Date(`${fecha}T00:00:00`)
+    const hasta = new Date(desde)
+
+    hasta.setDate(hasta.getDate() + 1)
+    // Un día entero, de medianoche a medianoche. Comparar sólo la fecha dejaría fuera
+    // todo lo que no cayera exactamente a las 00:00.
+    porDia = { gte: desde, lt: hasta }
+  }
+
   const orders = await prisma.order.findMany({
     where: {
-      ...scopeWhere(scope),
+      ...alcance,
+      // Si ya hay alcance, la sucursal pedida sólo puede estrecharlo, no ampliarlo.
+      ...(branchId && (!alcance.branchId || alcance.branchId === branchId)
+        ? { branchId }
+        : {}),
+      ...(porDia ? { createdAt: porDia } : {}),
       source: 'pedido',
       routeId: null,
       endLat: { not: null },

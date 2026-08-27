@@ -316,6 +316,20 @@ export default function RoutesPage() {
   const [showSaveOrigin, setShowSaveOrigin] = useState(false)
   const [newOriginName, setNewOriginName] = useState('')
 
+  /**
+   * A qué sucursal se le crea la ruta, y de qué día son los pedidos.
+   *
+   * Un Super Admin ve las ocho a la vez. Sin decir cuál, la ruta se crea en la que
+   * estuviera puesta por casualidad —o en ninguna—, y una ruta en la sucursal
+   * equivocada no aparece donde tiene que aparecer.
+   *
+   * Y el día hace falta porque una ruta se arma con los pedidos de UNA fecha. Con miles
+   * en la lista, buscarlos a ojo es lo que hace que la pantalla se sienta lenta aunque
+   * el servidor conteste rápido.
+   */
+  const [sucursalRuta, setSucursalRuta] = useState('')
+  const [diaPedidos, setDiaPedidos] = useState('')
+
   // Existing available orders to pick for the route
   const [orderSearch, setOrderSearch] = useState('')
   const [availMunicipio, setAvailMunicipio] = useState('todos')
@@ -377,16 +391,34 @@ export default function RoutesPage() {
   })
 
   const { data: availableOrders = [], isLoading: loadingAvailable } = useQuery({
-    queryKey: ['orders-available', orderSearch],
+    // La sucursal y el día entran en la clave: si no, al cambiarlos se seguiría viendo
+    // la lista anterior en cache y parecería que el filtro no hace nada.
+    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos],
     queryFn: async () => {
       const res = await axios.get('/api/orders/available', {
-        params: { q: orderSearch },
+        params: {
+          q: orderSearch,
+          ...(sucursalRuta ? { branchId: sucursalRuta } : {}),
+          ...(diaPedidos ? { fecha: diaPedidos } : {}),
+        },
         headers: { Authorization: `Bearer ${token}` },
       })
       return res.data as AvailableOrder[]
     },
     enabled: !!token,
   })
+
+  /**
+   * Si la persona sólo tiene una sucursal, se elige sola.
+   *
+   * Preguntarle a quien no tiene elección es un paso de más. El selector sólo pinta
+   * cuando de verdad hay algo que decidir.
+   */
+  useEffect(() => {
+    if (sucursalRuta) return
+    if (user?.branchId) { setSucursalRuta(user.branchId); return }
+    if (branches.length === 1) setSucursalRuta(branches[0].id)
+  }, [user?.branchId, branches, sucursalRuta])
 
   // Al abrir el modal, si aún no hay depósito, se pone por defecto el punto de partida de
   // la sucursal: primero un origen guardado; si no hay, la ubicación de la sucursal misma.
@@ -572,6 +604,9 @@ export default function RoutesPage() {
     setApiError('')
     const base = {
       name: routeName || undefined,
+      // La sucursal viaja con la ruta. Sin esto se creaba con la que tuviera puesta el
+      // alcance —o sin ninguna— y luego no aparecía donde se la buscaba.
+      branchId: sucursalRuta || undefined,
       vehicleId: selectedVehicleId || undefined,
       deliveryDate: deliveryDate || undefined,
       originAddress: depot.address || undefined,
@@ -1005,23 +1040,110 @@ export default function RoutesPage() {
           onClick={(e) => { if (e.target === e.currentTarget) resetModal() }}
         >
           <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold mb-5">{t('routes.modalTitle')}</h3>
+            <h3 className="text-lg font-bold mb-4">{t('routes.modalTitle')}</h3>
+
+            {/*
+              Dónde estoy y cuánto falta.
+              
+              Con cuatro pasos plegados, sin esto no se ve si quedan dos o siete. El
+              número de paso está en cada cabecera, pero repartido: junto no dice
+              "paso 2", dice "paso 2 de 4", que es lo que uno quiere saber.
+            */}
+            <ol className="flex items-center gap-1 mb-5" aria-label="Pasos">
+              {[
+                { n: 1, nombre: 'Sucursal', hecho: !!sucursalRuta },
+                { n: 2, nombre: 'Salida', hecho: depotSet },
+                { n: 3, nombre: 'Vehículo', hecho: !!selectedVehicleId },
+                { n: 4, nombre: 'Pedidos', hecho: selectedOrderIds.size + pendingStops.length > 0 },
+              ].map((p) => (
+                <li key={p.n} className="flex-1">
+                  <div
+                    className={`h-1 rounded-full transition-colors ${
+                      p.hecho ? 'bg-green-600' : expandedStep === p.n ? 'bg-primary' : 'bg-gray-200'
+                    }`}
+                  />
+                  <span
+                    className={`mt-1 block text-[11px] truncate ${
+                      expandedStep === p.n ? 'font-semibold text-gray-800' : 'text-gray-400'
+                    }`}
+                  >
+                    {p.nombre}
+                  </span>
+                </li>
+              ))}
+            </ol>
+
             <div className="space-y-6">
 
               {apiError && (
                 <div className="bg-red-50 text-red-600 px-3 py-2 rounded-xl text-sm">{apiError}</div>
               )}
 
-              {/* Step 1 — depot (accordion) */}
+              {/*
+                Paso 1: la sucursal.
+                
+                Va primero porque condiciona todo lo demás: el punto de partida, los
+                vehículos y los pedidos que se pueden elegir son los de ESA sucursal. Un
+                Super Admin ve las ocho, y sin decir cuál, la ruta acaba creada donde
+                estuviera puesto por casualidad — y ahí no la busca nadie.
+              */}
               <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
                   onClick={() => setExpandedStep(1)}
                   className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50"
                 >
-                  <span className="w-6 h-6 bg-green-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">1</span>
-                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step1')}</h4>
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 text-white ${sucursalRuta ? 'bg-green-600' : 'bg-gray-300'}`}>1</span>
+                  <h4 className="font-semibold text-gray-800 shrink-0">Sucursal</h4>
                   {expandedStep !== 1 && (
+                    <span className="ml-auto flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-gray-500 truncate max-w-[240px]">
+                        {branches.find((b) => b.id === sucursalRuta)?.name || 'Sin elegir'}
+                      </span>
+                      <span className="text-xs text-blue-600 shrink-0">{t('common.edit')}</span>
+                    </span>
+                  )}
+                </button>
+                {expandedStep === 1 && (
+                  <div className="p-3 border-t space-y-2">
+                    <select
+                      value={sucursalRuta}
+                      onChange={(e) => setSucursalRuta(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Elige la sucursal…</option>
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>{b.name}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500">
+                      Los pedidos, los vehículos y el punto de partida serán los de esta sucursal.
+                    </p>
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        disabled={!sucursalRuta}
+                        onClick={() => setExpandedStep(2)}
+                        className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        Siguiente
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Step 2 — depot (accordion) */}
+              <div className="border rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  disabled={!sucursalRuta}
+                  onClick={() => sucursalRuta && setExpandedStep(2)}
+                  className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 text-white ${sucursalRuta ? 'bg-green-600' : 'bg-gray-300'}`}>2</span>
+                  <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step1')}</h4>
+                  {expandedStep !== 2 && (
                     <span className="ml-auto flex items-center gap-2 min-w-0">
                       <span className="text-xs text-gray-500 truncate max-w-[240px]">
                         {depotSet ? (depot.address || `${depot.lat!.toFixed(4)}, ${depot.lng!.toFixed(4)}`) : t('routes.notSet')}
@@ -1030,7 +1152,7 @@ export default function RoutesPage() {
                     </span>
                   )}
                 </button>
-                {expandedStep === 1 && (
+                {expandedStep === 2 && (
                   <div className="p-3 border-t space-y-2">
                     {(savedOrigins as SavedOrigin[]).length > 0 && (
                       <div className="mb-2">
@@ -1104,7 +1226,7 @@ export default function RoutesPage() {
                       <button
                         type="button"
                         disabled={!depotSet}
-                        onClick={() => setExpandedStep(2)}
+                        onClick={() => setExpandedStep(3)}
                         className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
                       >
                         {t('routes.continue')}
@@ -1119,12 +1241,12 @@ export default function RoutesPage() {
                 <button
                   type="button"
                   disabled={!depotSet}
-                  onClick={() => depotSet && setExpandedStep(2)}
+                  onClick={() => depotSet && setExpandedStep(3)}
                   className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50 disabled:cursor-not-allowed"
                 >
-                  <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">2</span>
+                  <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
                   <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step2Vehicle')}</h4>
-                  {expandedStep !== 2 && (
+                  {expandedStep !== 3 && (
                     <span className="ml-auto flex items-center gap-2 min-w-0">
                       <span className="text-xs text-gray-500 truncate max-w-[240px]">
                         {selectedVehicle ? `${selectedVehicle.name}${selectedVehicle.plate ? ` (${selectedVehicle.plate})` : ''}${routeName ? ` · ${routeName}` : ''}` : t('routes.notSet')}
@@ -1133,7 +1255,7 @@ export default function RoutesPage() {
                     </span>
                   )}
                 </button>
-                {expandedStep === 2 && (
+                {expandedStep === 3 && (
                   <div className="p-3 border-t space-y-3">
                     {(vehicles as Vehicle[]).filter((v) => v.status === 'available').length === 0 ? (
                       <div className="bg-amber-50 text-amber-700 px-3 py-2 rounded-xl text-sm">
@@ -1173,7 +1295,7 @@ export default function RoutesPage() {
                           <button
                             type="button"
                             disabled={!selectedVehicleId}
-                            onClick={() => setExpandedStep(3)}
+                            onClick={() => setExpandedStep(4)}
                             className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
                           >
                             {t('routes.continue')}
@@ -1193,22 +1315,65 @@ export default function RoutesPage() {
                   onClick={() => depotSet && selectedVehicleId && setExpandedStep(3)}
                   className="w-full flex items-center gap-2 p-3 text-left hover:bg-gray-50 disabled:cursor-not-allowed"
                 >
-                  <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">3</span>
+                  <span className="w-6 h-6 bg-blue-600 text-white rounded-full flex items-center justify-center text-xs font-bold shrink-0">4</span>
                   <h4 className="font-semibold text-gray-800 shrink-0">{t('routes.step3Orders', { n: selectedOrderIds.size + pendingStops.length })}</h4>
-                  {expandedStep !== 3 && (
+                  {expandedStep !== 4 && (
                     <span className="ml-auto flex items-center gap-2 min-w-0">
                       <span className="text-xs text-gray-500 truncate max-w-[240px]">{t('routes.ordersSummary', { n: selectedOrderIds.size + pendingStops.length })}</span>
                       {depotSet && selectedVehicleId && <span className="text-xs text-blue-600 shrink-0">{t('common.edit')}</span>}
                     </span>
                   )}
                 </button>
-                {expandedStep === 3 && (
+                {expandedStep === 4 && (
                   <div className="p-3 border-t space-y-3">
                     {/* Primary: pick from existing available orders */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <h5 className="text-sm font-semibold text-gray-700">{t('routes.availableOrders')}</h5>
                       </div>
+
+                      {/*
+                        Sucursal y día, antes que el buscador.
+                        
+                        Una ruta se arma con los pedidos de UNA sucursal y UN día: eso
+                        acota de miles a decenas, y sólo entonces buscar por nombre tiene
+                        sentido. Al revés —buscar primero entre todo— es lo que hacía
+                        esta pantalla inservible.
+                      */}
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        <select
+                          value={sucursalRuta}
+                          onChange={(e) => setSucursalRuta(e.target.value)}
+                          className={`px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 min-w-[10rem] ${
+                            sucursalRuta ? '' : 'border-amber-400 bg-amber-50'
+                          }`}
+                        >
+                          {/* Sin sucursal no se debería crear una ruta: se marca en
+                              ámbar en vez de dejar elegido algo por defecto que luego
+                              nadie recuerda haber elegido. */}
+                          <option value="">Elige la sucursal…</option>
+                          {branches.map((b) => (
+                            <option key={b.id} value={b.id}>{b.name}</option>
+                          ))}
+                        </select>
+                        <input
+                          type="date"
+                          value={diaPedidos}
+                          onChange={(e) => setDiaPedidos(e.target.value)}
+                          className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          aria-label="Día de los pedidos"
+                        />
+                        {diaPedidos && (
+                          <button
+                            type="button"
+                            onClick={() => setDiaPedidos('')}
+                            className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
+                          >
+                            Todos los días
+                          </button>
+                        )}
+                      </div>
+
                       <div className="flex gap-2 mb-2">
                         <div className="relative flex-1">
                           <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />

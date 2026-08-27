@@ -24,26 +24,74 @@ export async function GET(req: NextRequest) {
   const scope = await resolveScope(req, user)
   const where = scopeWhere(scope)
 
-  const [totalOrders, totalVehicles, orders] = await Promise.all([
+  /**
+   * Lo que hace falta para CONTROLAR ENVÍOS, no para cuadrar caja.
+   *
+   * Antes esto enseñaba el total de órdenes, los "ingresos totales" —la suma del precio
+   * de la mercancía— y el precio medio por orden. Ninguno de los tres es de delivery: el
+   * precio del pedido es de PEDIDO, y tenerlo en dos pantallas invita a cuadrarlas entre
+   * sí, que es como se descubre tarde que no coinciden.
+   *
+   * Lo que sí es suyo: cuántos pedidos esperan ruta, cuántas rutas hay en marcha, cuánto
+   * peso queda por mover y cuánto se ha cobrado de domicilio. Y sobre todo: los
+   * PENDIENTES, que es el único número que pide hacer algo.
+   */
+  const hoy = new Date()
+
+  hoy.setHours(0, 0, 0, 0)
+
+  const [
+    totalOrders,
+    sinRuta,
+    rutasActivas,
+    entregadosHoy,
+    totalVehicles,
+    vehiculosEnRuta,
+    pendientes,
+    domicilios,
+    porSucursal,
+  ] = await Promise.all([
     prisma.order.count({ where }),
-    // Los vehículos SÍ tienen sucursal (`Vehicle.branchId`): se cuentan los de
-    // la de quien mira. Antes esto contaba la flota entera por un despiste mío.
+    // El número que pide acción: pedidos con destino conocido y sin ruta asignada.
+    prisma.order.count({ where: { ...where, routeId: null, endLat: { not: null } } }),
+    prisma.route.count({ where: { ...where, status: { notIn: ['completed', 'cancelled'] } } }),
+    prisma.order.count({ where: { ...where, deliveredAt: { gte: hoy } } }),
     prisma.vehicle.count({ where }),
-    prisma.order.findMany({
-      where,
-      select: { price: true, weight: true },
+    prisma.vehicle.count({ where: { ...where, orders: { some: { route: { status: { notIn: ['completed', 'cancelled'] } } } } } }),
+    // El peso que queda por mover. Es lo que dice si hace falta otro camión.
+    prisma.order.aggregate({
+      where: { ...where, routeId: null, endLat: { not: null } },
+      _sum: { weight: true },
+    }),
+    // El costo del domicilio SÍ es de delivery. El precio de la mercancía no.
+    prisma.order.aggregate({ where, _sum: { deliveryPrice: true } }),
+    // Dónde está lo pendiente: sin esto, "412 sin ruta" no dice por dónde empezar.
+    prisma.order.groupBy({
+      by: ['branchId'],
+      where: { ...where, routeId: null, endLat: { not: null } },
+      _count: { _all: true },
+      _sum: { weight: true },
     }),
   ])
 
-  const totalRevenue = orders.reduce((sum, o) => sum + (o.price || 0), 0)
-  const totalWeight = orders.reduce((sum, o) => sum + (o.weight || 0), 0)
-  const avgPrice = totalOrders > 0 ? totalRevenue / totalOrders : 0
+  const sucursales = await prisma.branch.findMany({ select: { id: true, name: true } })
+  const nombre = new Map(sucursales.map((b) => [b.id, b.name]))
 
   return NextResponse.json({
     totalOrders,
+    sinRuta,
+    rutasActivas,
+    entregadosHoy,
     totalVehicles,
-    totalRevenue,
-    totalWeight,
-    avgPrice,
+    vehiculosEnRuta,
+    pesoPendiente: pendientes._sum.weight ?? 0,
+    totalDomicilios: domicilios._sum.deliveryPrice ?? 0,
+    porSucursal: porSucursal
+      .map((g) => ({
+        sucursal: g.branchId ? nombre.get(g.branchId) ?? 'Sin sucursal' : 'Sin sucursal',
+        pedidos: g._count._all,
+        pesoKg: g._sum.weight ?? 0,
+      }))
+      .sort((a, b) => b.pedidos - a.pedidos),
   })
 }

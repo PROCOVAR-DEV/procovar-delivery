@@ -6,14 +6,26 @@ import { useAppStore } from '@/store/useAppStore'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 
+/**
+ * Sólo lo que delivery hace de verdad: controlar envíos.
+ *
+ * Se van tres entradas que quedaron de cuando esto calculaba el costo del domicilio:
+ *
+ *   Productos  — el catálogo propio contra el almacén. PEDIDO ya manda el peso de cada
+ *                línea resuelto contra Ventra, así que mantener un segundo catálogo del
+ *                mismo dato sólo sirve para que los dos discrepen.
+ *   Reportes   — informes de costos de domicilio, que ya no calcula delivery.
+ *   Sucursales — su gestión pertenece a auth, que es el dueño de las sucursales.
+ *
+ * Las PANTALLAS siguen existiendo y se llegan por URL: quitarlas del menú deja de
+ * ofrecerlas sin borrar la capacidad de entrar si hiciera falta configurar algo.
+ */
 const navItems = [
   { href: '/dashboard', icon: 'mdi:view-dashboard-outline', key: 'nav.dashboard' },
   { href: '/routes', icon: 'mdi:map-marker-path', key: 'nav.routes' },
   { href: '/orders', icon: 'mdi:package-variant-closed', key: 'nav.orders' },
   { href: '/customers', icon: 'mdi:account-multiple-outline', key: 'nav.customers' },
-  { href: '/products', icon: 'mdi:tag-multiple-outline', key: 'nav.products' },
   { href: '/vehicles', icon: 'mdi:truck-outline', key: 'nav.vehicles' },
-  { href: '/reports', icon: 'mdi:chart-bar', key: 'nav.reports' },
   { href: '/settings', icon: 'mdi:cog-outline', key: 'nav.settings' },
 ]
 
@@ -22,12 +34,8 @@ export default function Sidebar() {
   const { logout, user } = useAppStore()
   const t = useT()
 
-  const items = user?.role === 'admin'
-    ? [
-        ...navItems,
-        { href: '/branches', icon: 'mdi:office-building-marker-outline', key: 'nav.branches' },
-      ]
-    : navItems
+  // Sucursales sale también del menú del admin: su dueño es auth.
+  const items = navItems
 
   const handleLogout = () => {
     // Se limpia lo del navegador y se manda a Accesos, que pregunta y cierra: la

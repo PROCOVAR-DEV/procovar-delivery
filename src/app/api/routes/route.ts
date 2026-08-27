@@ -194,6 +194,7 @@ export async function POST(req: NextRequest) {
     deliveryDate,
     stops = [],
     orderIds = [],
+    branchId,
   }: {
     name?: string
     vehicleId?: string
@@ -203,6 +204,7 @@ export async function POST(req: NextRequest) {
     deliveryDate?: string
     stops?: StopInput[]
     orderIds?: string[]
+    branchId?: string
   } = await req.json()
 
   if (originLat == null || originLng == null) {
@@ -215,11 +217,23 @@ export async function POST(req: NextRequest) {
 
   const scope = await resolveScope(req, user)
 
+  /**
+   * La sucursal que eligió quien crea la ruta, no la del alcance.
+   *
+   * Un Super Admin trabaja con alcance "todas", así que `scope.branchId` es null y la
+   * ruta se creaba sin sucursal — o con la del primer pedido, por casualidad. Ahora la
+   * dice él en el primer paso del asistente.
+   *
+   * Quien SÍ tiene alcance no puede saltárselo pasando otra por el cuerpo: manda el
+   * suyo. Es la misma regla que en el resto de la aplicación.
+   */
+  const sucursalRuta = scope.branchId ?? (branchId?.trim() || null)
+
   // CAMINO PREFERIDO: armar la ruta con PEDIDOS YA IMPORTADOS (se seleccionan de la
   // lista; ya tienen ubicación, peso y costo de domicilio). No se re-teclea nada.
   if (Array.isArray(orderIds) && orderIds.length > 0) {
     return await createRouteFromExistingOrders(scope.actorId, {
-      name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds, branchId: scope.branchId,
+      name, vehicleId, originAddress, originLat, originLng, deliveryDate, orderIds, branchId: sucursalRuta,
     })
   }
 
