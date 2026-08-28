@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -10,7 +11,14 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const vehicle = await prisma.vehicle.findFirst({
-    where: { id, userId: user.id as string },
+    /**
+     * Por ALCANCE, no por quién lo dio de alta.
+     *
+     * `userId: user.id` contestaba 404 sobre vehículos que existen: los dio de alta una
+     * cuenta y quien entra por el login único es otra fila de `User`. El vehículo se ve
+     * en la lista —ésa sí va por sucursal— y al tocarlo dice que no existe.
+     */
+    where: { id, ...scopeWhere(await resolveScope(req, user)) },
     include: {
       routes: { select: { id: true, name: true, status: true, createdAt: true } },
       _count: { select: { routes: true, orders: true, orderAssignments: true } }
@@ -29,7 +37,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const data = await req.json()
 
   const vehicle = await prisma.vehicle.findFirst({
-    where: { id, userId: user.id as string }
+    where: { id, ...scopeWhere(await resolveScope(req, user)) }
   })
   if (!vehicle) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
@@ -49,7 +57,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (data.usarParaDomicilio === true) {
       const targetType = data.type !== undefined ? data.type : vehicle.type
       await tx.vehicle.updateMany({
-        where: { userId: user.id as string, type: targetType, usarParaDomicilio: true, id: { not: id } },
+        // El "uno por tipo" es POR SUCURSAL, que es de quien son los camiones.
+        where: { ...scopeWhere(await resolveScope(req, user)), type: targetType, usarParaDomicilio: true, id: { not: id } },
         data: { usarParaDomicilio: false },
       })
     }
@@ -73,7 +82,7 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const vehicle = await prisma.vehicle.findFirst({
-    where: { id, userId: user.id as string }
+    where: { id, ...scopeWhere(await resolveScope(req, user)) }
   })
   if (!vehicle) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 

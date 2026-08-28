@@ -26,6 +26,9 @@ const emptyLoc: LocationValue = { address: '', lat: null, lng: null }
 export default function CustomersPage() {
   const { token } = useAppStore()
   const [query, setQuery] = useState('')
+  const [municipio, setMunicipio] = useState('')
+  const [sucursal, setSucursal] = useState('')
+  const [pagina, setPagina] = useState(1)
   const [showForm, setShowForm] = useState(false)
 
   /**
@@ -45,14 +48,32 @@ export default function CustomersPage() {
     return () => clearTimeout(id)
   }, [query])
 
+  // Cualquier cambio de filtro vuelve a la página 1: quedarse en la 7 de una lista que
+  // ahora tiene 2 enseña un vacío que parece un fallo.
+  useEffect(() => { setPagina(1) }, [buscado, municipio, sucursal])
+
   const { data, isLoading } = useQuery({
-    queryKey: ['customers', buscado],
+    queryKey: ['customers', { buscado, municipio, sucursal, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/customers', {
-        params: buscado ? { q: buscado } : undefined,
+        params: {
+          ...(buscado ? { q: buscado } : {}),
+          ...(municipio ? { municipio } : {}),
+          ...(sucursal ? { sucursalCodigo: sucursal } : {}),
+          pagina,
+        },
         headers: { Authorization: `Bearer ${token}` },
       })
-      return res.data as { customers: Customer[]; total: number; truncated: boolean }
+      return res.data as {
+        customers: Customer[]
+        total: number
+        pagina: number
+        paginas: number
+        porPagina: number
+        truncated: boolean
+        municipios: { valor: string; clientes: number }[]
+        sucursales: { valor: string; clientes: number }[]
+      }
     },
     enabled: !!token,
     // Se mantiene la lista anterior mientras llega la nueva: si no, cada letra deja la
@@ -62,6 +83,9 @@ export default function CustomersPage() {
 
   const customers = data?.customers ?? []
   const total = data?.total ?? 0
+  const paginas = data?.paginas ?? 1
+  const municipios = data?.municipios ?? []
+  const sucursales = data?.sucursales ?? []
   const filtered = customers
 
   return (
@@ -73,9 +97,7 @@ export default function CustomersPage() {
             <h1 className="text-xl font-bold text-ink">Clientes</h1>
             <p className="text-sm text-ink-soft/70">
               Clientes de PEDIDO (sincronizados, sólo con geo) + los manuales de delivery.{' '}
-              {data?.truncated
-                ? `Se enseñan ${customers.length} de ${total}: afiná la búsqueda para llegar al resto.`
-                : `${total} en total.`}
+              {total.toLocaleString()} en total{paginas > 1 ? ` · página ${pagina} de ${paginas}` : ''}.
             </p>
           </div>
           <button
@@ -88,6 +110,46 @@ export default function CustomersPage() {
         </div>
 
         {showForm && <ManualCustomerForm onDone={() => setShowForm(false)} />}
+
+        {/* Los mismos filtros que en Pedidos, con lo que un cliente tiene. Los aplica la
+            base: son siete mil, y filtrar en la pantalla obliga a traérselos todos. */}
+        <div className="flex flex-wrap gap-2">
+          {sucursales.length > 1 && (
+            <select
+              value={sucursal}
+              onChange={(e) => setSucursal(e.target.value)}
+              className="px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              title="Sucursal del cliente"
+            >
+              <option value="">Todas las sucursales</option>
+              {sucursales.map((s) => (
+                <option key={s.valor} value={s.valor}>{s.valor} ({s.clientes.toLocaleString()})</option>
+              ))}
+            </select>
+          )}
+          {municipios.length > 1 && (
+            <select
+              value={municipio}
+              onChange={(e) => setMunicipio(e.target.value)}
+              className="px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              title="Municipio del cliente"
+            >
+              <option value="">Todos los municipios</option>
+              {municipios.map((m) => (
+                <option key={m.valor} value={m.valor}>{m.valor} ({m.clientes.toLocaleString()})</option>
+              ))}
+            </select>
+          )}
+          {(municipio || sucursal || query) && (
+            <button
+              type="button"
+              onClick={() => { setQuery(''); setMunicipio(''); setSucursal('') }}
+              className="px-3 py-2 text-sm text-ink-soft/70 hover:text-ink"
+            >
+              Quitar filtros
+            </button>
+          )}
+        </div>
 
         <div className="relative">
           <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-soft/50" />

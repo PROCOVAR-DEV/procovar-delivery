@@ -24,6 +24,8 @@ export interface FiltrosPedido {
   cotizado: string
   municipio: string
   vendedor: string
+  /** Id de la sucursal. Acota ADEMÁS del alcance, nunca en su lugar. */
+  branchId: string
   /** Rango por la FECHA DEL PEDIDO, `YYYY-MM-DD`. */
   desde: string
   hasta: string
@@ -40,6 +42,7 @@ export function leerFiltros(params: URLSearchParams): FiltrosPedido {
     cotizado: t('cotizado'),
     municipio: t('municipio'),
     vendedor: t('vendedor'),
+    branchId: t('branchId'),
     desde: t('desde'),
     hasta: t('hasta'),
   }
@@ -135,6 +138,14 @@ export function whereDeFiltros(f: FiltrosPedido): Prisma.OrderWhereInput {
 
   if (f.municipio) condiciones.push({ municipio: f.municipio })
   if (f.vendedor) condiciones.push({ vendedor: f.vendedor })
+  /**
+   * Por sucursal.
+   *
+   * Va como un filtro más y no como alcance: se combina con el `where` del alcance, así
+   * que quien sólo ve una sucursal no puede pedir la de otro poniéndolo a mano — el
+   * `AND` de los dos no deja pasar nada.
+   */
+  if (f.branchId) condiciones.push({ branchId: f.branchId })
 
   const fecha = porFecha(f)
 

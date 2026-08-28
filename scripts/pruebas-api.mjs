@@ -567,4 +567,79 @@ test('el selector de sucursal acota las rutas del Super Admin', async () => {
   }
 })
 
+// -------------------------------------------------------------- sucursales
+
+test('las sucursales se ven aunque las creara OTRA cuenta', async () => {
+  /**
+   * El fallo que dejó la aplicación entera vacía en producción.
+   *
+   * Esto filtraba por `creatorId: user.id` —«las que creó este usuario»—. Las ocho
+   * sucursales las creó una cuenta, y quien entra por el login único es OTRA fila de
+   * `User`: recibía una lista vacía. Sin sucursales no hay selector, el asistente de
+   * nueva ruta no tiene nada que elegir, y no se puede crear ni una ruta.
+   */
+  const otra = await prisma.user.create({
+    data: { email: `nadie-${Date.now()}@procovar.test`, password: 'x', name: 'Recién llegada', role: 'admin' },
+  })
+  const r = await pedir('/api/branches', { token: tokenDe(otra) })
+
+  assert.equal(r.status, 200)
+  assert.ok(r.json.length >= 2, 'una cuenta que no creó ninguna sucursal las tiene que ver igual')
+
+  await prisma.user.delete({ where: { id: otra.id } })
+})
+
+test('quien lleva una sucursal ve SÓLO la suya', async () => {
+  const r = await pedir('/api/branches', { token: TOKEN_JEFE })
+
+  assert.equal(r.status, 200)
+  assert.equal(r.json.length, 1)
+  assert.equal(r.json[0].id, camaguey.id)
+})
+
+test('los pedidos se pueden filtrar por sucursal, y el conteo cuadra', async () => {
+  const f = await pedir('/api/orders/facetas')
+
+  assert.ok(Array.isArray(f.json.sucursales), 'faltan las sucursales en las facetas')
+  assert.ok(f.json.sucursales.length > 1, 'la siembra tiene pedidos en dos sucursales')
+
+  const s = f.json.sucursales[0]
+  const r = await listaPedidos(`branchId=${s.valor}&porPagina=200`)
+
+  assert.equal(r.json.total, s.pedidos, 'el conteo de la faceta no cuadra con el filtro')
+  assert.equal(r.json.orders.every((o) => o.branch?.id === s.valor), true)
+})
+
+test('pedir la sucursal de otro no amplía lo que se ve', async () => {
+  // El filtro se combina con el alcance: el AND de los dos no deja pasar nada.
+  const r = await listaPedidos(`branchId=${habana.id}&porPagina=200`, { token: TOKEN_JEFE })
+
+  assert.equal(r.status, 200)
+  assert.equal(r.json.total, 0)
+})
+
+test('los clientes se filtran por sucursal y por municipio', async () => {
+  const todos = await pedir('/api/customers')
+
+  assert.ok(Array.isArray(todos.json.municipios) && todos.json.municipios.length > 0)
+  assert.ok(Array.isArray(todos.json.sucursales) && todos.json.sucursales.length > 0)
+
+  const m = todos.json.municipios[0]
+  const r = await pedir(`/api/customers?municipio=${encodeURIComponent(m.valor)}`)
+
+  assert.equal(r.json.total, m.clientes)
+  assert.equal(r.json.customers.every((c) => c.municipio === m.valor), true)
+})
+
+test('los clientes vienen paginados: la página 2 no repite la 1', async () => {
+  const una = await pedir('/api/customers?pagina=1')
+  const dos = await pedir('/api/customers?pagina=2')
+
+  assert.ok(una.json.paginas > 1, 'la siembra tiene más clientes que una página')
+
+  const primeros = new Set(una.json.customers.map((c) => c.id))
+
+  assert.equal(dos.json.customers.some((c) => primeros.has(c.id)), false)
+})
+
 test.after(() => prisma.$disconnect())

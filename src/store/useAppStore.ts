@@ -127,28 +127,48 @@ if (typeof window !== 'undefined') {
    */
   const storedSucursalId = localStorage.getItem('sucursalId')
 
-  if (storedSucursalId) {
-    applySucursalHeader(storedSucursalId)
-    useAppStore.setState({ sucursalId: storedSucursalId })
-    comprobarSucursalGuardada(storedSucursalId)
-  }
+  /**
+   * La guardada NO se aplica hasta comprobarla. Antes se aplicaba y se comprobaba
+   * después, y esa carrera es la que dejaba la aplicación en blanco.
+   *
+   * La cabecera se ponía en el mismo momento en que se carga el módulo, así que las
+   * consultas de la pantalla salían YA con ella. Si el id era de una sucursal que ya no
+   * existe, todas contestaban 200 con cero filas, y la comprobación llegaba tarde: para
+   * cuando borraba el id, react-query tenía la respuesta vacía en caché. Y si la
+   * comprobación fallaba —sin red, o la sesión todavía no puesta al volver del login
+   * único, que es justo cuando pasa— se dejaba el id malo, y entonces no se limpiaba
+   * NUNCA: cero pedidos, cero clientes, cero rutas, para siempre y sin un solo error.
+   *
+   * Comprobar primero cuesta una consulta al arrancar y quita la carrera entera.
+   */
+  if (storedSucursalId) comprobarSucursalGuardada(storedSucursalId)
 }
 
-function comprobarSucursalGuardada(guardada: string) {
-  void (async () => {
-    try {
-      const { data } = await axios.get('/api/branches')
-      const existe = Array.isArray(data) && data.some((b: { id: string }) => b.id === guardada)
+/**
+ * Comprueba la sucursal guardada y SÓLO entonces la aplica.
+ *
+ * Si ya no existe —o no se puede comprobar— se pasa a "todas las sucursales", que es lo
+ * que ve un administrador y nunca esconde nada. La elección se pierde y hay que volver a
+ * hacerla; a cambio, nadie se queda mirando una aplicación vacía sin saber por qué.
+ */
+async function comprobarSucursalGuardada(guardada: string) {
+  const olvidar = (motivo: string) => {
+    localStorage.removeItem('sucursalId')
+    applySucursalHeader(null)
+    useAppStore.setState({ sucursalId: null })
+    console.warn(`[sucursal] ${motivo}: se pasa a todas las sucursales`)
+  }
 
-      if (!existe) {
-        localStorage.removeItem('sucursalId')
-        applySucursalHeader(null)
-        useAppStore.setState({ sucursalId: null })
-        console.warn('[sucursal] la guardada ya no existe: se pasa a todas las sucursales')
-      }
-    } catch {
-      // Si la comprobación falla —sin red, sesión caducada— se deja lo que había. Es
-      // mejor que borrar la elección de alguien por un fallo pasajero.
+  try {
+    const { data } = await axios.get('/api/branches')
+
+    if (Array.isArray(data) && data.some((b: { id: string }) => b.id === guardada)) {
+      applySucursalHeader(guardada)
+      useAppStore.setState({ sucursalId: guardada })
+      return
     }
-  })()
+    olvidar('la guardada ya no existe')
+  } catch {
+    olvidar('no se pudo comprobar la guardada')
+  }
 }

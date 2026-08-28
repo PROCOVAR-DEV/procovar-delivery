@@ -73,6 +73,7 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState('todos')
   const [municipioFilter, setMunicipioFilter] = useState('')
   const [vendedorFilter, setVendedorFilter] = useState('')
+  const [sucursalFilter, setSucursalFilter] = useState('')
   // Los filtros del CATÁLOGO, los que aplica el servidor. Vacío = sin filtrar.
   const [estado, setEstado] = useState('')
   const [archivado, setArchivado] = useState('')
@@ -111,7 +112,7 @@ export default function OrdersPage() {
   // ahora tiene 2 páginas enseña un vacío que parece un fallo.
   useEffect(() => {
     setPagina(1)
-  }, [buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, desde, hasta])
+  }, [buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, sucursalFilter, desde, hasta])
 
   /**
    * Los pedidos, filtrados y paginados POR EL SERVIDOR.
@@ -120,7 +121,7 @@ export default function OrdersPage() {
    * que la dejaba colgada. Aquí sólo viaja la página que se está mirando.
    */
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, desde, hasta, pagina }],
+    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, sucursalFilter, desde, hasta, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/orders', {
         params: {
@@ -131,6 +132,7 @@ export default function OrdersPage() {
           ...(cotizado ? { cotizado } : {}),
           ...(municipioFilter ? { municipio: municipioFilter } : {}),
           ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
+          ...(sucursalFilter ? { branchId: sucursalFilter } : {}),
           ...(desde ? { desde } : {}),
           ...(hasta ? { hasta } : {}),
           pagina,
@@ -154,7 +156,11 @@ export default function OrdersPage() {
     queryKey: ['orders-facetas'],
     queryFn: async () => {
       const res = await axios.get('/api/orders/facetas', { headers: { Authorization: `Bearer ${token}` } })
-      return res.data as { municipios: { valor: string; pedidos: number }[]; vendedores: { valor: string; pedidos: number }[] }
+      return res.data as {
+        municipios: { valor: string; pedidos: number }[]
+        vendedores: { valor: string; pedidos: number }[]
+        sucursales: { valor: string; nombre: string; pedidos: number }[]
+      }
     },
     enabled: !!token,
     staleTime: 10 * 60 * 1000,
@@ -162,6 +168,7 @@ export default function OrdersPage() {
 
   const municipios = facetas?.municipios ?? []
   const vendedores = facetas?.vendedores ?? []
+  const sucursales = facetas?.sucursales ?? []
 
   // Estado de entrega del pedido (para el badge y el filtro):
   //  - Entregado: ya se entregó (deliveredAt) o su ruta está completada.
@@ -229,12 +236,12 @@ export default function OrdersPage() {
 
   /** ¿Hay algún filtro puesto? Sirve para saber si un cero es «no hay» o «no cuadra». */
   const hayFiltro = Boolean(
-    buscado || estado || archivado || domicilio || cotizado || municipioFilter || vendedorFilter || desde || hasta,
+    buscado || estado || archivado || domicilio || cotizado || municipioFilter || vendedorFilter || sucursalFilter || desde || hasta,
   )
 
   const limpiarFiltros = () => {
     setSearch(''); setEstado(''); setArchivado(''); setDomicilio(''); setCotizado('')
-    setMunicipioFilter(''); setVendedorFilter(''); setDesde(''); setHasta('')
+    setMunicipioFilter(''); setVendedorFilter(''); setSucursalFilter(''); setDesde(''); setHasta('')
   }
 
   const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString() : '—'
@@ -254,6 +261,22 @@ export default function OrdersPage() {
               {total.toLocaleString()} pedidos
               {isFetching && <Icon icon="mdi:loading" className="ml-1.5 inline animate-spin text-gray-400" />}
             </span>
+
+            {/* La SUCURSAL, la primera: es por donde se empieza a mirar cuando se ven
+                todas. Con el conteo, para no elegir una vacía y volver. */}
+            {sucursales.length > 1 && (
+              <select
+                value={sucursalFilter}
+                onChange={(e) => setSucursalFilter(e.target.value)}
+                className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                title="Sucursal del pedido"
+              >
+                <option value="">Todas las sucursales</option>
+                {sucursales.map((s) => (
+                  <option key={s.valor} value={s.valor}>{s.nombre} ({s.pedidos.toLocaleString()})</option>
+                ))}
+              </select>
+            )}
 
             {/* El estado EN PEDIDO. Lo filtra la base, sobre los 50.000, no sobre la
                 página que se está viendo. */}
@@ -425,6 +448,7 @@ export default function OrdersPage() {
               <thead>
                 <tr className="border-b text-left text-gray-600">
                   <th className="px-4 py-3 font-semibold">Fecha</th>
+                  <th className="px-4 py-3 font-semibold">Sucursal</th>
                   <th className="px-4 py-3 font-semibold">Pedido</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colClient')}</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colRoute')}</th>
@@ -449,6 +473,11 @@ export default function OrdersPage() {
                       {/* Sin `orderDate` la fecha es la de copiado, no la del pedido: se
                           avisa en vez de enseñarla como si fuera la buena. */}
                       {!o.orderDate && <span className="ml-1 text-gray-300" title="Pedido copiado antes de que se guardara su fecha: ésta es la del espejo.">≈</span>}
+                    </td>
+                    {/* De qué sucursal es. Estaba sólo en el detalle, así que la lista
+                        —que es donde se decide— no lo decía. */}
+                    <td className="px-4 py-3 text-xs text-gray-600">
+                      {o.branch?.name || <span className="text-gray-300">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       {(() => { const e = estadoPedido(o); return (

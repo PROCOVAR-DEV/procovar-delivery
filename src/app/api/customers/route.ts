@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic'
  * servidor. Se devuelve además cuántos hay en total, para que la pantalla pueda decir
  * "500 de 2.480" en vez de dar a entender que ésos son todos.
  */
-const TOPE = 500
+const TOPE = 200
 
 export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
@@ -28,6 +28,10 @@ export async function GET(req: NextRequest) {
 
   const params = new URL(req.url).searchParams
   const q = params.get('q')?.trim() || ''
+  // Los mismos filtros que la lista de pedidos ofrece, con lo que un cliente tiene.
+  const municipio = params.get('municipio')?.trim() || ''
+  const sucursal = params.get('sucursalCodigo')?.trim() || ''
+  const pagina = Math.max(1, Number(params.get('pagina')) || 1)
 
   /**
    * Por sucursal, con el CÓDIGO, que es lo que guarda el espejo.
@@ -62,13 +66,21 @@ export async function GET(req: NextRequest) {
       }
     : {}
 
-  const where = { AND: [porSucursal, busqueda].filter((x) => Object.keys(x).length > 0) }
+  const where = {
+    AND: [
+      porSucursal,
+      busqueda,
+      municipio ? { municipio } : {},
+      sucursal ? { sucursalCodigo: sucursal } : {},
+    ].filter((x) => Object.keys(x).length > 0),
+  }
 
   const [total, customers] = await Promise.all([
     prisma.customer.count({ where }),
     prisma.customer.findMany({
       where,
       orderBy: { name: 'asc' },
+      skip: (pagina - 1) * TOPE,
       take: TOPE,
       select: {
         id: true,
@@ -87,7 +99,38 @@ export async function GET(req: NextRequest) {
     }),
   ])
 
-  return NextResponse.json({ count: customers.length, total, truncated: total > customers.length, customers })
+  /**
+   * Con qué se puede filtrar: los municipios y las sucursales que EXISTEN.
+   *
+   * Salen de la base entera y no de la página que se ve, que ofrecería justo los
+   * municipios que ya se están mirando.
+   */
+  const [municipios, sucursales] = await Promise.all([
+    prisma.customer.groupBy({
+      by: ['municipio'],
+      where: { ...porSucursal, municipio: { not: null } },
+      _count: { _all: true },
+      orderBy: { municipio: 'asc' },
+    }),
+    prisma.customer.groupBy({
+      by: ['sucursalCodigo'],
+      where: { ...porSucursal, sucursalCodigo: { not: null } },
+      _count: { _all: true },
+      orderBy: { sucursalCodigo: 'asc' },
+    }),
+  ])
+
+  return NextResponse.json({
+    count: customers.length,
+    total,
+    pagina,
+    porPagina: TOPE,
+    paginas: Math.max(1, Math.ceil(total / TOPE)),
+    truncated: total > customers.length,
+    customers,
+    municipios: municipios.map((m) => ({ valor: m.municipio as string, clientes: m._count._all })),
+    sucursales: sucursales.map((s) => ({ valor: s.sucursalCodigo as string, clientes: s._count._all })),
+  })
 }
 
 // Crea un cliente MANUAL (source=null) desde delivery — para un cliente que no vino de

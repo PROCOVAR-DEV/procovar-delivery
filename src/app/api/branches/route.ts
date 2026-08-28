@@ -1,17 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { resolveScope } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * Las sucursales NO son de nadie.
+ *
+ * Esto filtraba por `creatorId: user.id` — «las que creó este usuario»— y era el mismo
+ * fallo que el resto de la aplicación tenía ya corregido (ver `lib/scope`): aquí nada
+ * pertenece a una persona.
+ *
+ * Y no era un detalle. Las ocho sucursales las creó `jose@procovar.com`; quien entra por
+ * el login único con otra cuenta —`josework2207@gmail.com`, que es OTRA fila de `User`—
+ * recibía una lista VACÍA. Con eso desaparece el selector de sucursal de la barra, el
+ * asistente de nueva ruta se queda sin nada que elegir y no se puede crear ni una ruta.
+ * Ocho sucursales con cincuenta mil pedidos detrás, invisibles porque las dio de alta
+ * otra cuenta.
+ */
 export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Usuario de sucursal: ve SOLO la suya. Admin: ve todas las que creó.
-  const where = user.branchId
-    ? { id: user.branchId }
-    : { creatorId: user.id as string }
+  // Quien pertenece a una sucursal ve la suya; quien no —el Super Admin— las ve todas.
+  const scope = await resolveScope(req, user)
+  const where = scope.branchId ? { id: scope.branchId } : {}
   const branches = await prisma.branch.findMany({
     where,
     orderBy: { createdAt: 'desc' },

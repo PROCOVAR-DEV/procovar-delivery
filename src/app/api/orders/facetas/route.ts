@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
 
   // `groupBy` y no `findMany` + Set: la base sabe hacer un DISTINCT sin traerse 50.000
   // filas para tirarlas.
-  const [municipios, vendedores] = await Promise.all([
+  const [municipios, vendedores, sucursales] = await Promise.all([
     prisma.order.groupBy({
       by: ['municipio'],
       where: { ...where, municipio: { not: null } },
@@ -37,12 +37,31 @@ export async function GET(req: NextRequest) {
       _count: { _all: true },
       orderBy: { vendedor: 'asc' },
     }),
+    // Las sucursales que TIENEN pedidos, con cuántos. Sin esto no había forma de saber
+    // de qué sucursal es cada pedido ni de quedarse con los de una.
+    prisma.order.groupBy({
+      by: ['branchId'],
+      where: { ...where, branchId: { not: null } },
+      _count: { _all: true },
+    }),
   ])
+
+  const nombres = new Map(
+    (await prisma.branch.findMany({ select: { id: true, name: true, externalId: true } }))
+      .map((b) => [b.id, b.externalId ? `${b.name} (${b.externalId})` : b.name]),
+  )
 
   // Con el conteo: saber que un municipio tiene tres pedidos y otro mil ahorra elegir el
   // equivocado y volver.
   return NextResponse.json({
     municipios: municipios.map((m) => ({ valor: m.municipio as string, pedidos: m._count._all })),
     vendedores: vendedores.map((v) => ({ valor: v.vendedor as string, pedidos: v._count._all })),
+    sucursales: sucursales
+      .map((s) => ({
+        valor: s.branchId as string,
+        nombre: nombres.get(s.branchId as string) ?? 'Sin sucursal',
+        pedidos: s._count._all,
+      }))
+      .sort((a, b) => a.nombre.localeCompare(b.nombre)),
   })
 }

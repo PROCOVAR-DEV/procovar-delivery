@@ -186,18 +186,43 @@ test('el estado del pedido se filtra y se ve en la tabla', async () => {
   await page.waitForTimeout(800)
   await page.waitForSelector('table tbody tr')
 
-  // Toda la columna de estado dice lo mismo que se pidió.
-  const estados = await page.locator('table tbody tr td:nth-child(2)').allInnerTexts()
+  // Toda la columna de estado dice lo mismo que se pidió. Es la 3ª: fecha, sucursal, estado.
+  const estados = await page.locator('table tbody tr td:nth-child(3)').allInnerTexts()
 
   assert.ok(estados.length > 0)
   for (const e of estados) assert.match(e, /Completada/)
 
   await page.selectOption('select[title="Estado del pedido en PEDIDO"]', 'expirada')
   await page.waitForTimeout(800)
-  const expiradas = await page.locator('table tbody tr td:nth-child(2)').allInnerTexts()
+  const expiradas = await page.locator('table tbody tr td:nth-child(3)').allInnerTexts()
 
   assert.ok(expiradas.length > 0, 'no hay expirados y la siembra tiene')
   for (const e of expiradas) assert.match(e, /Expirada/)
+  await cerrar(ctx)
+})
+
+test('cada pedido dice de qué sucursal es, y se puede filtrar por ella', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  // La columna: estaba sólo en el detalle, así que la lista —donde se decide— no lo decía.
+  const sucursales = await page.locator('table tbody tr td:nth-child(2)').allInnerTexts()
+
+  assert.ok(sucursales.some((s) => s.trim() && s.trim() !== '—'), `ninguna fila dice su sucursal: ${sucursales.slice(0, 3)}`)
+
+  const filtro = page.locator('select[title="Sucursal del pedido"]')
+
+  assert.equal(await filtro.count(), 1, 'falta el filtro de sucursal')
+
+  const antes = await totalPedidos(page)
+  const opciones = await filtro.locator('option').allInnerTexts()
+
+  await filtro.selectOption({ label: opciones[1] })
+  await page.waitForTimeout(800)
+
+  assert.ok(await totalPedidos(page) < antes, 'elegir una sucursal no acotó nada')
   await cerrar(ctx)
 })
 
@@ -207,14 +232,14 @@ test('la paginación trae páginas distintas, no la misma dos veces', async () =
   await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('table tbody tr')
 
-  const primeros = await page.locator('table tbody tr td:nth-child(3)').allInnerTexts()
+  const primeros = await page.locator('table tbody tr td:nth-child(4)').allInnerTexts()
   const siguiente = page.locator('button:has(svg), button').filter({ hasText: /siguiente|next|›|>/i }).first()
 
   if (await siguiente.count()) {
     await siguiente.click()
     await page.waitForTimeout(800)
 
-    const segundos = await page.locator('table tbody tr td:nth-child(3)').allInnerTexts()
+    const segundos = await page.locator('table tbody tr td:nth-child(4)').allInnerTexts()
 
     assert.notDeepEqual(segundos, primeros, 'la página 2 enseña lo mismo que la 1')
   }

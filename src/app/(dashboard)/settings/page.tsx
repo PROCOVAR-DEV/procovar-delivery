@@ -103,30 +103,15 @@ export default function SettingsPage() {
   })
 
   /**
-   * Recálculo de los pedidos RECIENTES con la configuración vigente.
+   * El recálculo a mano se fue con su botón.
    *
-   * Decía "todos" y no lo era: el endpoint se llevaba el tope de PEDIDO —2.000 de los
-   * 50.683 del catálogo— y contestaba como si hubiera terminado. Recalcular el año entero
-   * no cabe en una petición HTTP; eso lo hace el worker (`sync-queue.mjs --recompute`).
+   * Prometía "todos los pedidos" y hacía 2.000 de 50.683: el endpoint se llevaba el tope
+   * de PEDIDO y contestaba como si hubiera terminado. Acotarlo a los últimos días lo hacía
+   * honesto, pero seguía siendo un botón que hay que explicar para que no engañe.
+   *
+   * El catálogo lo recotiza el proceso de sincronización en cada vuelta, con la
+   * configuración que haya en ese momento. No hace falta pedírselo.
    */
-  const [recomputeMsg, setRecomputeMsg] = useState<{ ok: boolean; text: string } | null>(null)
-  const recompute = useMutation({
-    mutationFn: async () => {
-      const res = await axios.post('/api/admin/recompute', {}, { headers: { Authorization: `Bearer ${token}` }, timeout: 300000 })
-      return res.data as { total: number; recosteados: number; dias: number; sucursal: string }
-    },
-    onSuccess: (d) => {
-      setRecomputeMsg({
-        ok: true,
-        text: `Listo: ${d.recosteados} de ${d.total} pedidos de los últimos ${d.dias} días (${d.sucursal}).`,
-      })
-      queryClient.invalidateQueries({ queryKey: ['orders'] })
-    },
-    onError: (err: unknown) => {
-      const msg = axios.isAxiosError(err) ? (err.response?.data?.error || err.message) : 'Error al recalcular'
-      setRecomputeMsg({ ok: false, text: msg })
-    },
-  })
 
   const handleSubmitHome = (e: React.FormEvent) => {
     e.preventDefault()
@@ -304,44 +289,12 @@ export default function SettingsPage() {
             <p className="text-gray-500 pt-1">El <b>costo por km</b> y la <b>capacidad</b> salen del vehículo con mayor CKK de la sucursal. La <b>tasa CUP</b> es la de «Monedas» (arriba). El precio final en USD = <b>base + (C ÷ tasa_CUP)</b> — la <b>base</b> (arriba) se suma para que ningún domicilio salga gratis.</p>
           </div>
 
-          {/* Recalcular todos los pedidos con la configuración actual */}
-          <div className="mt-4 border border-blue-100 bg-blue-50/60 rounded-xl p-4">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div className="min-w-0">
-                <p className="font-semibold text-gray-800 flex items-center gap-2">
-                  <Icon icon="mdi:calculator-variant-outline" className="text-lg text-primary" />
-                  Recalcular el domicilio de los pedidos recientes
-                </p>
-                <p className="text-xs text-gray-500 mt-1 max-w-xl">
-                  Aplica la configuración vigente (mínimo, factor, tarifa del vehículo y tasa CUP)
-                  a los pedidos de los <b>últimos 30 días</b> con ubicación. Úsalo cuando cambies
-                  algún valor de la fórmula.
-                  {/* Decía "todos" y se llevaba los 2.000 primeros de 50.683. El catálogo
-                      entero lo recalcula el worker, que recorre el año por tramos. */}
-                  <span className="block mt-1 text-gray-400">
-                    El histórico completo lo recalcula el proceso de sincronización.
-                  </span>
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={recompute.isPending}
-                onClick={() => { setRecomputeMsg(null); recompute.mutate() }}
-                className="px-5 py-3 bg-primary text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2 shrink-0"
-              >
-                {recompute.isPending ? (
-                  <><Icon icon="mdi:loading" className="animate-spin text-lg" /> Recalculando…</>
-                ) : (
-                  <><Icon icon="mdi:refresh" className="text-lg" /> Recalcular todos</>
-                )}
-              </button>
-            </div>
-            {recomputeMsg && (
-              <p className={`mt-3 text-sm font-medium ${recomputeMsg.ok ? 'text-green-700' : 'text-red-600'}`}>
-                {recomputeMsg.text}
-              </p>
-            )}
-          </div>
+          {/* El botón de recalcular SE VA.
+              Prometía "todos los pedidos" y hacía 2.000 de 50.683; acotado a los últimos
+              30 días seguía siendo un botón que hay que explicar para que no engañe. Lo
+              que de verdad recalcula el catálogo es el proceso de sincronización, que lo
+              hace solo. Un botón que hay que acompañar de una nota diciendo lo que NO
+              hace es un botón que sobra. */}
         </div>
       </div>
     </div>
