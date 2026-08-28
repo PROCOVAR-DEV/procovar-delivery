@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import axios from 'axios'
 import { useQuery } from '@tanstack/react-query'
@@ -14,6 +13,7 @@ import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
+import Drawer from '@/components/Drawer'
 
 interface OrderItem {
   name?: string
@@ -248,15 +248,29 @@ export default function OrdersPage() {
   return (
     <div className="flex flex-col">
       <Navbar title={t('ord.title')} />
-      <div className="p-6 space-y-4">
+      <div className="p-3 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-lg font-semibold text-gray-700">{t('ord.title')}</h3>
             <p className="text-sm text-gray-500">{t('ord.subtitle')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
+            {/*
+              El conteo DICE de qué días es y en qué orden viene.
+
+              Con «desde el 27» puesto, la lista empieza por los del 28 —van de más nuevo
+              a más viejo— y eso se lee como que el filtro no se aplicó. Se aplicaba: son
+              los del 27 EN ADELANTE. Decirlo aquí cuesta una línea y quita la duda.
+            */}
             <span className="text-sm text-gray-500">
               {total.toLocaleString()} pedidos
+              {(desde || hasta) && (
+                <span className="text-gray-400">
+                  {' · '}
+                  {desde && hasta ? (desde === hasta ? `del ${desde}` : `del ${desde} al ${hasta}`) : desde ? `desde el ${desde}` : `hasta el ${hasta}`}
+                  {', del más nuevo al más viejo'}
+                </span>
+              )}
               {isFetching && <Icon icon="mdi:loading" className="ml-1.5 inline animate-spin text-gray-400" />}
             </span>
 
@@ -368,6 +382,18 @@ export default function OrdersPage() {
                 className="text-xs bg-transparent focus:outline-none"
                 title="Hasta (fecha del pedido)"
               />
+              {/* Casi siempre se quiere UN día, y poner la misma fecha dos veces es un
+                  paso que se olvida: de ahí «esto es de otro día, el filtro no va». */}
+              {desde && desde !== hasta && (
+                <button
+                  type="button"
+                  onClick={() => setHasta(desde)}
+                  className="text-[11px] text-primary hover:underline"
+                  title="Ver sólo ese día"
+                >
+                  sólo ese día
+                </button>
+              )}
               {(desde || hasta) && (
                 <button
                   type="button"
@@ -425,7 +451,7 @@ export default function OrdersPage() {
               )}
             </div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[60rem] text-sm">
               <thead>
                 <tr className="border-b text-left text-gray-600">
                   <th className="px-4 py-3 font-semibold">Fecha</th>
@@ -549,31 +575,22 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {/* Detalle del pedido — por portal a document.body para escapar el `transform` del
-          layout (animate-rise) que rompería `position: fixed`. */}
-      {detail && mounted && createPortal(
-        <div
-          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setDetail(null)}
-        >
-          <div
-            className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[88vh] overflow-y-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Cabecera */}
-            <div className="flex items-start justify-between gap-3 p-5 border-b sticky top-0 bg-white">
-              <div>
-                <h3 className="text-lg font-bold text-gray-800">{detail.customerName}</h3>
-                {detail.operationNumber && (
-                  <p className="text-xs text-gray-400 font-mono">{detail.operationNumber}</p>
-                )}
-              </div>
-              <button onClick={() => setDetail(null)} className="text-gray-400 hover:text-gray-700">
-                <Icon icon="mdi:close" className="text-xl" />
-              </button>
-            </div>
+      {/*
+        El detalle, en CAJÓN.
 
-            <div className="p-5 space-y-5">
+        Era un cuadro centrado de ancho de tarjeta, y aquí dentro hay un mapa, la lista de
+        productos y el domicilio: todo salía apretado y con su propia barra de desplazamiento.
+      */}
+      {mounted && (
+        <Drawer
+          abierto={detail != null}
+          alCerrar={() => setDetail(null)}
+          titulo={detail?.customerName ?? ''}
+          subtitulo={detail?.operationNumber ?? undefined}
+          ancho="lg"
+        >
+          {detail && (
+            <div className="space-y-5">
               {/* Entrega */}
               <div>
                 <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Entrega</p>
@@ -621,10 +638,23 @@ export default function OrdersPage() {
                 </div>
               )}
 
-              {/* Costo del domicilio — por qué salió ese valor */}
-              <div className="bg-green-50 rounded-xl p-4">
-                <p className="text-xs font-semibold text-green-700 uppercase tracking-wide mb-2">Costo del domicilio</p>
-                <div className="flex items-end justify-between">
+              {/*
+                EL DOMICILIO: lo que cobra PEDIDO, no lo que estimaría delivery.
+
+                Aquí salía el número que delivery calculaba por su cuenta, y en la misma
+                pantalla la columna de la lista decía «sin cotizar»: dos cifras distintas
+                para el mismo pedido, y la de aquí no la cobra nadie. El precio lo pone el
+                repartidor desde Entrega y llega en `pedidoCosto`. Cuando no está, se dice
+                —igual que lo dice PEDIDO— en vez de rellenar el hueco con una estimación.
+
+                La distancia y el peso se quedan, pero como lo que son: lo que delivery
+                MIDE para armar rutas y llenar el camión, no la base de un cobro.
+              */}
+              <div className={`rounded-xl p-4 ${detail.pedidoCosto != null ? 'bg-green-50' : 'bg-amber-50'}`}>
+                <p className={`text-xs font-semibold uppercase tracking-wide mb-2 ${detail.pedidoCosto != null ? 'text-green-700' : 'text-amber-700'}`}>
+                  Domicilio
+                </p>
+                <div className="flex items-end justify-between gap-3">
                   <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                     <span className="text-gray-500">Distancia</span>
                     <span className="font-mono text-gray-800">{detail.deliveryDistanceKm != null ? `${detail.deliveryDistanceKm.toFixed(2)} km` : '—'}</span>
@@ -632,10 +662,18 @@ export default function OrdersPage() {
                     <span className="font-mono text-gray-800">{detail.weight?.toFixed(2)} kg</span>
                   </div>
                   <div className="text-right">
-                    <p className="text-2xl font-bold text-green-700 font-mono">{detail.price != null ? format(detail.price) : '—'}</p>
+                    {detail.pedidoCosto != null ? (
+                      <p className="text-2xl font-bold text-green-700 font-mono">{format(detail.pedidoCosto)}</p>
+                    ) : (
+                      <p className="text-sm font-medium text-amber-700">Sin calcular todavía</p>
+                    )}
                   </div>
                 </div>
-                <p className="text-[11px] text-gray-400 mt-2">La distancia es del almacén al cliente (ida y vuelta ×2).</p>
+                <p className="text-[11px] text-gray-400 mt-2">
+                  {detail.pedidoCosto != null
+                    ? 'El costo lo puso el repartidor desde Entrega. La distancia es del almacén al cliente.'
+                    : 'El costo lo pone el repartidor desde Entrega; hasta entonces este pedido no tiene precio de domicilio.'}
+                </p>
               </div>
 
               {/* Productos */}
@@ -680,9 +718,8 @@ export default function OrdersPage() {
                 </div>
               )}
             </div>
-          </div>
-        </div>,
-        document.body,
+          )}
+        </Drawer>
       )}
     </div>
   )

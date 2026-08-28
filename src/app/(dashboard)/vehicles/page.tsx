@@ -10,6 +10,7 @@ import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
+import Drawer from '@/components/Drawer'
 
 interface Vehicle {
   id: string
@@ -311,7 +312,7 @@ export default function VehiclesPage() {
   return (
     <div className="flex flex-col">
       <Navbar title={t('veh.title')} />
-      <div className="p-6">
+      <div className="p-3 sm:p-6">
 
         <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
           <p className="text-gray-500 text-sm">{t('veh.manageHint')}</p>
@@ -492,16 +493,15 @@ export default function VehiclesPage() {
         )}
       </div>
 
-      {showModal && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) { setShowModal(false); setEditingVehicle(null); setForm(defaultForm) } }}
-        >
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold mb-5 flex items-center gap-2">
-              <Icon icon="mdi:truck-delivery" className="text-primary text-xl" />
-              {editingVehicle ? t('veh.editTitle') : t('veh.newTitle')}
-            </h3>
+      {/* La ficha del vehículo, en cajón: son doce campos y en un cuadro centrado
+          quedaban en dos columnas estrechas con su propia barra de desplazamiento. */}
+      <Drawer
+        abierto={showModal}
+        alCerrar={() => { setShowModal(false); setEditingVehicle(null); setForm(defaultForm) }}
+        titulo={editingVehicle ? t('veh.editTitle') : t('veh.newTitle')}
+        ancho="lg"
+      >
+        <div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
@@ -759,20 +759,16 @@ export default function VehiclesPage() {
                 </button>
               </div>
             </form>
-          </div>
         </div>
-      )}
+      </Drawer>
 
-      {showTiposModal && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowTiposModal(false) }}
-        >
-          <div className="bg-white rounded-2xl p-6 w-full max-w-lg shadow-xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold mb-1 flex items-center gap-2">
-              <Icon icon="mdi:tag-multiple-outline" className="text-primary text-xl" />
-              Tipos de vehículo
-            </h3>
+      <Drawer
+        abierto={showTiposModal}
+        alCerrar={() => setShowTiposModal(false)}
+        titulo="Tipos de vehículo"
+        ancho="md"
+      >
+        <div>
             <p className="text-sm text-gray-500 mb-4">
               Define cada tipo con su costo por km por defecto. Al crear un vehículo de ese tipo se hereda el costo/km (editable por vehículo).
             </p>
@@ -845,9 +841,8 @@ export default function VehiclesPage() {
                 {saveTiposMutation.isPending ? '...' : t('common.save')}
               </button>
             </div>
-          </div>
         </div>
-      )}
+      </Drawer>
     </div>
   )
 }

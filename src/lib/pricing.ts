@@ -25,13 +25,20 @@ export interface HomeDeliveryQuote {
   distanceKm: number
   chargeableKm: number
   weightKg: number
-  price: number
+  /**
+   * `null` = no se pudo estimar aquí. No es cero.
+   *
+   * Un cero es un precio: se suma, se ordena y se lee como «este domicilio es gratis».
+   * Pasa cuando la sucursal no tiene vehículo de referencia o no tiene tasa, y el pedido
+   * se guarda igual — el precio que se cobra es el de PEDIDO (`pedidoCosto`), no éste.
+   */
+  price: number | null
   breakdown: {
     base: number
     distance: number
     weight: number
-    beforeMin: number
-    beforeRound: number
+    beforeMin: number | null
+    beforeRound: number | null
   }
 }
 

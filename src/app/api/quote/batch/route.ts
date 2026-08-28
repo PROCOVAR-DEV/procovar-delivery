@@ -165,13 +165,17 @@ export async function POST(req: NextRequest) {
       continue
     }
     const branch = info.origin
-    // Vehículo de referencia de la sucursal (para el CKK). Sin él, no se calcula: espera.
+
+    /**
+     * Sin vehículo de referencia se importa IGUAL, sin precio propio.
+     *
+     * Antes se saltaba el pedido entero. Y eso es desproporcionado: el precio del
+     * domicilio ya no lo pone delivery —lo pone el repartidor desde Entrega y llega en
+     * `pedidoCosto`—, así que no poder calcular una estimación propia no es motivo para
+     * quedarse sin el pedido. Sin él no hay ruta, no hay peso, no hay nada: la sucursal
+     * entera parece vacía por una casilla de configuración que ya no se usa para cobrar.
+     */
     const veh = await getVehiculoRef(branch.creatorId)
-    if (!veh) {
-      skipped++
-      results.push({ ref, status: 'skipped', reason: 'sucursal-sin-vehiculo-de-calculo' })
-      continue
-    }
 
     /**
      * Sin tasa de ESA sucursal no se cotiza. No se cae a la de otra.
@@ -198,24 +202,27 @@ export async function POST(req: NextRequest) {
 
     const tc = sinDomicilio ? 0 : await tasaDe(input.sucursalExternalId)
 
-    if (!sinDomicilio && tc == null) {
-      skipped++
-      results.push({
-        ref,
-        status: 'skipped',
-        reason: `sin-tasa-de-cambio (${input.sucursalExternalId ?? 'sin sucursal'})`,
-        weightKg,
-        distanceKm,
-        branch: { id: branch.id, name: branch.name },
-      })
-      continue
-    }
+    /**
+     * Y sin tasa, lo mismo: entra sin precio propio.
+     *
+     * Sólo La Habana tiene tasa en Entrega hoy. Con la regla vieja, las otras ocho
+     * sucursales se quedaban sin importar un solo pedido con domicilio —ni peso, ni
+     * distancia, ni rutas— por no poder pasar a CUP una estimación que no se cobra.
+     */
+    const sinPrecioPropio = !veh || (!sinDomicilio && tc == null)
 
-    const dom = sinDomicilio
+    const dom = sinDomicilio || sinPrecioPropio
       ? { usd: 0, cup: 0, ckk: 0 }
-      : calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc as number, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
-    const price = dom.usd // se guarda en USD (base); el front convierte a CUP con la tasa
-    if (!sinDomicilio) quoted++
+      : calculateDomicilioOficial(distanceKm, weightKg, veh!.costoKmUsd, veh!.capacidadKg, tc as number, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
+    /**
+     * `null`, no `0`.
+     *
+     * Un cero es un precio: se suma, se ordena y se lee como «este domicilio es gratis».
+     * Que delivery no haya podido estimarlo es otra cosa, y el precio que vale es el de
+     * PEDIDO (`pedidoCosto`) de todas formas.
+     */
+    const price = sinDomicilio || sinPrecioPropio ? null : dom.usd
+    if (!sinDomicilio && !sinPrecioPropio) quoted++
 
     const base = sinDomicilio
       ? {
@@ -230,6 +237,10 @@ export async function POST(req: NextRequest) {
           ref,
           status: 'quoted' as const,
           price,
+          // Se dice POR QUÉ no hay estimación propia; el pedido se guarda igual.
+          ...(sinPrecioPropio
+            ? { sinEstimacion: !veh ? 'sucursal-sin-vehiculo-de-calculo' : `sin-tasa-de-cambio (${input.sucursalExternalId ?? 'sin sucursal'})` }
+            : {}),
           priceCup: dom.cup,
           distanceKm,
           weightKg,

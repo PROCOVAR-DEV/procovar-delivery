@@ -46,7 +46,7 @@ export default function DashboardPage() {
   return (
     <div className="flex flex-col">
       <Navbar title={t('dash.title')} />
-      <div className="p-6">
+      <div className="p-3 sm:p-6">
         {/*
           Lo primero: lo que PIDE HACER ALGO.
           

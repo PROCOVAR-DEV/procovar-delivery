@@ -130,7 +130,9 @@ export async function GET(req: NextRequest) {
   const filtered = orders.filter((o) => {
     // Sin distancia medida no se descarta por distancia: no saberla no es estar lejos.
     if (kmMax != null && o.deliveryDistanceKm != null && o.deliveryDistanceKm > kmMax) return false
-    if (costoMin != null && (o.deliveryPrice ?? 0) < costoMin) return false
+    // Por el costo de PEDIDO, que es el que se cobra. `deliveryPrice` es una estimación
+    // propia que ya no se usa para cobrar, y filtrar por ella escondía pedidos reales.
+    if (costoMin != null && (o.pedidoCosto ?? 0) < costoMin) return false
 
     return true
   })

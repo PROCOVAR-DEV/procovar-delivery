@@ -42,10 +42,11 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  // Ingreso por pedido = su costo de domicilio. `price` se llena al rutear; para los
-  // pedidos aún no ruteados usamos `deliveryPrice` (el costo ya calculado del domicilio).
-  const revenueOf = (o: { price: number | null; deliveryPrice: number | null }) =>
-    (o.price != null ? o.price : (o.deliveryPrice ?? 0))
+  // Ingreso por pedido = su costo de domicilio, el que puso el repartidor desde Entrega.
+  // `price` se llena al rutear (y desde ahí sale del mismo sitio); para los que todavía no
+  // están en ninguna ruta se usa `pedidoCosto` directamente.
+  const revenueOf = (o: { price: number | null; pedidoCosto: number | null }) =>
+    (o.price != null ? o.price : (o.pedidoCosto ?? 0))
 
   // Flatten the vehicle from the route for easy display/export.
   const orders = dbOrders.map((o) => ({

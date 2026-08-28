@@ -142,7 +142,7 @@ export default function ReportsPage() {
   return (
     <div className="flex flex-col">
       <Navbar title={t('rep.title')} />
-      <div className="p-6 space-y-5">
+      <div className="p-3 sm:p-6 space-y-5">
 
         {/* Filtros */}
         <div className="bg-white rounded-2xl shadow-md p-5">
@@ -213,7 +213,7 @@ export default function ReportsPage() {
               <p>{t('rep.loading')}</p>
             </div>
           ) : (
-            <div className="p-6">
+            <div className="p-3 sm:p-6">
 
               {/* TAB: RESUMEN */}
               {activeTab === 'resumen' && (

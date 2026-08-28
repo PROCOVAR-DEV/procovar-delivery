@@ -132,8 +132,15 @@ export default function LocationInput({
           selectable
           selectedPoint={selectedPoint}
           onMapClick={handleMapClick}
-          defaultCenter={branchCenter}
-          defaultZoom={branchZoom}
+          /**
+           * El mapa abre DONDE ESTÁ el punto, si ya lo hay.
+           *
+           * Abría siempre en la sucursal de quien mira —y un administrador no tiene
+           * ninguna, así que abría en cualquier parte—: para corregir un punto ya puesto
+           * había que buscarlo a mano por el mapa antes de poder tocarlo.
+           */
+          defaultCenter={selectedPoint ?? branchCenter}
+          defaultZoom={selectedPoint ? 15 : branchZoom}
         />
       </div>
       <p className="text-xs text-gray-500 mt-1">{t('loc.help')}</p>

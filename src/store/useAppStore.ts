@@ -92,6 +92,9 @@ export const useAppStore = create<AppState>((set) => ({
   },
 }))
 
+/** Resuelve cuando se sabe qué sucursal se está mirando. Ver el interceptor de abajo. */
+let hidratacion: Promise<void> = Promise.resolve()
+
 // Hydrate from localStorage on client only
 if (typeof window !== 'undefined') {
   const storedToken = localStorage.getItem('token')
@@ -141,8 +144,25 @@ if (typeof window !== 'undefined') {
    *
    * Comprobar primero cuesta una consulta al arrancar y quita la carrera entera.
    */
-  if (storedSucursalId) comprobarSucursalGuardada(storedSucursalId)
+  hidratacion = storedSucursalId ? comprobarSucursalGuardada(storedSucursalId) : Promise.resolve()
 }
+
+/**
+ * NINGUNA consulta sale antes de saber qué sucursal se está mirando.
+ *
+ * Comprobar la sucursal guardada antes de aplicarla quitó una carrera y metió la
+ * contraria: durante esa comprobación la cabecera `x-sucursal-id` todavía no está
+ * puesta, así que todo lo que pidiera la pantalla en ese hueco salía SIN ella — y a un
+ * administrador eso le contesta con las ocho sucursales. Se veía al recargar: los
+ * vehículos de todas, con una sucursal elegida arriba.
+ *
+ * Y no se arregla pantalla por pantalla: cualquier consulta nueva que alguien escriba
+ * mañana tendría el mismo agujero. Se espera aquí, una vez, para todas.
+ */
+axios.interceptors.request.use(async (config) => {
+  await hidratacion
+  return config
+})
 
 /**
  * Comprueba la sucursal guardada y SÓLO entonces la aplica.
@@ -151,7 +171,7 @@ if (typeof window !== 'undefined') {
  * que ve un administrador y nunca esconde nada. La elección se pierde y hay que volver a
  * hacerla; a cambio, nadie se queda mirando una aplicación vacía sin saber por qué.
  */
-async function comprobarSucursalGuardada(guardada: string) {
+async function comprobarSucursalGuardada(guardada: string): Promise<void> {
   const olvidar = (motivo: string) => {
     localStorage.removeItem('sucursalId')
     applySucursalHeader(null)
@@ -160,7 +180,14 @@ async function comprobarSucursalGuardada(guardada: string) {
   }
 
   try {
-    const { data } = await axios.get('/api/branches')
+    /**
+     * Con un axios PROPIO, sin el interceptor de abajo.
+     *
+     * El interceptor espera a que esta comprobación termine antes de dejar salir nada; si
+     * esta llamada pasara por él, se estaría esperando a sí misma y no saldría jamás: la
+     * aplicación entera se quedaría cargando para siempre.
+     */
+    const { data } = await axios.create().get('/api/branches')
 
     if (Array.isArray(data) && data.some((b: { id: string }) => b.id === guardada)) {
       applySucursalHeader(guardada)

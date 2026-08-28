@@ -285,15 +285,21 @@ test('el cotizador individual está retirado: queda UNA fórmula', async () => {
 // -------------------------------------------------- pedidos para armar ruta
 
 test('el filtro por día usa la fecha del pedido: pedir otro día YA no da cero', async () => {
-  const orders = (await listaPedidos('porPagina=200')).json.orders
-  const conFecha = orders.filter((o) => o.orderDate && o.branch?.id === habana.id)
-  // Un día que NO es hoy y que sí tiene pedidos sembrados.
+  /**
+   * El día se saca de los DISPONIBLES, no de la lista general.
+   *
+   * Se cogía de la lista de pedidos, que incluye los que ya están en una ruta. Cualquier
+   * prueba anterior que armara una ruta se llevaba el último pedido suelto de ese día, y
+   * ésta fallaba después diciendo que el filtro estaba roto cuando lo roto era la
+   * suposición: ese día ya no tenía nada que rutear.
+   */
+  const disponibles = (await pedir('/api/orders/available')).json.orders ?? []
   const hoy = soloFecha(new Date())
-  const otroDia = conFecha.map((o) => soloFecha(o.orderDate)).find((d) => d !== hoy)
+  const otroDia = disponibles.map((o) => o.orderDate && soloFecha(o.orderDate)).find((d) => d && d !== hoy)
 
-  assert.ok(otroDia, 'la siembra tiene pedidos de días distintos de hoy')
+  assert.ok(otroDia, 'la siembra tiene pedidos sin rutear de días distintos de hoy')
 
-  const r = await pedir(`/api/orders/available?fecha=${otroDia}&branchId=${habana.id}`)
+  const r = await pedir(`/api/orders/available?fecha=${otroDia}`)
 
   assert.equal(r.status, 200)
   const lista = r.json.orders ?? r.json
@@ -684,7 +690,7 @@ test('pero una sucursal que SÍ existe sigue acotando', async () => {
 
 // ------------------------------------------------------ tasa de cambio
 
-test('sin tasa de SU sucursal, el pedido no se cotiza — y no se usa la de otra', async () => {
+test('sin tasa de SU sucursal se importa igual, pero SIN precio — y nunca con la de otra', async () => {
   const key = process.env.SERVICE_API_KEY
 
   if (!key) {
@@ -699,8 +705,13 @@ test('sin tasa de SU sucursal, el pedido no se cotiza — y no se usa la de otra
    * nadie cuestiona y que aparece en la caja. Antes pasaba: la tasa era una sola, escrita
    * a mano en Configuración, la misma para las ocho sucursales.
    *
-   * Sin Accesos delante, `tasaDeSucursal` devuelve null y el pedido se salta diciendo cuál
-   * falta. Eso se arregla; un importe equivocado no, porque nadie sabe que lo está.
+   * Sin Accesos delante, `tasaDeSucursal` devuelve null. El pedido ENTRA igual —hace
+   * falta para las rutas, el peso y la capacidad del camión— pero sin precio propio y
+   * diciendo por qué. Antes se saltaba entero: ocho sucursales sin un solo pedido por no
+   * poder convertir a CUP una estimación que ya nadie cobra (el precio lo pone Entrega).
+   *
+   * Lo que NO puede pasar es que salga un número usando la tasa de otra provincia: un
+   * importe equivocado no se arregla, porque nadie sabe que lo está.
    */
   const r = await pedir('/api/quote/batch', {
     token: null,
@@ -724,10 +735,15 @@ test('sin tasa de SU sucursal, el pedido no se cotiza — y no se usa la de otra
 
   const uno = r.json.results[0]
 
-  assert.equal(uno.status, 'skipped')
-  assert.match(uno.reason, /sin-tasa/, `se esperaba que se saltara por falta de tasa: ${JSON.stringify(uno)}`)
-  // Y que DIGA de qué sucursal falta: "sin tasa" a secas manda a buscar en el sitio malo.
-  assert.match(uno.reason, /HAB/)
+  assert.equal(uno.status, 'quoted', `el pedido tiene que entrar igual: ${JSON.stringify(uno)}`)
+  // Sin precio propio: null, no un número sacado de la tasa de otra sucursal, y tampoco
+  // un cero —que se sumaría y se leería como «este domicilio es gratis»—.
+  assert.equal(uno.price, null)
+  assert.match(uno.sinEstimacion, /sin-tasa/, `tiene que decir por qué no hay estimación: ${JSON.stringify(uno)}`)
+  // Y de qué sucursal falta: "sin tasa" a secas manda a buscar en el sitio malo.
+  assert.match(uno.sinEstimacion, /HAB/)
+  // El peso y la distancia SÍ salen: son lo que hace falta para armar la ruta.
+  assert.ok(uno.weightKg > 0)
 })
 
 test('un pedido SIN domicilio no necesita tasa: se importa igual', async () => {

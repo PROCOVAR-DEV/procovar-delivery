@@ -395,28 +395,27 @@ test('el menú se cierra con Escape y pulsando fuera', async () => {
 
 // ------------------------------------------------------------- ajustes
 
-test('Configuración se retiró: ni está en el menú ni queda nada dentro', async () => {
+test('las pantallas retiradas ya no están: ni en el menú ni por URL', async () => {
   const { ctx, page } = await conSesion()
 
   await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('nav a[href="/orders"]')
 
-  assert.equal(await page.locator('nav a[href="/settings"]').count(), 0, 'sigue en el menú')
+  for (const ruta of ['/settings', '/branches', '/products']) {
+    assert.equal(await page.locator(`nav a[href="${ruta}"]`).count(), 0, `${ruta} sigue en el menú`)
+  }
 
   /**
-   * Y la pantalla contesta, no da 404.
+   * Y se BORRARON, no se escondieron.
    *
-   * Quien llegue por un enlace guardado tiene que enterarse de que esto se movió: un 404
-   * manda a buscar el error en la dirección.
+   * Estaban fuera del menú pero vivas, y eso es peor que quitarlas: quien llegara por un
+   * enlace viejo encontraba una pantalla que administra algo que ya no es de aquí y la
+   * daría por buena. Sucursales era la peor — la sucursal es de Accesos, y desde aquí se
+   * podía crear una que allí no existe.
    */
-  await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('text=/ya no hay nada que configurar/i', { timeout: 20000 })
+  const r = await page.goto(`${BASE}/branches`, { waitUntil: 'domcontentloaded' })
 
-  const texto = await page.locator('body').innerText()
-
-  // Ni tasa que teclear ni fórmula de domicilio: ninguna de las dos es de delivery.
-  assert.equal(/C = CKK/.test(texto), false, 'sigue la fórmula del domicilio')
-  assert.equal(/Guardar precios/i.test(texto), false, 'sigue el formulario de precios')
+  assert.equal(r.status(), 404, 'la pantalla de sucursales sigue contestando')
   await cerrar(ctx)
 })
 
@@ -468,38 +467,65 @@ test('elegida una sucursal, se ven sólo las suyas y sin encabezados', async () 
 
 // ------------------------------------------------------- almacenes
 
-test('los almacenes de cada sucursal se ven, y sólo los de las sucursales de aquí', async () => {
+test('los almacenes se eligen en un desplegable, y sólo los de las sucursales de aquí', async () => {
   const { ctx, page } = await conSesion()
 
   await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('text=La Habana')
+  await page.waitForSelector('button[title="Almacén"]', { timeout: 20000 })
 
-  const texto = await page.locator('body').innerText()
-
-  assert.match(texto, /La Habana/)
-  assert.match(texto, /Camagüey/)
   // Accesos devuelve todas las suyas; aquí sólo se enseñan las que existen en delivery.
-  assert.equal(/Sucursal ajena/.test(texto), false, 'se coló una sucursal que no es de aquí')
-  // Y se dice cuál no tiene ninguno: sin almacén no se puede cotizar un domicilio suyo.
-  assert.match(texto, /sin almacenes/)
+  const sucursales = await page.click('button[title="Sucursal"]').then(async () => {
+    const t = await page.locator('[role="listbox"]').innerText()
+
+    await page.keyboard.press('Escape')
+    return t
+  })
+
+  assert.match(sucursales, /La Habana/)
+  assert.match(sucursales, /Camagüey/)
+  assert.equal(/Sucursal ajena/.test(sucursales), false, 'se coló una sucursal que no es de aquí')
   await cerrar(ctx)
 })
 
-test('se añade un almacén y al recargar sigue ahí', async () => {
+test('se añade un almacén y al volver a entrar sigue ahí', async () => {
   const { ctx, page } = await conSesion()
 
   await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
-  await page.click('text=Camagüey')
-  await page.click('text=Añadir un almacén')
+  await page.waitForSelector('button[title="Almacén"]')
+  await elegir(page, 'Sucursal', 'Camagüey')
+  await elegir(page, 'Almacén', '+ Añadir un almacén')
+
   await page.fill('input[placeholder="Nombre del almacén"]', 'Nave del puerto')
   await page.click('button:has-text("Guardar")')
-  await page.waitForSelector('text=Guardado en Accesos')
+  await page.waitForSelector('text=Guardado en Accesos', { timeout: 20000 })
 
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('text=Camagüey')
-  await page.click('text=Camagüey')
+  await page.waitForSelector('button[title="Almacén"]')
+  await elegir(page, 'Sucursal', 'Camagüey')
 
-  assert.equal(await page.locator('input[value="Nave del puerto"]').count(), 1)
+  /**
+   * Entra directo en el primero de esa sucursal, que es el que se acaba de guardar.
+   *
+   * Se lee el VALOR del campo, no el atributo `value` del HTML: React sólo pone el
+   * atributo al montar y después cambia la propiedad, así que un selector
+   * `input[value="…"]` no encuentra nada aunque en pantalla se lea perfectamente.
+   */
+  assert.equal(await page.locator('input[placeholder="Nombre del almacén"]').inputValue(), 'Nave del puerto')
+  await cerrar(ctx)
+})
+
+test('el que ya tiene punto se puede corregir: el mapa abre DONDE está', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('button[title="Almacén"]')
+  await elegir(page, 'Sucursal', 'La Habana')
+
+  // El de La Habana viene con 23.12, -82.38 puestos: tienen que salir escritos y con el
+  // mapa encima para poder moverlo. Abrir el mapa en otra parte obliga a buscar el punto
+  // a mano antes de poder tocarlo, que es lo que se reportó.
+  await page.waitForSelector('text=/23\\.12/', { timeout: 20000 })
+  assert.ok(await page.locator('.leaflet-container').count() > 0, 'no hay mapa para corregir el punto')
   await cerrar(ctx)
 })
 
@@ -507,13 +533,13 @@ test('un almacén sin coordenadas se guarda, pero avisado', async () => {
   const { ctx, page } = await conSesion()
 
   await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('text=Camagüey')
-  await page.click('text=Camagüey')
+  await page.waitForSelector('button[title="Almacén"]')
+  await elegir(page, 'Sucursal', 'Camagüey')
 
   const texto = await page.locator('body').innerText()
 
-  // El de arriba se guardó sin punto: desde ahí no se puede medir el domicilio, y eso
-  // tiene que decirlo la pantalla en vez de dejar el domicilio sin cotizar en silencio.
+  // El de la prueba anterior se guardó sin punto: desde ahí no se puede medir el
+  // domicilio, y eso tiene que decirlo la pantalla en vez de dejarlo en silencio.
   assert.match(texto, /no se puede medir el domicilio/)
   await cerrar(ctx)
 })
@@ -523,6 +549,95 @@ test('los almacenes están en la barra lateral', async () => {
 
   await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('nav a[href="/warehouses"]')
+  await cerrar(ctx)
+})
+
+// ------------------------------------------------------- cajones, móvil y el domicilio
+
+test('el detalle del pedido abre en CAJÓN, y el domicilio es el de PEDIDO', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+  await page.locator('table tbody tr').first().click()
+  await page.waitForSelector('[role="dialog"]', { timeout: 20000 })
+
+  const caja = await page.locator('[role="dialog"]').boundingBox()
+  const alto = page.viewportSize().height
+
+  // Cajón = pegado al borde derecho y de alto completo. Un modal centrado deja hueco
+  // arriba y abajo, y aquí dentro hay un mapa y la lista de productos: no cabía.
+  assert.ok(caja.height >= alto - 2, `no ocupa el alto: ${caja.height} de ${alto}`)
+
+  /**
+   * Y el precio del domicilio es el que puso Entrega, no una estimación de delivery.
+   *
+   * Aquí salía el número que delivery calculaba por su cuenta mientras la columna de la
+   * lista decía «sin cotizar»: dos cifras para el mismo pedido, y la de aquí no la cobra
+   * nadie. Los sembrados no traen `pedidoCosto`, así que tiene que decirlo.
+   */
+  const texto = await page.locator('[role="dialog"]').innerText()
+
+  assert.match(texto, /Sin calcular todavía|El costo lo pone el repartidor desde Entrega/)
+  await cerrar(ctx)
+})
+
+test('el asistente de rutas es un cajón a pantalla completa y va paso a paso', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/routes`, { waitUntil: 'domcontentloaded' })
+  await page.click('button:has-text("Nueva Ruta")')
+  await page.waitForSelector('[role="dialog"]')
+
+  const texto = await page.locator('[role="dialog"]').innerText()
+
+  // Con la sucursal sin elegir, los pasos de después NO se pintan: eran tres cajas
+  // grises que no se podían pulsar y no decían qué hacer.
+  assert.equal(/Pedidos de cliente/.test(texto), false, 'el paso 4 sale antes de tiempo')
+
+  // Y el botón de generar vive en el pie, siempre a la vista: estaba al final del todo,
+  // detrás de la lista entera de pedidos.
+  assert.ok(await page.locator('[role="dialog"] button:has-text("Generar")').count() > 0)
+  await cerrar(ctx)
+})
+
+test('en un teléfono la barra lateral se sale de la pantalla y se abre con el botón', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.setViewportSize({ width: 390, height: 820 })
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  const barra = await page.locator('nav').first().boundingBox()
+
+  // Fuera de la pantalla: ocupaba 256 de los 390 de ancho y la aplicación empezaba a su
+  // derecha, así que se veía medio contenido cortado por el borde.
+  assert.ok(barra.x + barra.width <= 1, `la barra sigue ocupando sitio: x=${barra.x}`)
+
+  await page.click('button[aria-label="Menú"]')
+
+  // Se espera a que TERMINE de entrar: la barra se desliza, y medirla a mitad del
+  // movimiento la pilla todavía fuera de la pantalla.
+  await page.waitForFunction(() => {
+    const n = document.querySelector('nav')
+
+    return n != null && n.getBoundingClientRect().left >= 0
+  }, { timeout: 5000 })
+  await cerrar(ctx)
+})
+
+test('en un teléfono la tabla se desplaza sola, sin arrastrar la página', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.setViewportSize({ width: 390, height: 820 })
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  const desborda = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+  )
+
+  assert.equal(desborda, false, 'la página entera se desplaza a lo ancho: la barra de arriba se va con ella')
   await cerrar(ctx)
 })
 

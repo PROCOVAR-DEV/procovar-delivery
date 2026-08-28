@@ -49,10 +49,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   // login. Un parpadeo hacia el login y de vuelta se lee como un fallo.
   if (comprobando || !token) return null
 
+  /**
+   * El margen de la barra lateral, SÓLO en pantalla grande.
+   *
+   * Estaba fijo en `ml-64`, así que en un teléfono la aplicación entera empezaba 256px a
+   * la derecha: se veía media pantalla en blanco y el contenido cortado por el borde. En
+   * móvil la barra se sale de la pantalla y se abre con el botón de la barra de arriba.
+   */
   return (
     <div className="flex min-h-screen">
       <Sidebar />
-      <div className="flex-1 ml-64 animate-rise">
+      <div className="flex-1 min-w-0 lg:ml-64 animate-rise">
         {children}
       </div>
     </div>

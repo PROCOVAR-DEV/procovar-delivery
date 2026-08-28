@@ -1,12 +1,19 @@
 'use client'
 
 import Link from 'next/link'
+import { useEffect } from 'react'
 import { usePathname } from 'next/navigation'
+import { useMenuLateral } from '@/store/useMenuLateral'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 
 /**
  * Sólo lo que delivery hace de verdad: controlar envíos.
+ *
+ * Las pantallas retiradas ya no están ni por URL: se borraron. Dejarlas escondidas
+ * —fuera del menú pero vivas— sólo servía para que alguien llegara por un enlace viejo a
+ * una pantalla que administra algo que ya no es de aquí y la creyera buena. Sucursales
+ * era la peor: la sucursal es de Accesos, y aquí se podía crear una que allí no existe.
  *
  * Se van tres entradas que quedaron de cuando esto calculaba el costo del domicilio:
  *
@@ -42,12 +49,26 @@ const navItems = [
 export default function Sidebar() {
   const pathname = usePathname()
   const t = useT()
+  const abierta = useMenuLateral((e) => e.abierta)
+  const cerrar = useMenuLateral((e) => e.cerrar)
 
   // Sucursales sale también del menú del admin: su dueño es auth.
   const items = navItems
 
+  // Al cambiar de pantalla se cierra sola: en un teléfono la barra tapa lo que se acaba
+  // de abrir, y dejarla puesta obliga a cerrarla a mano cada vez.
+  useEffect(() => { cerrar() }, [pathname, cerrar])
+
   return (
-    <div className="w-64 bg-white/95 backdrop-blur h-screen border-r border-line flex flex-col fixed left-0 top-0 z-10">
+    <>
+      {/* El velo, sólo en móvil: pulsar fuera cierra. */}
+      {abierta && <div className="fixed inset-0 z-20 bg-black/40 lg:hidden" onClick={cerrar} aria-hidden />}
+
+      <div
+        className={`w-64 bg-white/95 backdrop-blur h-screen border-r border-line flex flex-col fixed left-0 top-0 z-30 transition-transform lg:z-10 lg:translate-x-0 ${
+          abierta ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
       <div className="px-6 py-6">
         <h1 className="text-[1.35rem] font-extrabold text-ink flex items-center gap-2.5 tracking-tight">
           <span className="w-9 h-9 rounded-xl bg-primary text-white flex items-center justify-center shadow-md">
@@ -77,6 +98,7 @@ export default function Sidebar() {
           )
         })}
       </nav>
-    </div>
+      </div>
+    </>
   )
 }

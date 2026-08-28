@@ -176,12 +176,12 @@ export default function Selector({
         aria-haspopup="listbox"
         aria-expanded={abierto}
         onClick={() => { setAbierto((v) => !v); setBusca(''); setResaltada(0) }}
-        className={`flex items-center gap-2 py-2 px-3 border rounded-xl text-sm bg-white transition-colors ${
+        className={`flex min-w-0 max-w-[10rem] sm:max-w-none items-center gap-2 py-2 px-3 border rounded-xl text-sm bg-white transition-colors ${
           valor ? 'border-primary/50 text-ink font-medium' : 'border-line text-ink-soft'
         } hover:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/30 ${className}`}
       >
         {icono && <Icon icon={icono} className="shrink-0 text-base text-ink-soft/60" />}
-        <span className="truncate max-w-[190px]">{elegida?.etiqueta ?? todos ?? '—'}</span>
+        <span className="truncate sm:max-w-[190px]">{elegida?.etiqueta ?? todos ?? '—'}</span>
         {elegida?.nota && <span className="text-[11px] text-ink-soft/60 shrink-0">{elegida.nota}</span>}
         <Icon icon="mdi:chevron-down" className={`shrink-0 text-base text-ink-soft/50 transition-transform ${abierto ? 'rotate-180' : ''}`} />
       </button>

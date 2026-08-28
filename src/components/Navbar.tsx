@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { useAppStore } from '@/store/useAppStore'
+import { useMenuLateral } from '@/store/useMenuLateral'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
@@ -24,6 +25,7 @@ function branchLabel(b?: Branch | null) {
 
 export default function Navbar({ title }: { title: string }) {
   const { token, language, setLanguage, sucursalId, setSucursalId } = useAppStore()
+  const alternarMenu = useMenuLateral((e) => e.alternar)
   const { code, currencies, setDisplayCurrency, aviso, hayCup } = useCurrency()
   const queryClient = useQueryClient()
   /**
@@ -75,9 +77,19 @@ export default function Navbar({ title }: { title: string }) {
   }, [branches, sucursalId, setSucursalId])
 
   return (
-    <div className="h-16 bg-paper/80 backdrop-blur border-b border-line px-6 flex items-center justify-between sticky top-0 z-20">
+    <div className="h-16 bg-paper/80 backdrop-blur border-b border-line px-3 sm:px-6 flex items-center justify-between gap-2 sticky top-0 z-20">
       <div className="flex items-center gap-2 min-w-0">
-        <h2 className="text-[1.4rem] font-bold text-ink tracking-tight truncate">{title}</h2>
+        {/* El botón del menú, sólo en móvil: ahí la barra lateral no cabe y vive fuera
+            de la pantalla. */}
+        <button
+          type="button"
+          onClick={alternarMenu}
+          aria-label="Menú"
+          className="lg:hidden shrink-0 rounded-xl p-2 text-ink-soft hover:bg-ink/5"
+        >
+          <Icon icon="mdi:menu" className="text-xl" />
+        </button>
+        <h2 className="text-[1.05rem] sm:text-[1.4rem] font-bold text-ink tracking-tight truncate">{title}</h2>
         {/* Que se vea que hay algo en marcha. Sin esto, el rato entre pedir los datos y
             recibirlos se lee como que el filtro no funciona. */}
         {cargando && (
@@ -87,7 +99,16 @@ export default function Navbar({ title }: { title: string }) {
           </span>
         )}
       </div>
-      <div className="flex items-center gap-2.5">
+      {/*
+        En móvil este grupo ENCOGE en vez de empujar.
+
+        Eran tres desplegables de ancho fijo y el avatar: a 390px sumaban más que la
+        pantalla, así que tapaban el botón del menú y hacían que la página entera se
+        desplazara a lo ancho —barra de arriba incluida—. Ahora se acota y el idioma se
+        esconde: se cambia una vez en la vida, mientras que la sucursal y la moneda son
+        de todos los días.
+      */}
+      <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
         {branches.length > 0 && (
           <>
             {variasSucursales ? (
@@ -119,16 +140,18 @@ export default function Navbar({ title }: { title: string }) {
             )}
           </>
         )}
-        <Selector
-          titulo={t('navbar.language')}
-          icono="mdi:translate"
-          valor={language}
-          onCambio={(v) => setLanguage((v || 'es') as 'es' | 'en')}
-          opciones={[
-            { valor: 'es', etiqueta: 'Español', nota: 'ES' },
-            { valor: 'en', etiqueta: 'English', nota: 'EN' },
-          ]}
-        />
+        <div className="hidden sm:block">
+          <Selector
+            titulo={t('navbar.language')}
+            icono="mdi:translate"
+            valor={language}
+            onCambio={(v) => setLanguage((v || 'es') as 'es' | 'en')}
+            opciones={[
+              { valor: 'es', etiqueta: 'Español', nota: 'ES' },
+              { valor: 'en', etiqueta: 'English', nota: 'EN' },
+            ]}
+          />
+        </div>
         {/* USD / CUP.
             La tasa es POR SUCURSAL y la mantiene Accesos. Una sucursal sin tasa se queda
             en USD y se dice por qué al pasar el ratón: convertir con la tasa de otra

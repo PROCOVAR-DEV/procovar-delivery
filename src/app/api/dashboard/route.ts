@@ -64,7 +64,7 @@ export async function GET(req: NextRequest) {
       _sum: { weight: true },
     }),
     // El costo del domicilio SÍ es de delivery. El precio de la mercancía no.
-    prisma.order.aggregate({ where, _sum: { deliveryPrice: true } }),
+    prisma.order.aggregate({ where, _sum: { pedidoCosto: true } }),
     // Dónde está lo pendiente: sin esto, "412 sin ruta" no dice por dónde empezar.
     prisma.order.groupBy({
       by: ['branchId'],
@@ -85,7 +85,8 @@ export async function GET(req: NextRequest) {
     totalVehicles,
     vehiculosEnRuta,
     pesoPendiente: pendientes._sum.weight ?? 0,
-    totalDomicilios: domicilios._sum.deliveryPrice ?? 0,
+    // Lo COBRADO, que es lo de PEDIDO. La estimación propia de delivery no la paga nadie.
+    totalDomicilios: domicilios._sum.pedidoCosto ?? 0,
     porSucursal: porSucursal
       .map((g) => ({
         sucursal: g.branchId ? nombre.get(g.branchId) ?? 'Sin sucursal' : 'Sin sucursal',

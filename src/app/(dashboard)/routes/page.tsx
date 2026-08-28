@@ -15,6 +15,7 @@ import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
+import Drawer from '@/components/Drawer'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false })
 
@@ -103,6 +104,7 @@ interface AvailableOrder {
   endLng?: number | null
   weight: number
   deliveryPrice?: number | null
+  pedidoCosto?: number | null
   deliveryDistanceKm?: number | null
   municipio?: string | null
   /** Sale del pedido de PEDIDO: ya viajaba y aquí se estaba ignorando. */
@@ -162,6 +164,15 @@ export default function RoutesPage() {
   const [filtroVendedor, setFiltroVendedor] = useState('')
   const [kmMax, setKmMax] = useState('')
   const [costoMin, setCostoMin] = useState('')
+  /**
+   * Los mismos filtros que la lista de pedidos.
+   *
+   * Faltaban justo los dos que deciden si un pedido se puede repartir hoy: en qué estado
+   * está y si Entrega ya le puso el costo. Se preguntan a la base —significan lo mismo
+   * que en la otra pantalla, salen de `lib/filtrosPedido`— y no sobre lo que ya se trajo.
+   */
+  const [filtroEstado, setFiltroEstado] = useState('')
+  const [filtroCotizado, setFiltroCotizado] = useState('')
 
   // Existing available orders to pick for the route
   const [orderSearch, setOrderSearch] = useState('')
@@ -223,7 +234,7 @@ export default function RoutesPage() {
   const { data: disponibles, isLoading: loadingAvailable } = useQuery({
     // La sucursal y el día entran en la clave: si no, al cambiarlos se seguiría viendo
     // la lista anterior en cache y parecería que el filtro no hace nada.
-    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos, filtroVendedor, kmMax, costoMin],
+    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos, filtroVendedor, kmMax, costoMin, filtroEstado, filtroCotizado],
     queryFn: async () => {
       const res = await axios.get('/api/orders/available', {
         params: {
@@ -233,6 +244,8 @@ export default function RoutesPage() {
           ...(filtroVendedor ? { vendedor: filtroVendedor } : {}),
           ...(kmMax ? { kmMax } : {}),
           ...(costoMin ? { costoMin } : {}),
+          ...(filtroEstado ? { estado: filtroEstado } : {}),
+          ...(filtroCotizado ? { cotizado: filtroCotizado } : {}),
         },
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -616,7 +629,7 @@ export default function RoutesPage() {
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <Navbar title={t('routes.title')} />
-      <div className="p-6 flex-1 flex flex-col overflow-hidden min-h-0">
+      <div className="p-3 sm:p-6 flex-1 flex flex-col overflow-hidden min-h-0">
         <div className="flex justify-between items-center mb-6 shrink-0">
           <div className="flex items-center gap-3">
             <h3 className="text-lg font-semibold text-gray-700">{t('routes.planner')}</h3>
@@ -958,14 +971,37 @@ export default function RoutesPage() {
         </div>
       </div>
 
-      {/* Create Route Modal — stepped flow */}
-      {showModal && (
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
-          onClick={(e) => { if (e.target === e.currentTarget) resetModal() }}
-        >
-          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
-            <h3 className="text-lg font-bold mb-4">{t('routes.modalTitle')}</h3>
+      {/*
+        El asistente, en un CAJÓN a pantalla completa.
+
+        Era un cuadro centrado de ancho de tarjeta con cuatro pasos dentro, y el último es
+        una lista de pedidos con sus filtros: no cabía. Y el botón de generar quedaba al
+        final del todo, así que había que recorrer la lista entera para llegar a él — ahora
+        vive en el pie, siempre a la vista.
+      */}
+      <Drawer
+        abierto={showModal}
+        alCerrar={resetModal}
+        titulo={t('routes.modalTitle')}
+        subtitulo={branches.find((b) => b.id === sucursalRuta)?.name}
+        ancho="completo"
+        pie={
+          <>
+            <button onClick={resetModal} className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-50">
+              {t('common.cancel')}
+            </button>
+            <button
+              onClick={handleCreateRoute}
+              disabled={!depotSet || !selectedVehicleId || !hasSelectedOrders || selectedOverCapacity || createRoute.isPending}
+              className="px-4 py-2 bg-primary text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+            >
+              <Icon icon="mdi:map-marker-path" />
+              {createRoute.isPending ? t('routes.generating') : t('routes.generate')}
+            </button>
+          </>
+        }
+      >
+        <div className="mx-auto w-full max-w-3xl">
 
             {/*
               Dónde estoy y cuánto falta.
@@ -1052,7 +1088,14 @@ export default function RoutesPage() {
                 )}
               </div>
 
-              {/* Step 2 — depot (accordion) */}
+              {/*
+                Los pasos aparecen SEGÚN se llega a ellos.
+
+                Estaban los cuatro desde el principio, tres de ellos apagados y sin poder
+                pulsarse: cuatro cajas grises que no dicen qué hacer. Ahora sale el que
+                toca, y los ya hechos se quedan arriba plegados para poder volver.
+              */}
+              {sucursalRuta && (
               <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
@@ -1153,8 +1196,11 @@ export default function RoutesPage() {
                 )}
               </div>
 
-              {/* Step 2 — vehicle (required) + name (accordion) */}
-              <div className={`border rounded-xl overflow-hidden ${!depotSet ? 'opacity-50' : ''}`}>
+              )}
+
+              {/* Step 3 — vehicle (required) + name */}
+              {depotSet && (
+              <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
                   disabled={!depotSet}
@@ -1226,8 +1272,11 @@ export default function RoutesPage() {
                 )}
               </div>
 
-              {/* Step 3 — client orders (accordion) */}
-              <div className={`border rounded-xl overflow-hidden ${!(depotSet && selectedVehicleId) ? 'opacity-50' : ''}`}>
+              )}
+
+              {/* Step 4 — client orders */}
+              {depotSet && selectedVehicleId && (
+              <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
                   disabled={!(depotSet && selectedVehicleId)}
@@ -1314,6 +1363,9 @@ export default function RoutesPage() {
                           todos="Todos los vendedores"
                           onCambio={setFiltroVendedor}
                           opciones={vendedoresEnLista.map((v) => ({ valor: v, etiqueta: v }))}
+                          /* Con buscador siempre: los nombres son largos y parecidos
+                             —tres MARTINEZ seguidos— y se teclea antes que se lee. */
+                          desdeCuantas={0}
                         />
                         <input
                           type="number" min="0" step="0.5"
@@ -1331,10 +1383,34 @@ export default function RoutesPage() {
                           className="w-28 px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           aria-label="Costo mínimo del domicilio"
                         />
-                        {(filtroVendedor || kmMax || costoMin) && (
+                        <Selector
+                          titulo="Estado del pedido en PEDIDO"
+                          valor={filtroEstado}
+                          todos="Cualquier estado"
+                          onCambio={setFiltroEstado}
+                          opciones={[
+                            { valor: 'en_proceso', etiqueta: 'En proceso' },
+                            { valor: 'completada', etiqueta: 'Completada' },
+                            { valor: 'expirada', etiqueta: 'Expirada' },
+                          ]}
+                        />
+                        {/* Sin costo de Entrega el pedido se puede meter igual en la ruta,
+                            pero no se sabe lo que se cobra por llevarlo: conviene poder
+                            separarlos. */}
+                        <Selector
+                          titulo="Si Entrega ya le puso costo de domicilio"
+                          valor={filtroCotizado}
+                          todos="Cotizados y sin cotizar"
+                          onCambio={setFiltroCotizado}
+                          opciones={[
+                            { valor: '1', etiqueta: 'Ya cotizados' },
+                            { valor: '0', etiqueta: 'Sin cotizar' },
+                          ]}
+                        />
+                        {(filtroVendedor || kmMax || costoMin || filtroEstado || filtroCotizado) && (
                           <button
                             type="button"
-                            onClick={() => { setFiltroVendedor(''); setKmMax(''); setCostoMin('') }}
+                            onClick={() => { setFiltroVendedor(''); setKmMax(''); setCostoMin(''); setFiltroEstado(''); setFiltroCotizado('') }}
                             className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
                           >
                             Limpiar
@@ -1444,8 +1520,11 @@ export default function RoutesPage() {
                                 </div>
                                 <div className="text-right shrink-0">
                                   <p className="text-xs text-gray-500">{Number(o.weight).toFixed(1)} kg</p>
-                                  {o.deliveryPrice != null && (
-                                    <p className="text-xs font-semibold text-blue-700">{format(o.deliveryPrice)}</p>
+                                  {/* Lo que se cobra por ese domicilio, que lo pone Entrega. */}
+                                  {o.pedidoCosto != null ? (
+                                    <p className="text-xs font-semibold text-blue-700">{format(o.pedidoCosto)}</p>
+                                  ) : (
+                                    <p className="text-[11px] text-gray-400">sin cotizar</p>
                                   )}
                                 </div>
                               </label>
@@ -1483,22 +1562,10 @@ export default function RoutesPage() {
                 )}
               </div>
 
-              {/* Footer */}
-              <div className="flex gap-3 justify-end pt-2 border-t">
-                <button onClick={resetModal} className="px-4 py-2 border rounded-xl text-gray-600 hover:bg-gray-50">{t('common.cancel')}</button>
-                <button
-                  onClick={handleCreateRoute}
-                  disabled={!depotSet || !selectedVehicleId || !hasSelectedOrders || selectedOverCapacity || createRoute.isPending}
-                  className="px-4 py-2 bg-primary text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
-                >
-                  <Icon icon="mdi:map-marker-path" />{createRoute.isPending ? t('routes.generating') : t('routes.generate')}
-                </button>
-              </div>
-
+              )}
             </div>
-          </div>
         </div>
-      )}
+      </Drawer>
     </div>
   )
 }

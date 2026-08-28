@@ -174,15 +174,18 @@ export default function CustomersPage() {
 
         <div className="bg-white border border-line rounded-xl overflow-hidden">
           {isLoading ? (
-            <p className="p-6 text-center text-sm text-ink-soft/70">Cargando…</p>
+            <p className="p-3 sm:p-6 text-center text-sm text-ink-soft/70">Cargando…</p>
           ) : filtered.length === 0 ? (
-            <p className="p-6 text-center text-sm text-ink-soft/70">
+            <p className="p-3 sm:p-6 text-center text-sm text-ink-soft/70">
               {customers.length === 0
                 ? 'Sin clientes todavía. Los de PEDIDO aparecen solos cuando tengan geolocalización.'
                 : 'Sin resultados.'}
             </p>
           ) : (
-            <table className="w-full text-sm">
+            /* A lo ancho se desplaza LA TABLA, no la página: si no, en un teléfono se
+               mueve todo —barra de arriba incluida— y se pierde dónde se estaba. */
+            <div className="overflow-x-auto">
+            <table className="w-full min-w-[46rem] text-sm">
               <thead className="bg-gray-50 text-ink-soft/70">
                 <tr>
                   <th className="px-4 py-2 text-left">Cliente</th>
@@ -211,6 +214,7 @@ export default function CustomersPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
 
           {/* Los botones de página, que NO estaban.

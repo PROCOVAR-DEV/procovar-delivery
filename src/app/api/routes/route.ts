@@ -160,10 +160,11 @@ async function createRouteFromExistingOrders(
     const o = byId[optimizedIds[i]]
     const distKm = haversineDistance(origin.lat, origin.lng, o.endLat!, o.endLng!)
     totalWeight += o.weight || 0
-    totalPrice += o.deliveryPrice || 0 // el costo de domicilio ya calculado
+    // El costo del domicilio es el de PEDIDO: lo pone el repartidor desde Entrega.
+    totalPrice += o.pedidoCosto || 0
     await prisma.order.update({
       where: { id: o.id },
-      data: { routeId: route.id, stopOrder: i + 1, tripLeg: 'outbound', segmentKm: distKm, price: o.deliveryPrice || 0 },
+      data: { routeId: route.id, stopOrder: i + 1, tripLeg: 'outbound', segmentKm: distKm, price: o.pedidoCosto || 0 },
     })
   }
 
