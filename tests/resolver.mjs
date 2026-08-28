@@ -32,11 +32,21 @@ export async function resolve(especificador, contexto, siguiente) {
     if (url) return { url, shortCircuit: true }
   }
 
-  // Relativos sin extensión, que es como los escribe el código de la aplicación.
-  if (especificador.startsWith('.') && !path.extname(especificador)) {
+  /**
+   * Relativos sin extensión, que es como los escribe el código de la aplicación.
+   *
+   * No vale con mirar si el nombre "tiene extensión": `orderRecord.dto` la tiene según
+   * `path.extname` —cree que es `.dto`— y sin embargo el fichero es `orderRecord.dto.ts`.
+   * Lo que decide es si el fichero existe tal cual; si no, se prueban las extensiones.
+   */
+  if (especificador.startsWith('.')) {
     const desde = contexto.parentURL ? path.dirname(fileURLToPath(contexto.parentURL)) : RAIZ
-    const url = conExtension(path.resolve(desde, especificador))
-    if (url) return { url, shortCircuit: true }
+    const destino = path.resolve(desde, especificador)
+
+    if (!existsSync(destino) || !path.extname(destino)) {
+      const url = conExtension(destino)
+      if (url) return { url, shortCircuit: true }
+    }
   }
 
   return siguiente(especificador, contexto)

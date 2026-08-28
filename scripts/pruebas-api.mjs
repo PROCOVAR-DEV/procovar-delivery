@@ -280,7 +280,12 @@ test('el panel cuenta los pedidos de la sucursal, no los de la cuenta', async ()
 test('el lote usa el peso que manda PEDIDO y no llama al almacén', async () => {
   const key = process.env.SERVICE_API_KEY
 
-  if (!key) return // sin la clave de servicio esto no se puede probar; no es un fallo
+  // Sin la clave —o con una que no es la del servidor— esto no se puede probar. Se avisa
+  // y se sale: un `return` mudo hace creer que la prueba pasó.
+  if (!key) {
+    console.log('# (saltada: falta SERVICE_API_KEY, la MISMA con la que arrancó delivery)')
+    return
+  }
 
   const r = await pedir('/api/quote/batch', {
     token: null,
@@ -303,6 +308,90 @@ test('el lote usa el peso que manda PEDIDO y no llama al almacén', async () => 
   assert.equal(r.status, 200)
   assert.equal(r.json.weightsSource, 'pedido', 'con todos los pesos puestos no hay que ir al almacén')
   assert.equal(r.json.results[0].weightKg, 12.8)
+})
+
+// ---------------------------------------------------------------- rutas
+
+test('una ruta se arma con los pedidos ya importados y suma SU peso', async () => {
+  // El camino bueno: se eligen pedidos de la lista, no se re-teclea nada. Ya traen
+  // ubicación, peso y costo de domicilio.
+  const disponibles = await pedir(`/api/orders/available?branchId=${habana.id}`)
+  const lista = (disponibles.json.orders ?? disponibles.json).slice(0, 3)
+
+  assert.ok(lista.length >= 2, 'hacen falta pedidos sin ruta para armar una')
+
+  const vehiculo = await prisma.vehicle.findFirst({ where: { branchId: habana.id } })
+  const r = await pedir('/api/routes', {
+    metodo: 'POST',
+    cuerpo: {
+      name: 'Ruta de prueba',
+      vehicleId: vehiculo.id,
+      originAddress: 'Almacén Habana',
+      originLat: habana.lat,
+      originLng: habana.lng,
+      deliveryDate: new Date().toISOString(),
+      branchId: habana.id,
+      orderIds: lista.map((o) => o.id),
+    },
+  })
+
+  assert.ok(r.status === 200 || r.status === 201, `la ruta no se creó: ${r.status} ${r.texto.slice(0, 200)}`)
+
+  const ruta = await prisma.route.findFirst({
+    where: { name: 'Ruta de prueba' },
+    include: { orders: true },
+    orderBy: { createdAt: 'desc' },
+  })
+
+  assert.ok(ruta, 'la ruta no quedó en la base')
+  assert.equal(ruta.orders.length, lista.length, 'no se engancharon todos los pedidos')
+  assert.equal(ruta.branchId, habana.id, 'la ruta tiene que ser de una sucursal')
+
+  // El peso de la ruta es el de los pedidos, que a su vez es el que mandó PEDIDO. Si
+  // esto sale en 1 kg por pedido es que se cayó al respaldo y la capacidad del camión se
+  // está calculando con un número inventado.
+  const esperado = lista.reduce((a, o) => a + (o.weight || 0), 0)
+
+  assert.ok(Math.abs(ruta.totalWeight - esperado) < 0.01, `peso de la ruta ${ruta.totalWeight}, esperado ${esperado}`)
+  assert.ok(ruta.totalDistance > 0, 'una ruta sin distancia no se ha calculado')
+  assert.ok(ruta.routeCode, 'la ruta necesita su código: es como la nombra todo el mundo')
+})
+
+test('los pedidos que ya están en una ruta salen de la lista de disponibles', async () => {
+  const ruta = await prisma.route.findFirst({ where: { name: 'Ruta de prueba' }, include: { orders: true } })
+  const enRuta = new Set(ruta.orders.map((o) => o.id))
+  const r = await pedir(`/api/orders/available?branchId=${habana.id}`)
+  const lista = r.json.orders ?? r.json
+
+  for (const o of lista) {
+    assert.equal(enRuta.has(o.id), false, `${o.operationNumber} ya está en una ruta y sigue ofreciéndose`)
+  }
+})
+
+test('no se arma una ruta que no cabe en el camión', async () => {
+  const chico = await prisma.vehicle.create({
+    data: { name: 'Moto', type: 'moto', capacity: 1, costoKmUsd: 0.1, userId: admin.id, branchId: habana.id },
+  })
+  const disponibles = await pedir(`/api/orders/available?branchId=${habana.id}`)
+  const lista = (disponibles.json.orders ?? disponibles.json).filter((o) => (o.weight || 0) > 1).slice(0, 2)
+
+  if (!lista.length) return // sin pedidos que pesen, no hay nada que comprobar
+
+  const r = await pedir('/api/routes', {
+    metodo: 'POST',
+    cuerpo: {
+      name: 'Ruta que no cabe',
+      vehicleId: chico.id,
+      originAddress: 'Almacén Habana',
+      originLat: habana.lat, originLng: habana.lng,
+      branchId: habana.id,
+      orderIds: lista.map((o) => o.id),
+    },
+  })
+
+  assert.equal(r.status, 400, 'metió en una moto lo que no cabe')
+  assert.match(r.json.error, /capacidad|peso/i)
+  await prisma.vehicle.delete({ where: { id: chico.id } })
 })
 
 test.after(() => prisma.$disconnect())

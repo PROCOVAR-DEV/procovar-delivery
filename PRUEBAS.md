@@ -76,8 +76,41 @@ docker run --rm --network host -v "$PWD":/app -w /app \
 La sesión se pone a mano (la cookie `token` firmada con `JWT_SECRET`) para no depender de
 Accesos, que en local no está.
 
+## 4. El espejo entero — a mano, cuando se toca la integración
+
+Las tres capas de arriba prueban cada lado por su cuenta. Esto prueba la costura: que lo
+que manda PEDIDO sea lo que delivery guarda.
+
+Hace falta PEDIDO levantado contra su propia base de pruebas (ver
+`PEDIDO/api/scripts/pruebas-integracion.mjs`, que la siembra) y delivery levantado con la
+MISMA `SERVICE_API_KEY`:
+
+```bash
+DATABASE_URL="postgresql://procovar:procovar@localhost:55432/procovar_test" \
+PEDIDO_API_URL="http://localhost:8499" \
+DELIVERY_URL="http://localhost:3399" \
+SERVICE_API_KEY="la-misma-en-los-dos" \
+node sync-queue.mjs --once
+```
+
+Y se mira lo que quedó:
+
+```sql
+SELECT "operationNumber", "orderDate"::date, "createdAt"::date, weight FROM "Order" WHERE source='pedido';
+```
+
+Lo que tiene que verse:
+
+- `orderDate` es la fecha del pedido y `createdAt` la de hoy. **Distintas.** Que sean
+  iguales es el fallo que daba «cero pedidos» al filtrar por cualquier otro día.
+- `weight` es la suma de los pesos que resolvió PEDIDO, con el producto duplicado y el
+  vínculo a mano incluidos. Si sale 1 kg por pedido, se cayó al respaldo.
+- En `items`, cada línea con `weightSource: "pedido"`. Un `"catalogo"` ahí significa que
+  PEDIDO no mandó ese peso y delivery volvió a cruzarlo por su cuenta.
+- Los pedidos sin domicilio y los que aún no tienen costo **no están**.
+
 ## Al terminar
 
 ```bash
-docker rm -f delivery-test-db
+docker rm -f delivery-test-db pedido-test-db
 ```
