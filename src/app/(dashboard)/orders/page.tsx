@@ -514,7 +514,13 @@ export default function OrdersPage() {
                     </td>
                     <td className="px-4 py-3 text-gray-600 text-xs max-w-[200px] truncate">{o.endAddress || o.address}</td>
                     <td className="px-4 py-3 text-right font-mono text-xs">{o.weight?.toFixed(1)} kg</td>
-                    <td className="px-4 py-3 text-right font-semibold text-green-700 font-mono">{o.price != null ? format(o.price) : '—'}</td>
+                    {/* Lo que Entrega le cobró al cliente. `price` es OTRA cosa: el
+                        reparto de la carga del camión que calcula delivery, una cuenta
+                        interna que no cobra nadie. Enseñar ésa como «Precio» era decir un
+                        importe que no coincide con lo que se pagó. */}
+                    <td className="px-4 py-3 text-right font-semibold text-green-700 font-mono">
+                      {o.pedidoCosto != null ? format(o.pedidoCosto) : <span className="text-gray-300 font-normal">sin cotizar</span>}
+                    </td>
                     <td className="px-4 py-3">
                       {(() => { const s = deliveryStatus(o); return (
                         <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>

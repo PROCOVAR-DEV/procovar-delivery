@@ -15,6 +15,10 @@ import { Icon } from '@iconify/react'
  *                mismo dato sólo sirve para que los dos discrepen.
  *   Reportes   — informes de costos de domicilio, que ya no calcula delivery.
  *   Sucursales — su gestión pertenece a auth, que es el dueño de las sucursales.
+ *   Configuración — no quedaba nada dentro. Tenía la tasa de cambio, que ahora mantiene
+ *                Accesos por sucursal, y el costo del domicilio, que lo pone el
+ *                repartidor desde Entrega. Una pantalla que sólo enseña una fórmula que
+ *                nadie toca es una pantalla que se entra una vez.
  *
  * Las PANTALLAS siguen existiendo y se llegan por URL: quitarlas del menú deja de
  * ofrecerlas sin borrar la capacidad de entrar si hiciera falta configurar algo.
@@ -30,7 +34,6 @@ const navItems = [
   { href: '/orders', icon: 'mdi:package-variant-closed', key: 'nav.orders' },
   { href: '/customers', icon: 'mdi:account-multiple-outline', key: 'nav.customers' },
   { href: '/vehicles', icon: 'mdi:truck-outline', key: 'nav.vehicles' },
-  { href: '/settings', icon: 'mdi:cog-outline', key: 'nav.settings' },
 ]
 
 export default function Sidebar() {

@@ -395,17 +395,28 @@ test('el menú se cierra con Escape y pulsando fuera', async () => {
 
 // ------------------------------------------------------------- ajustes
 
-test('en Configuración ya no se habla del envío "individual"', async () => {
+test('Configuración se retiró: ni está en el menú ni queda nada dentro', async () => {
   const { ctx, page } = await conSesion()
 
+  await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('nav a[href="/orders"]')
+
+  assert.equal(await page.locator('nav a[href="/settings"]').count(), 0, 'sigue en el menú')
+
+  /**
+   * Y la pantalla contesta, no da 404.
+   *
+   * Quien llegue por un enlace guardado tiene que enterarse de que esto se movió: un 404
+   * manda a buscar el error en la dirección.
+   */
   await page.goto(`${BASE}/settings`, { waitUntil: 'domcontentloaded' })
-  await page.waitForSelector('text=/Costo del domicilio/i', { timeout: 20000 })
+  await page.waitForSelector('text=/ya no hay nada que configurar/i', { timeout: 20000 })
 
   const texto = await page.locator('body').innerText()
 
-  assert.equal(/individual/i.test(texto), false, 'sigue apareciendo "individual" en Configuración')
-  // Y la fórmula que se enseña es la única que hay.
-  assert.match(texto, /C = CKK/, 'no se ve la fórmula oficial')
+  // Ni tasa que teclear ni fórmula de domicilio: ninguna de las dos es de delivery.
+  assert.equal(/C = CKK/.test(texto), false, 'sigue la fórmula del domicilio')
+  assert.equal(/Guardar precios/i.test(texto), false, 'sigue el formulario de precios')
   await cerrar(ctx)
 })
 

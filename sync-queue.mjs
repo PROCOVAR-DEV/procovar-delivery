@@ -357,8 +357,23 @@ const ESPERA = new Set(['sucursal-no-mapeada', 'sucursal-sin-punto-de-partida', 
 // valida la cotización (cada pedido usa el almacén de SU sucursal; si esa sucursal no
 // tiene punto de partida, ese pedido queda en espera, sin frenar a las demás).
 async function checkFormula() {
+  /**
+   * Ya no se espera a que nadie configure nada.
+   *
+   * Esto frenaba el espejo entero hasta que alguien marcaba la fórmula como configurada
+   * en la pantalla de Configuración — que ya no existe: el costo que se le cobra al
+   * cliente lo pone el repartidor desde Entrega, y lo que se calcula aquí es el reparto
+   * de la carga del camión, una cuenta interna.
+   *
+   * Dejar el guard sería que el día que alguien reinicie con la base limpia, el espejo
+   * no traiga NADA y no haya pantalla donde arreglarlo.
+   */
   const settings = await prisma.settings.findFirst();
-  return !!settings?.domConfigured;
+
+  if (!settings) await prisma.settings.create({ data: { domConfigured: true } });
+  else if (!settings.domConfigured) await prisma.settings.update({ where: { id: settings.id }, data: { domConfigured: true } });
+
+  return true;
 }
 
 // Espeja los clientes GEOLOCALIZADOS de PEDIDO en la tabla Customer local (mirror).
