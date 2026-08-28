@@ -40,15 +40,30 @@ export async function POST(req: NextRequest) {
   let settings = await prisma.settings.findFirst()
   if (!settings) settings = await prisma.settings.create({ data: {} })
 
-  // Catálogo de pesos del Data Warehouse (una sola vez). Best-effort: si el warehouse/VPN
-  // no responde, se sigue sin pesos (peso 0). Los pedidos no traen SKU, así que el match
-  // es por nombre normalizado (+ fuzzy) contra el catálogo. Ver productMatch.ts.
+  /**
+   * El catálogo del almacén, SÓLO si hace falta.
+   *
+   * PEDIDO manda el peso de cada línea ya cruzado contra Ventra (`pesoKg` /
+   * `pesoLineaKg`). Cuando viene, este catálogo no se usa para nada, y pedirlo igual es
+   * un viaje por la VPN al almacén en cada ciclo del espejo — que además es el que falla
+   * y deja el lote entero sin pesos.
+   *
+   * Se mira el lote: si TODAS las líneas traen su peso, no se pide. Se queda de respaldo
+   * para los pedidos viejos y para el día que PEDIDO no lo tenga.
+   */
+  const faltaAlgunPeso = orders.some((o) =>
+    (o.items || []).some((it) => {
+      const linea = Number(it.pesoLineaKg)
+      const unidad = Number(it.pesoKg)
+      return !(Number.isFinite(linea) && linea > 0) && !(Number.isFinite(unidad) && unidad > 0)
+    }),
+  )
   let catalog: WeightCatalog | undefined
-  let weightsSource: 'warehouse' | 'none' = 'none'
-  if (body.useWarehouseWeights !== false) {
+  let weightsSource: 'pedido' | 'warehouse' | 'mixto' | 'none' = faltaAlgunPeso ? 'none' : 'pedido'
+  if (faltaAlgunPeso && body.useWarehouseWeights !== false) {
     try {
       catalog = await fetchWeightCatalog()
-      weightsSource = 'warehouse'
+      weightsSource = 'mixto'
     } catch {
       catalog = undefined
     }

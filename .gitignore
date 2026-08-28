@@ -39,3 +39,6 @@ prisma/dev.db-journal
 
 # Logs de PM2
 logs/
+
+# Capturas de las pruebas de navegador: se regeneran corriéndolas.
+/capturas/

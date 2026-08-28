@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client'
-import { haversineDistance, calculateHomeDeliveryPrice, HomeDeliveryQuote } from './pricing'
+import type { Prisma } from '@prisma/client'
+import type { HomeDeliveryQuote } from './pricing'
 import type { WeightCatalog } from './productMatch'
 
 export interface QuoteItem {
@@ -10,10 +10,21 @@ export interface QuoteItem {
   weight?: number
   quantity?: number
   packs?: number // nº de unidades de venta (blisters/cajas). El peso del warehouse es POR pack.
+  /**
+   * El peso que manda PEDIDO, ya cruzado contra Ventra allí. Es la FUENTE BUENA.
+   *
+   * `pesoKg` es por unidad de venta y `pesoLineaKg` la línea entera. Vienen los dos
+   * porque mandar sólo uno obliga a acordarse de multiplicar por `packs`, y el día que
+   * se olvide el domicilio sale dividido entre veinticuatro sin que falle nada.
+   */
+  pesoKg?: number | null
+  pesoLineaKg?: number | null
 }
 
 export interface OrderQuoteInput {
   sucursalExternalId?: string
+  /** La fecha del pedido EN PEDIDO (ISO). No es la de copiado: ver `Order.orderDate`. */
+  orderDate?: string | null
   customerName?: string
   address?: string
   phone?: string
@@ -41,9 +52,11 @@ export interface OrderQuoteInput {
 /** Item con su peso ya resuelto (para guardarlo y mostrar el desglose por producto). */
 export interface WeightedItem extends QuoteItem {
   weightKg: number       // peso de la LÍNEA (packs × peso por pack). 0 = sin match / sin peso.
-  unitWeightKg: number   // peso por unidad de venta (pack) del warehouse (informativo).
+  unitWeightKg: number   // peso por unidad de venta (pack) (informativo).
   matched: boolean       // true si se resolvió el peso; false = producto sin match.
   whName?: string | null // nombre del producto en el warehouse con que emparejó.
+  /** De dónde salió el peso: de PEDIDO, del catálogo propio, escrito a mano, o de nada. */
+  weightSource: 'pedido' | 'manual' | 'catalogo' | 'none'
 }
 
 /**
@@ -60,11 +73,46 @@ export function computeItemsWeights(
   if (!Array.isArray(items) || items.length === 0) return { total: 0, items: [] }
   let total = 0
   const out: WeightedItem[] = items.map((it) => {
+    /**
+     * PRIMERO el peso que manda PEDIDO.
+     *
+     * PEDIDO ya cruza cada línea contra Ventra —con los vínculos que ató una persona
+     * cuando el nombre no se parecía— y manda el resultado. Volver a cruzarlo aquí
+     * contra un catálogo propio es tener el mismo dato dos veces y descubrir tarde que
+     * no coinciden: el domicilio se cobra por un peso que no es el nuestro.
+     *
+     * El catálogo local se queda DETRÁS, no delante: sirve para los pedidos que entraron
+     * antes de que PEDIDO mandara el peso, y para el día que PEDIDO no lo tenga.
+     */
+    const dePedido = Number(it.pesoLineaKg)
+    if (Number.isFinite(dePedido) && dePedido > 0) {
+      total += dePedido
+      const unidad = Number(it.pesoKg)
+      return {
+        ...it,
+        weightKg: dePedido,
+        unitWeightKg: Number.isFinite(unidad) && unidad > 0 ? unidad : 0,
+        matched: true,
+        whName: null,
+        weightSource: 'pedido',
+      }
+    }
+    // Sólo el peso por unidad de venta: se multiplica por los packs, igual que allí.
+    const unidadPedido = Number(it.pesoKg)
+    if (Number.isFinite(unidadPedido) && unidadPedido > 0) {
+      const cantidad = Number(it.packs) > 0 ? Number(it.packs) : (Number(it.quantity) || 0)
+      const line = unidadPedido * cantidad
+      if (line > 0) {
+        total += line
+        return { ...it, weightKg: line, unitWeightKg: unidadPedido, matched: true, whName: null, weightSource: 'pedido' }
+      }
+    }
+
     const manual = Number(it.weight) || 0
     if (manual > 0) {
       const line = manual * (Number(it.quantity) || 1)
       total += line
-      return { ...it, weightKg: line, unitWeightKg: manual, matched: true, whName: null }
+      return { ...it, weightKg: line, unitWeightKg: manual, matched: true, whName: null, weightSource: 'manual' }
     }
     if (catalog) {
       const hit = catalog.resolve(it.name, it.sku || it.code)
@@ -72,10 +120,10 @@ export function computeItemsWeights(
         const packs = Number(it.packs) || 0
         const line = hit.weightKg * packs
         total += line
-        return { ...it, weightKg: line, unitWeightKg: hit.weightKg, matched: true, whName: hit.whName ?? null }
+        return { ...it, weightKg: line, unitWeightKg: hit.weightKg, matched: true, whName: hit.whName ?? null, weightSource: 'catalogo' }
       }
     }
-    return { ...it, weightKg: 0, unitWeightKg: 0, matched: false, whName: null }
+    return { ...it, weightKg: 0, unitWeightKg: 0, matched: false, whName: null, weightSource: 'none' }
   })
   return { total, items: out }
 }
@@ -118,28 +166,13 @@ export interface OrderQuoteResult {
 }
 
 /**
- * Cálculo puro del precio de domicilio de UN pedido, dada la sucursal-origen y la
- * config. No toca la base de datos. Reutilizado por `/api/quote` y el batch.
+ * `computeOrderQuote` se fue con el cotizador individual.
+ *
+ * Calculaba el precio con `calculateHomeDeliveryPrice` (base + km + kg), que es una
+ * fórmula DISTINTA de la oficial que usa el lote (C = CKK x D x PP). Su único cliente era
+ * `/api/quote`, que ya no existe: dejarlo aquí es dejar a mano la segunda fórmula que
+ * hacía que el mismo pedido costara dos cosas distintas.
  */
-export function computeOrderQuote(
-  input: OrderQuoteInput,
-  branch: BranchOrigin,
-  settings: DomSettings,
-  catalog?: WeightCatalog,
-): OrderQuoteResult {
-  const { total, items } = computeItemsWeights(input.items, catalog)
-  const weightKg = total > 0 ? total : (Number(input.weight) || 0)
-  const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
-  const quote = calculateHomeDeliveryPrice(distanceKm, weightKg, {
-    domBaseFee: settings.domBaseFee,
-    domCostPerKm: settings.domCostPerKm,
-    domCostPerKg: settings.domCostPerKg,
-    domIncludedKm: settings.domIncludedKm,
-    domMinFee: settings.domMinFee,
-    domRoundTo: settings.domRoundTo,
-  })
-  return { weightKg, distanceKm, quote, items }
-}
 
 /** Arma el objeto `data` para crear/actualizar el Order en delivery. */
 export function buildOrderData(
@@ -171,6 +204,10 @@ export function buildOrderData(
     deliveryDistanceKm: computed.distanceKm,
     branchId: branch.id,
     source: 'pedido',
+    // La fecha del pedido EN PEDIDO. `createdAt` es cuándo lo copió el espejo, y por eso
+    // filtrar el día del armador de rutas por `createdAt` daba cero en cualquier día que
+    // no fuera hoy: el espejo trae quince días de una vez y todos nacen con la de hoy.
+    orderDate: input.orderDate ? new Date(input.orderDate) : null,
     externalId: input.externalId || input.operationNumber || null,
     customerPhone: input.phone || null,
     // Guarda TODO el payload del pedido/cliente sin perder nada.

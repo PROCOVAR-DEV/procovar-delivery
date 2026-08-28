@@ -91,6 +91,18 @@ let _redisPub = null;
 const DIAS = Number(process.env.SYNC_DIAS || 15);
 
 /**
+ * Sólo los pedidos que YA tienen el costo del domicilio puesto.
+ *
+ * Lo pone el repartidor desde delivery-apk. Sin él, el pedido no se puede meter en una
+ * ruta —no se sabe lo que cuesta llevarlo— y sólo sirve para que el que arma la ruta lo
+ * descarte a mano.
+ *
+ * Se puede apagar con SYNC_SOLO_COTIZADOS=0 el día que haga falta ver también los que
+ * están a medias, pero por defecto va puesto.
+ */
+const SOLO_COTIZADOS = process.env.SYNC_SOLO_COTIZADOS !== '0';
+
+/**
  * Un día por petición, no los quince de golpe.
  *
  * Pedir los 15 días juntos son ~7.000 pedidos con todas sus líneas en UNA respuesta, y
@@ -124,6 +136,14 @@ async function traerPedidos() {
 
 async function traerPedidosDeUnDia(dia) {
   const q = new URLSearchParams({ desde: dia, hasta: dia });
+  // SÓLO los que llevan domicilio Y ya tienen el costo puesto.
+  //
+  // Un pedido que se recoge en el almacén no se reparte, y uno que lleva domicilio pero
+  // todavía no ha pasado por el repartidor no se puede meter en una ruta: no se sabe lo
+  // que cuesta llevarlo. Los dos llenaban la lista del que arma rutas de pedidos que
+  // tenía que descartar a mano.
+  q.set('soloDomicilio', '1');
+  if (SOLO_COTIZADOS) q.set('conCosto', '1');
   if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
   const res = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY } });
   if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);
@@ -146,11 +166,18 @@ async function quoteBatch(pedidos) {
       phone: pedido.telefono || null,
       lat: pedido.cliente?.latitud ?? null,
       lng: pedido.cliente?.longitud ?? null,
+      // El PESO va tal cual viene de PEDIDO, que lo cruza contra Ventra con los vínculos
+      // que ató una persona. Antes se tiraba aquí y delivery lo volvía a resolver con su
+      // propio catálogo: el mismo dato dos veces, y discrepando sin que nadie lo viera.
       items: (pedido.items || []).map((it) => ({
         code: it.codigo, name: it.producto, quantity: it.unidades || 1, packs: it.packs, descripcion: it.descripcion,
+        pesoKg: it.pesoKg ?? null, pesoLineaKg: it.pesoLineaKg ?? null,
       })),
       operationNumber: pedido.folio,
       externalId: pedido.id,
+      // La fecha del PEDIDO. Sin ella, el Order nace con la de hoy —cuándo lo copió el
+      // espejo— y filtrar por día en el armador de rutas devuelve cero cualquier otro día.
+      orderDate: pedido.fecha ?? null,
       // SOLO los marcados requiere_domicilio=true llevan costo. Los false (y los que no
       // traen el dato) se importan igual —hacen falta para las rutas y la capacidad del
       // camión— pero SIN precio de domicilio.
@@ -325,6 +352,8 @@ async function cycle() {
 // recalcula aquí es el reparto de carga para las rutas de delivery, y se queda aquí.
 async function recomputeAll() {
   const q = new URLSearchParams(); // sin onlyPending => todos los que tienen geolocalización
+  q.set('soloDomicilio', '1');
+  if (SOLO_COTIZADOS) q.set('conCosto', '1');
   if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
   const res = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY } });
   if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);

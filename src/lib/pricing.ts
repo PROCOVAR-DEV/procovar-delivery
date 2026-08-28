@@ -36,42 +36,15 @@ export interface HomeDeliveryQuote {
 }
 
 /**
- * Precio de un envío a domicilio INDIVIDUAL (viaje dedicado sucursal → cliente → sucursal).
+ * La fórmula del "domicilio individual" se fue.
  *
- * A diferencia de `computeRoutePricing` (que reparte el costo del viaje entre varios
- * clientes de una ruta), aquí el cliente paga el viaje completo él solo.
+ * Era `precio = base + 2·km·costo_km + kg·costo_kg`, con mínimo y redondeo, y convivía con
+ * la oficial (`calculateDomicilioOficial`, C = CKK × D × PP). Las dos vivas y aplicándose
+ * según por qué endpoint entrara el pedido: el mismo domicilio costaba dos cosas y la
+ * pantalla de Configuración decía que la fórmula era una sola.
  *
- *   chargeableKm = max(0, distanceKm - domIncludedKm)   // primeros km incluidos en la base
- *   price        = domBaseFee + 2·chargeableKm·domCostPerKm + weightKg·domCostPerKg
- *   price        = max(price, domMinFee)                 // carga mínima
- *   price        = ceil(price / domRoundTo) · domRoundTo // redondeo (si domRoundTo > 0)
+ * La usaba `/api/quote`, que se retiró: el costo lo pone delivery-apk. Queda UNA fórmula.
  */
-export function calculateHomeDeliveryPrice(
-  distanceKm: number,
-  weightKg: number,
-  config: HomeDeliveryConfig
-): HomeDeliveryQuote {
-  const chargeableKm = Math.max(0, distanceKm - (config.domIncludedKm || 0))
-  const base = config.domBaseFee || 0
-  const distance = 2 * chargeableKm * (config.domCostPerKm || 0)
-  const weight = weightKg * (config.domCostPerKg || 0)
-
-  const raw = base + distance + weight
-  const afterMin = Math.max(raw, config.domMinFee || 0)
-
-  let price = afterMin
-  if (config.domRoundTo && config.domRoundTo > 0) {
-    price = Math.ceil(price / config.domRoundTo) * config.domRoundTo
-  }
-
-  return {
-    distanceKm,
-    chargeableKm,
-    weightKg,
-    price,
-    breakdown: { base, distance, weight, beforeMin: raw, beforeRound: afterMin },
-  }
-}
 
 /**
  * Precio de domicilio de UN pedido como su FRACCIÓN DE PESO del costo de transporte.

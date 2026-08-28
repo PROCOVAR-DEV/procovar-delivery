@@ -7,7 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "db:push": "prisma db push"
+    "db:push": "prisma db push",
+    "test": "node --test --import ./tests/registrar.mjs 'tests/*.test.ts'",
+    "test:api": "node --test scripts/pruebas-api.mjs",
+    "test:front": "node --test scripts/pruebas-frontend.mjs",
+    "test:sembrar": "node scripts/sembrar-pruebas.mjs"
   },
   "dependencies": {
     "@iconify/react": "^6.0.2",
@@ -33,6 +37,7 @@
     "@types/react": "^18.2.42",
     "@types/react-dom": "^18.2.17",
     "autoprefixer": "^10.4.16",
+    "playwright": "^1.62.1",
     "postcss": "^8.4.32",
     "prisma": "^5.7.0",
     "tailwindcss": "^3.3.6",

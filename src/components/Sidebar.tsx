@@ -2,7 +2,6 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useAppStore } from '@/store/useAppStore'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 
@@ -19,6 +18,11 @@ import { Icon } from '@iconify/react'
  *
  * Las PANTALLAS siguen existiendo y se llegan por URL: quitarlas del menú deja de
  * ofrecerlas sin borrar la capacidad de entrar si hiciera falta configurar algo.
+ *
+ * Aquí abajo tampoco hay ya nada de la cuenta. Cerrar sesión, quién eres e ir a otra
+ * aplicación son cosas de tu cuenta, no de esta aplicación, y viven donde la gente las
+ * busca: en el avatar, arriba a la derecha. El enlace a los usuarios de Accesos se quita
+ * del todo — no todo el mundo tiene por qué ver eso.
  */
 const navItems = [
   { href: '/dashboard', icon: 'mdi:view-dashboard-outline', key: 'nav.dashboard' },
@@ -31,19 +35,10 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const { logout, user } = useAppStore()
   const t = useT()
 
   // Sucursales sale también del menú del admin: su dueño es auth.
   const items = navItems
-
-  const handleLogout = () => {
-    // Se limpia lo del navegador y se manda a Accesos, que pregunta y cierra: la
-    // sesión está en una cookie httpOnly que el JavaScript no puede borrar, así
-    // que sin esta llamada el botón limpiaba localStorage y no cerraba nada.
-    logout()
-    window.location.assign('/api/auth/logout')
-  }
 
   return (
     <div className="w-64 bg-white/95 backdrop-blur h-screen border-r border-line flex flex-col fixed left-0 top-0 z-10">
@@ -76,32 +71,6 @@ export default function Sidebar() {
           )
         })}
       </nav>
-      {user?.role === 'admin' && (
-        <div className="border-t border-line p-3">
-          {/* Las personas se gestionan en Accesos, no aquí. Se deja el enlace
-              —y abre en otra pestaña— para que quien venía a buscarlas sepa
-              adónde ir, en vez de encontrarse con que la opción desapareció. */}
-          <a
-            href="https://auth.procovar.cloud/dashboard/organizations"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex w-full items-center gap-3 rounded-xl px-4 py-2.5 text-sm font-medium text-ink-soft transition-colors hover:bg-ink/[0.035] hover:text-ink"
-          >
-            <Icon icon="mdi:account-group-outline" className="shrink-0 text-xl" />
-            <span className="flex-1 text-left">{t('nav.users')}</span>
-            <Icon icon="mdi:open-in-new" className="shrink-0 text-sm opacity-50" />
-          </a>
-        </div>
-      )}
-      <div className="p-3 border-t border-line">
-        <button
-          onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium text-red-500 hover:bg-red-50 transition-colors"
-        >
-          <Icon icon="mdi:logout" className="text-xl" />
-          <span>{t('nav.logout')}</span>
-        </button>
-      </div>
     </div>
   )
 }

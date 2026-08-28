@@ -16,14 +16,28 @@ interface OrderItem {
   name?: string
   description?: string
   weight?: number
+  /** Peso de la LÍNEA ya resuelto (packs x peso por unidad de venta). Ver homeDeliveryQuote. */
+  weightKg?: number | null
   packaging?: string | null
   category?: string | null
   quantity: number
 }
 
+/**
+ * El peso de una parada.
+ *
+ * Las líneas que vienen de PEDIDO traen `weightKg`: el peso de la línea ENTERA, ya
+ * resuelto contra Ventra. Esto sólo miraba `weight x quantity` —que en esas líneas no
+ * existe—, así que daba cero y se caía al respaldo: la ruta se planificaba con el peso
+ * que hubiera mandado la pantalla y no con el de los productos.
+ */
 function weightFromItems(items: OrderItem[] | undefined, fallback: number): number {
   if (!Array.isArray(items) || items.length === 0) return fallback || 1
-  const w = items.reduce((a, it) => a + (Number(it.weight) || 0) * (Number(it.quantity) || 0), 0)
+  const w = items.reduce((a, it) => {
+    const linea = Number(it.weightKg)
+    if (Number.isFinite(linea) && linea > 0) return a + linea
+    return a + (Number(it.weight) || 0) * (Number(it.quantity) || 0)
+  }, 0)
   return w > 0 ? w : (fallback || 1)
 }
 

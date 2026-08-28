@@ -53,15 +53,25 @@ export async function GET(req: NextRequest) {
       ...(branchId && (!alcance.branchId || alcance.branchId === branchId)
         ? { branchId }
         : {}),
-      ...(porDia ? { createdAt: porDia } : {}),
+      /**
+       * Por la fecha DEL PEDIDO, no por la de copiado.
+       *
+       * Esto filtraba por `createdAt`, que es cuándo el espejo trajo el pedido. Y el
+       * espejo trae quince días de una vez, así que todos nacían con la fecha de hoy:
+       * pedir cualquier otro día devolvía CERO pedidos aunque estuvieran ahí. Se
+       * mantiene `createdAt` como respaldo para los que entraron antes de que se
+       * guardara la fecha buena.
+       */
+      ...(porDia ? { OR: [{ orderDate: porDia }, { orderDate: null, createdAt: porDia }] } : {}),
       source: 'pedido',
       routeId: null,
       endLat: { not: null },
       endLng: { not: null },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: [{ orderDate: 'desc' }, { createdAt: 'desc' }],
     select: {
       id: true,
+      orderDate: true,
       operationNumber: true,
       customerName: true,
       address: true,

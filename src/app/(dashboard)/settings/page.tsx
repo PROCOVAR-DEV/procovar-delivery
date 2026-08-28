@@ -225,8 +225,10 @@ export default function SettingsPage() {
           )}
         </div>
 
-        {/* Envío a domicilio individual — ÚNICA fórmula de precio del sistema.
-            El generador de rutas no tiene fórmula propia: solo agrupa + capacidad. */}
+        {/* La ÚNICA fórmula de precio del sistema. Se llamaba "envío a domicilio
+            individual" de cuando había otra fórmula para el cotizador de uno; ésa se
+            retiró junto con el endpoint, así que ya no hay a qué distinguirla.
+            El generador de rutas tampoco tiene fórmula propia: sólo agrupa + capacidad. */}
         <div className="bg-white rounded-2xl shadow-md p-6 border-l-4 border-primary">
           <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
             <Icon icon="mdi:moped" className="text-xl text-primary" />

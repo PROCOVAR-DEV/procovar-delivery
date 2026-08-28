@@ -40,6 +40,11 @@ export async function POST(req: NextRequest) {
 
   // 1) Traer los pedidos con geolocalización de PEDIDO (todos, no solo pendientes).
   const q = new URLSearchParams()
+  // Sólo los que llevan domicilio y ya tienen el costo puesto: los de recogida en
+  // almacén no se reparten, y los que aún no han pasado por el repartidor no se pueden
+  // meter en una ruta porque no se sabe lo que cuesta llevarlos.
+  q.set('soloDomicilio', '1')
+  q.set('conCosto', '1')
   if (sucursalCodigo) q.set('sucursalCodigo', sucursalCodigo)
   const pedRes = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY }, cache: 'no-store' })
   if (!pedRes.ok) {
@@ -61,11 +66,14 @@ export async function POST(req: NextRequest) {
         phone: (pedido.telefono as string) || null,
         lat: (cliente.latitud as number) ?? null,
         lng: (cliente.longitud as number) ?? null,
+        // El peso viene resuelto de PEDIDO (ver homeDeliveryQuote): no se vuelve a cruzar.
         items: (((pedido.items as Record<string, unknown>[]) || []).map((it) => ({
           code: it.codigo, name: it.producto, quantity: (it.unidades as number) || 1, packs: it.packs, descripcion: it.descripcion,
+          pesoKg: it.pesoKg ?? null, pesoLineaKg: it.pesoLineaKg ?? null,
         }))),
         operationNumber: pedido.folio,
         externalId: pedido.id,
+        orderDate: (pedido.fecha as string) ?? null,
         meta: pedido,
       }
     }),

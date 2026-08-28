@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Navbar from '@/components/Navbar'
 import LocationInput, { LocationValue } from '@/components/LocationInput'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -28,24 +28,41 @@ export default function CustomersPage() {
   const [query, setQuery] = useState('')
   const [showForm, setShowForm] = useState(false)
 
-  const { data: customers = [], isLoading } = useQuery({
-    queryKey: ['customers'],
+  /**
+   * La búsqueda la hace el servidor, no esta pantalla.
+   *
+   * Antes se traían los 500 primeros por nombre y se filtraban aquí: buscar un cliente
+   * que empezara por «S» no encontraba nada porque nunca había llegado a llegar. Ahora se
+   * manda `q` y la base busca entre todos.
+   *
+   * Con una pausa antes de preguntar: sin ella son ocho consultas para escribir "Sánchez".
+   */
+  const [buscado, setBuscado] = useState('')
+
+  useEffect(() => {
+    const id = setTimeout(() => setBuscado(query.trim()), 400)
+
+    return () => clearTimeout(id)
+  }, [query])
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['customers', buscado],
     queryFn: async () => {
-      const res = await axios.get('/api/customers', { headers: { Authorization: `Bearer ${token}` } })
-      return (res.data?.customers ?? []) as Customer[]
+      const res = await axios.get('/api/customers', {
+        params: buscado ? { q: buscado } : undefined,
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      return res.data as { customers: Customer[]; total: number; truncated: boolean }
     },
     enabled: !!token,
+    // Se mantiene la lista anterior mientras llega la nueva: si no, cada letra deja la
+    // pantalla en blanco un instante y parece que no hay clientes.
+    placeholderData: (previo) => previo,
   })
 
-  const q = query.trim().toLowerCase()
-  const filtered = q
-    ? customers.filter(
-        (c) =>
-          c.name.toLowerCase().includes(q) ||
-          (c.address || '').toLowerCase().includes(q) ||
-          (c.municipio || '').toLowerCase().includes(q),
-      )
-    : customers
+  const customers = data?.customers ?? []
+  const total = data?.total ?? 0
+  const filtered = customers
 
   return (
     <>
@@ -55,7 +72,10 @@ export default function CustomersPage() {
           <div>
             <h1 className="text-xl font-bold text-ink">Clientes</h1>
             <p className="text-sm text-ink-soft/70">
-              Clientes de PEDIDO (sincronizados, solo con geo) + los manuales de delivery. {customers.length} en total.
+              Clientes de PEDIDO (sincronizados, sólo con geo) + los manuales de delivery.{' '}
+              {data?.truncated
+                ? `Se enseñan ${customers.length} de ${total}: afiná la búsqueda para llegar al resto.`
+                : `${total} en total.`}
             </p>
           </div>
           <button

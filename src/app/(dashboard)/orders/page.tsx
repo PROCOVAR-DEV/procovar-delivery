@@ -38,7 +38,10 @@ interface OrderRow {
   price?: number | null
   deliveryDistanceKm?: number | null
   municipio?: string | null
+  vendedor?: string | null
   items?: OrderItem[]
+  /** La fecha del pedido EN PEDIDO. `createdAt` es cuándo lo copió el espejo. */
+  orderDate?: string | null
   createdAt: string
   status?: string | null
   deliveredAt?: string | null
@@ -62,6 +65,10 @@ export default function OrdersPage() {
   const [sortBy, setSortBy] = useState('recientes')
   const [statusFilter, setStatusFilter] = useState('todos')
   const [municipioFilter, setMunicipioFilter] = useState('todos')
+  const [vendedorFilter, setVendedorFilter] = useState('todos')
+  // Rango de fechas del PEDIDO (no de cuándo lo copió el espejo). Vacío = sin filtrar.
+  const [desde, setDesde] = useState('')
+  const [hasta, setHasta] = useState('')
   const [detail, setDetail] = useState<OrderRow | null>(null)
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
@@ -102,18 +109,48 @@ export default function OrdersPage() {
     )
   ).sort((a, b) => a.localeCompare(b))
 
+  // Vendedores presentes, para el filtro. Una ruta se suele armar con los clientes de un
+  // vendedor: son los que caen cerca unos de otros.
+  const vendedores = Array.from(
+    new Set(orders.map((o) => (o.vendedor || '').trim()).filter((v) => v !== ''))
+  ).sort((a, b) => a.localeCompare(b))
+
+  /**
+   * La fecha del pedido, con respaldo.
+   *
+   * `orderDate` es la de PEDIDO y es la buena. Los pedidos que entraron antes de que se
+   * guardara no la tienen, y para ésos vale `createdAt` —que es cuándo los copió el
+   * espejo— porque es lo único que hay.
+   */
+  const fechaDe = (o: OrderRow) => o.orderDate || o.createdAt
+
+  const enRango = (o: OrderRow) => {
+    if (!desde && !hasta) return true
+
+    const f = new Date(fechaDe(o)).getTime()
+
+    if (desde && f < new Date(`${desde}T00:00:00`).getTime()) return false
+    // El 'hasta' incluye el día entero: quien escribe el 24 quiere los del 24, no los
+    // del 24 a las 00:00.
+    if (hasta && f > new Date(`${hasta}T23:59:59.999`).getTime()) return false
+    return true
+  }
+
   const q = search.trim().toLowerCase()
   const filtered = orders
     .filter((o) => !sucursalId || o.branch?.id === sucursalId)
     .filter((o) =>
       !q
       || o.customerName.toLowerCase().includes(q)
+      || (o.operationNumber || '').toLowerCase().includes(q)
       || (o.route?.routeCode || '').toLowerCase().includes(q)
       || (o.route?.vehicle?.name || '').toLowerCase().includes(q)
       || (o.endAddress || o.address || '').toLowerCase().includes(q)
     )
     .filter((o) => statusFilter === 'todos' || deliveryStatus(o).key === statusFilter)
     .filter((o) => municipioFilter === 'todos' || o.municipio === municipioFilter)
+    .filter((o) => vendedorFilter === 'todos' || o.vendedor === vendedorFilter)
+    .filter(enRango)
 
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
@@ -121,7 +158,8 @@ export default function OrdersPage() {
       case 'precio_asc': return (a.price ?? 0) - (b.price ?? 0)
       case 'distancia_desc': return (b.deliveryDistanceKm ?? 0) - (a.deliveryDistanceKm ?? 0)
       case 'peso_desc': return (b.weight ?? 0) - (a.weight ?? 0)
-      default: return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      case 'antiguos': return new Date(fechaDe(a)).getTime() - new Date(fechaDe(b)).getTime()
+      default: return new Date(fechaDe(b)).getTime() - new Date(fechaDe(a)).getTime()
     }
   })
 
@@ -161,12 +199,57 @@ export default function OrdersPage() {
                 <option key={m} value={m}>{m}</option>
               ))}
             </select>
+            {vendedores.length > 0 && (
+              <select
+                value={vendedorFilter}
+                onChange={(e) => setVendedorFilter(e.target.value)}
+                className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                title="Vendedor del pedido"
+              >
+                <option value="todos">Todos los vendedores</option>
+                {vendedores.map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+            )}
+            {/* Por FECHA DEL PEDIDO, no por cuándo lo copió el espejo. */}
+            <div className="flex items-center gap-1.5 py-1 px-2.5 border rounded-xl text-sm">
+              <Icon icon="mdi:calendar-range" className="text-gray-400" />
+              <input
+                type="date"
+                value={desde}
+                max={hasta || undefined}
+                onChange={(e) => setDesde(e.target.value)}
+                className="text-xs bg-transparent focus:outline-none"
+                title="Desde (fecha del pedido)"
+              />
+              <span className="text-gray-300">→</span>
+              <input
+                type="date"
+                value={hasta}
+                min={desde || undefined}
+                onChange={(e) => setHasta(e.target.value)}
+                className="text-xs bg-transparent focus:outline-none"
+                title="Hasta (fecha del pedido)"
+              />
+              {(desde || hasta) && (
+                <button
+                  type="button"
+                  onClick={() => { setDesde(''); setHasta('') }}
+                  className="text-gray-400 hover:text-gray-700"
+                  title="Quitar el filtro de fechas"
+                >
+                  <Icon icon="mdi:close-circle" />
+                </button>
+              )}
+            </div>
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
               className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="recientes">Más recientes</option>
+              <option value="antiguos">Más antiguos</option>
               <option value="precio_desc">Precio: mayor a menor</option>
               <option value="precio_asc">Precio: menor a mayor</option>
               <option value="distancia_desc">Distancia: más larga</option>
@@ -189,11 +272,23 @@ export default function OrdersPage() {
           {isLoading ? (
             <div className="p-8 text-center text-gray-500">{t('common.loading')}</div>
           ) : filtered.length === 0 ? (
-            <div className="p-10 text-center text-gray-500">{t('ord.empty')}</div>
+            <div className="p-10 text-center text-gray-500 space-y-2">
+              <p>{t('ord.empty')}</p>
+              {/* Un cero mudo se lee como "está roto". Aquí casi siempre es que se pidió
+                  un día que el espejo no trae: sólo copia los últimos días. */}
+              {(desde || hasta) && (
+                <p className="text-xs text-gray-400 max-w-md mx-auto">
+                  Delivery guarda sólo los pedidos recientes de PEDIDO (los últimos días),
+                  y de ésos, los que llevan domicilio con el costo ya puesto. Un rango más
+                  antiguo no está aquí aunque exista en PEDIDO.
+                </p>
+              )}
+            </div>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b text-left text-gray-600">
+                  <th className="px-4 py-3 font-semibold">Fecha</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colClient')}</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colRoute')}</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colVehicle')}</th>
@@ -212,7 +307,18 @@ export default function OrdersPage() {
                     className="border-b hover:bg-blue-50/40 align-middle cursor-pointer"
                     onClick={() => setDetail(o)}
                   >
-                    <td className="px-4 py-3 font-medium">{o.customerName}</td>
+                    <td className="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
+                      {fmtDate(fechaDe(o))}
+                      {/* Sin `orderDate` la fecha es la de copiado, no la del pedido: se
+                          avisa en vez de enseñarla como si fuera la buena. */}
+                      {!o.orderDate && <span className="ml-1 text-gray-300" title="Pedido copiado antes de que se guardara su fecha: ésta es la del espejo.">≈</span>}
+                    </td>
+                    <td className="px-4 py-3 font-medium">
+                      {o.customerName}
+                      {o.operationNumber && (
+                        <span className="block text-[11px] font-mono font-normal text-gray-400">{o.operationNumber}</span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       {o.route?.routeCode ? (
                         <span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg">{o.route.routeCode}</span>

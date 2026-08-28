@@ -6,6 +6,7 @@ import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import axios from 'axios'
 import { useQuery } from '@tanstack/react-query'
+import UserMenu from '@/components/UserMenu'
 
 interface Branch {
   id: string
@@ -97,15 +98,10 @@ export default function Navbar({ title }: { title: string }) {
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-2.5 pl-2 ml-1 border-l border-line">
-          <div className="text-right leading-tight">
-            <p className="text-sm font-semibold text-ink">{user?.name || 'User'}</p>
-            <p className="text-[11px] uppercase tracking-wider text-ink-soft/70">{user?.role || 'admin'}</p>
-          </div>
-          <div className="w-9 h-9 bg-gradient-to-br from-primary to-[#0E9F6E] rounded-xl flex items-center justify-center text-white text-sm font-bold shadow-md">
-            {user?.name?.[0]?.toUpperCase() || 'U'}
-          </div>
-        </div>
+        {/* El avatar abre el menú de la cuenta: quién eres, ir a otra aplicación y salir.
+            Antes esto era un adorno y cerrar sesión estaba abajo de la barra lateral,
+            entre las pantallas, como si fuera un sitio al que ir. */}
+        <UserMenu />
       </div>
     </div>
   )

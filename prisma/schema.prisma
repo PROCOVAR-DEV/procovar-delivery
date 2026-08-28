@@ -159,6 +159,12 @@ model Order {
   branch          Branch?   @relation(fields: [branchId], references: [id])
   // Procedencia: "pedido" si entró desde la app PEDIDO, null si es manual.
   source          String?
+  // La FECHA DEL PEDIDO en PEDIDO, que no es `createdAt`.
+  //
+  // `createdAt` es cuándo lo copió el espejo, y el espejo copia quince días de golpe:
+  // todos los pedidos quedaban con la fecha de hoy. El armador de rutas filtra por día,
+  // así que cualquier día que no fuera hoy devolvía CERO pedidos aunque los hubiera.
+  orderDate       DateTime?
   // Id/folio del pedido en PEDIDO. Usado para idempotencia (re-cotizar no duplica).
   externalId      String?
   // Itemized breakdown of what to deliver to this client: [{ description, quantity }]
@@ -174,6 +180,7 @@ model Order {
   deliveredAt     DateTime?
 
   @@index([source, externalId])
+  @@index([orderDate])
 }
 
 model OrderVehicle {
