@@ -642,4 +642,42 @@ test('los clientes vienen paginados: la página 2 no repite la 1', async () => {
   assert.equal(dos.json.customers.some((c) => primeros.has(c.id)), false)
 })
 
+test('una sucursal que ya NO existe no deja la aplicación vacía', async () => {
+  /**
+   * El fallo que se vio en producción, por los dos caminos por los que llega.
+   *
+   * El id de sucursal viaja en el token del login único —que dura siete días y lleva la
+   * que tenía la persona cuando entró— y en la cabecera `x-sucursal-id` que guarda el
+   * navegador. Las sucursales se recrearon en algún momento, así que los dos pueden
+   * apuntar a algo que ya no está. Y filtrar por un id inexistente no da error: da CERO
+   * pedidos, CERO clientes y CERO sucursales, con lo que desaparece hasta el selector con
+   * el que se podría arreglar.
+   */
+  const fantasma = 'sucursal-que-ya-no-existe'
+
+  // 1) En el TOKEN.
+  const conTokenViejo = tokenDe({ ...admin, branchId: fantasma })
+  const b = await pedir('/api/branches', { token: conTokenViejo })
+
+  assert.equal(b.status, 200)
+  assert.ok(b.json.length > 1, 'sin sucursales no hay selector con el que arreglarlo')
+
+  const o = await listaPedidos('porPagina=1', { token: conTokenViejo })
+
+  assert.ok(o.json.total > 0, 'un token con una sucursal muerta deja la aplicación en cero')
+
+  // 2) En la CABECERA que guarda el navegador.
+  const conCabecera = await listaPedidos('porPagina=1', { cabeceras: { 'x-sucursal-id': fantasma } })
+
+  assert.ok(conCabecera.json.total > 0)
+})
+
+test('pero una sucursal que SÍ existe sigue acotando', async () => {
+  // El arreglo no puede convertirse en "el filtro de sucursal ya no filtra".
+  const r = await listaPedidos('porPagina=200', { cabeceras: { 'x-sucursal-id': camaguey.id } })
+
+  assert.ok(r.json.total > 0)
+  assert.equal(r.json.orders.every((o) => o.branch?.id === camaguey.id), true)
+})
+
 test.after(() => prisma.$disconnect())

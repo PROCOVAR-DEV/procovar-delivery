@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server'
 import { AuthUser } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
 
 export interface Scope {
   /**
@@ -24,10 +25,36 @@ export interface Scope {
  *   selector (`x-sucursal-id`).
  */
 export async function resolveScope(req: NextRequest, user: AuthUser): Promise<Scope> {
-  if (user.branchId) return { branchId: user.branchId, actorId: user.id }
+  const pedida = user.branchId || req.headers.get('x-sucursal-id')?.trim() || null
 
-  const elegida = req.headers.get('x-sucursal-id')?.trim()
-  return { branchId: elegida && elegida.length ? elegida : null, actorId: user.id }
+  if (!pedida) return { branchId: null, actorId: user.id }
+
+  /**
+   * Una sucursal que NO existe no acota: se ignora.
+   *
+   * El id de sucursal llega por dos sitios y los dos pueden traer uno viejo. El token del
+   * login único dura siete días y lleva dentro la sucursal que tenía la persona CUANDO
+   * entró; y la cabecera `x-sucursal-id` sale de lo que el navegador guardó. Las
+   * sucursales se recrearon en algún momento —unas tienen id de cuid y otras
+   * hexadecimal—, así que ambos pueden apuntar a algo que ya no está.
+   *
+   * Y filtrar por un id inexistente no da error: da CERO. Cero pedidos, cero clientes,
+   * cero rutas, cero vehículos, y hasta cero sucursales —con lo que desaparece el
+   * selector con el que se podría arreglar—. Todo con 200 y sin una sola traza. Es
+   * exactamente lo que se vio en producción, y desde dentro es indistinguible de "no hay
+   * nada todavía".
+   *
+   * Se comprueba antes de usarla. Si no existe se pasa a "todas", que para quien
+   * administra es lo correcto y además deja ver el problema en vez de esconderlo.
+   */
+  const existe = await prisma.branch.findUnique({ where: { id: pedida }, select: { id: true } })
+
+  if (!existe) {
+    console.warn(`[alcance] la sucursal ${pedida} no existe: se pasa a todas`)
+    return { branchId: null, actorId: user.id }
+  }
+
+  return { branchId: pedida, actorId: user.id }
 }
 
 /**
