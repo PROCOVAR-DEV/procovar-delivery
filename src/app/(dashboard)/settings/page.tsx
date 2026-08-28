@@ -102,16 +102,24 @@ export default function SettingsPage() {
     }
   })
 
-  // Recálculo de TODOS los pedidos con la configuración vigente (tras cambiar el mínimo,
-  // el factor, la tarifa del vehículo o la tasa CUP).
+  /**
+   * Recálculo de los pedidos RECIENTES con la configuración vigente.
+   *
+   * Decía "todos" y no lo era: el endpoint se llevaba el tope de PEDIDO —2.000 de los
+   * 50.683 del catálogo— y contestaba como si hubiera terminado. Recalcular el año entero
+   * no cabe en una petición HTTP; eso lo hace el worker (`sync-queue.mjs --recompute`).
+   */
   const [recomputeMsg, setRecomputeMsg] = useState<{ ok: boolean; text: string } | null>(null)
   const recompute = useMutation({
     mutationFn: async () => {
       const res = await axios.post('/api/admin/recompute', {}, { headers: { Authorization: `Bearer ${token}` }, timeout: 300000 })
-      return res.data as { total: number; actualizados: number; sucursal: string }
+      return res.data as { total: number; recosteados: number; dias: number; sucursal: string }
     },
     onSuccess: (d) => {
-      setRecomputeMsg({ ok: true, text: `Listo: ${d.actualizados} de ${d.total} pedidos recalculados (${d.sucursal}).` })
+      setRecomputeMsg({
+        ok: true,
+        text: `Listo: ${d.recosteados} de ${d.total} pedidos de los últimos ${d.dias} días (${d.sucursal}).`,
+      })
       queryClient.invalidateQueries({ queryKey: ['orders'] })
     },
     onError: (err: unknown) => {
@@ -302,12 +310,17 @@ export default function SettingsPage() {
               <div className="min-w-0">
                 <p className="font-semibold text-gray-800 flex items-center gap-2">
                   <Icon icon="mdi:calculator-variant-outline" className="text-lg text-primary" />
-                  Recalcular el domicilio de todos los pedidos
+                  Recalcular el domicilio de los pedidos recientes
                 </p>
                 <p className="text-xs text-gray-500 mt-1 max-w-xl">
                   Aplica la configuración vigente (mínimo, factor, tarifa del vehículo y tasa CUP)
-                  a <b>todos</b> los pedidos con ubicación. Úsalo cuando cambies algún valor de la
-                  fórmula. Puede tardar unos segundos.
+                  a los pedidos de los <b>últimos 30 días</b> con ubicación. Úsalo cuando cambies
+                  algún valor de la fórmula.
+                  {/* Decía "todos" y se llevaba los 2.000 primeros de 50.683. El catálogo
+                      entero lo recalcula el worker, que recorre el año por tramos. */}
+                  <span className="block mt-1 text-gray-400">
+                    El histórico completo lo recalcula el proceso de sincronización.
+                  </span>
                 </p>
               </div>
               <button

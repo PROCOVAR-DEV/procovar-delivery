@@ -38,13 +38,29 @@ export async function POST(req: NextRequest) {
     sucursalCodigo = b?.externalId || ''
   }
 
-  // 1) Traer los pedidos con geolocalización de PEDIDO (todos, no solo pendientes).
+  /**
+   * Los pedidos de los últimos días, y se dice cuántos días.
+   *
+   * Aquí había dos mentiras. Pedía `soloDomicilio=1&conCosto=1`, de cuando el espejo
+   * también los pedía: con el catálogo completo eso recalculaba 206 de 50.683 y decía que
+   * había terminado. Y no ponía `limit`, así que se llevaba el tope de PEDIDO —2.000— y
+   * lo llamaba "todos los pedidos".
+   *
+   * Recalcular 50.000 pedidos no cabe en una petición HTTP: para eso está el worker
+   * (`node sync-queue.mjs --recompute`), que recorre el año por tramos. Lo que sí cabe, y
+   * es lo que se hace desde aquí, es lo reciente — que es lo que se quiere ver cambiado
+   * después de tocar la fórmula—. Y se devuelve el número de días para que la pantalla lo
+   * diga en vez de prometer el catálogo entero.
+   */
+  const DIAS_POR_DEFECTO = 30
+  const pedidosDias = Number(new URL(req.url).searchParams.get('dias')) || DIAS_POR_DEFECTO
+  const dias = Math.min(Math.max(1, pedidosDias), 120)
+
   const q = new URLSearchParams()
-  // Sólo los que llevan domicilio y ya tienen el costo puesto: los de recogida en
-  // almacén no se reparten, y los que aún no han pasado por el repartidor no se pueden
-  // meter en una ruta porque no se sabe lo que cuesta llevarlos.
-  q.set('soloDomicilio', '1')
-  q.set('conCosto', '1')
+  const desde = new Date(Date.now() - dias * 86400000)
+
+  q.set('desde', desde.toISOString().slice(0, 10))
+  q.set('limit', '5000')
   if (sucursalCodigo) q.set('sucursalCodigo', sucursalCodigo)
   const pedRes = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY }, cache: 'no-store' })
   if (!pedRes.ok) {
@@ -52,7 +68,12 @@ export async function POST(req: NextRequest) {
   }
   const { orders = [] } = await pedRes.json()
   if (orders.length === 0) {
-    return NextResponse.json({ total: 0, recosteados: 0, actualizados: 0, message: 'No hay pedidos con geolocalización para recalcular.' })
+    return NextResponse.json({
+      total: 0,
+      recosteados: 0,
+      dias,
+      message: `No hay pedidos con geolocalización en los últimos ${dias} días.`,
+    })
   }
 
   // 2) Recotizar TODO el lote (persiste los Order de delivery + peso por producto).
@@ -104,6 +125,9 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     total: orders.length,
     recosteados,
+    // La pantalla lo enseña: un "recalculados 2.000" sin decir de cuándo se lee como
+    // "recalculado todo", y no lo es.
+    dias,
     // "actualizados" era cuántos se escribieron en PEDIDO. Ya no se escribe ninguno, así
     // que el campo se va en vez de quedarse informando un cero que se leería como un fallo.
     weightsSource: quoteJson.weightsSource,
