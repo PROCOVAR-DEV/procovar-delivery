@@ -31,6 +31,9 @@ export async function GET(req: NextRequest) {
   // Los mismos filtros que la lista de pedidos ofrece, con lo que un cliente tiene.
   const municipio = params.get('municipio')?.trim() || ''
   const sucursal = params.get('sucursalCodigo')?.trim() || ''
+  const zona = params.get('zona')?.trim() || ''
+  // De dónde salió: del espejo de PEDIDO o dado de alta a mano aquí.
+  const origen = params.get('origen')?.trim() || ''
   const pagina = Math.max(1, Number(params.get('pagina')) || 1)
 
   /**
@@ -72,6 +75,9 @@ export async function GET(req: NextRequest) {
       busqueda,
       municipio ? { municipio } : {},
       sucursal ? { sucursalCodigo: sucursal } : {},
+      zona ? { zona } : {},
+      origen === 'pedido' ? { source: 'pedido' } : {},
+      origen === 'manual' ? { source: null } : {},
     ].filter((x) => Object.keys(x).length > 0),
   }
 
@@ -105,7 +111,7 @@ export async function GET(req: NextRequest) {
    * Salen de la base entera y no de la página que se ve, que ofrecería justo los
    * municipios que ya se están mirando.
    */
-  const [municipios, sucursales] = await Promise.all([
+  const [municipios, sucursales, zonas] = await Promise.all([
     prisma.customer.groupBy({
       by: ['municipio'],
       where: { ...porSucursal, municipio: { not: null } },
@@ -117,6 +123,12 @@ export async function GET(req: NextRequest) {
       where: { ...porSucursal, sucursalCodigo: { not: null } },
       _count: { _all: true },
       orderBy: { sucursalCodigo: 'asc' },
+    }),
+    prisma.customer.groupBy({
+      by: ['zona'],
+      where: { ...porSucursal, zona: { not: null } },
+      _count: { _all: true },
+      orderBy: { zona: 'asc' },
     }),
   ])
 
@@ -130,6 +142,7 @@ export async function GET(req: NextRequest) {
     customers,
     municipios: municipios.map((m) => ({ valor: m.municipio as string, clientes: m._count._all })),
     sucursales: sucursales.map((s) => ({ valor: s.sucursalCodigo as string, clientes: s._count._all })),
+    zonas: zonas.map((z) => ({ valor: z.zona as string, clientes: z._count._all })),
   })
 }
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
-import { resolveScope } from '@/lib/scope'
+import { sucursalDeLaPersona } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,9 +23,19 @@ export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Quien pertenece a una sucursal ve la suya; quien no —el Super Admin— las ve todas.
-  const scope = await resolveScope(req, user)
-  const where = scope.branchId ? { id: scope.branchId } : {}
+  /**
+   * Aquí manda el PERMISO, no la sucursal elegida arriba.
+   *
+   * Se usaba `resolveScope`, que mezcla las dos cosas: la sucursal a la que pertenece la
+   * persona (un permiso) y la que ha elegido en la barra (un filtro). Con eso, elegir «La
+   * Habana» devolvía UNA sucursal, el selector se convertía en una etiqueta fija y ya no
+   * había forma de cambiar a otra: la propia elección se comía la lista con la que se
+   * elige.
+   *
+   * Esta lista es «a qué sucursales puedes llegar», y eso sólo depende de la persona.
+   */
+  const suya = await sucursalDeLaPersona(user)
+  const where = suya ? { id: suya } : {}
   const branches = await prisma.branch.findMany({
     where,
     orderBy: { createdAt: 'desc' },

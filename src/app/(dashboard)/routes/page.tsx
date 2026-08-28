@@ -120,7 +120,7 @@ const emptyLoc: LocationValue = { address: '', lat: null, lng: null }
 // sin que nada las relacionara.
 
 export default function RoutesPage() {
-  const { token, user } = useAppStore()
+  const { token, user , sucursalId } = useAppStore()
   const queryClient = useQueryClient()
 
   const [showModal, setShowModal] = useState(false)
@@ -267,16 +267,23 @@ export default function RoutesPage() {
   )
 
   /**
-   * Si la persona sólo tiene una sucursal, se elige sola.
+   * La sucursal viene ELEGIDA de la barra de arriba.
    *
-   * Preguntarle a quien no tiene elección es un paso de más. El selector sólo pinta
-   * cuando de verdad hay algo que decidir.
+   * Ese selector manda sobre lo que enseña la pantalla, así que preguntar otra vez aquí
+   * —con la respuesta ya delante— es un paso de más, y peor: se puede contestar distinto
+   * y acabar armando una ruta con los pedidos de una sucursal y el almacén de otra.
+   *
+   * Sólo se pregunta cuando arriba está puesto «todas»: ahí sí hay algo que decidir. Y a
+   * quien pertenece a una sucursal no se le pregunta nunca.
    */
   useEffect(() => {
-    if (sucursalRuta) return
     if (user?.branchId) { setSucursalRuta(user.branchId); return }
-    if (branches.length === 1) setSucursalRuta(branches[0].id)
-  }, [user?.branchId, branches, sucursalRuta])
+    if (sucursalId) { setSucursalRuta(sucursalId); return }
+    if (branches.length === 1) { setSucursalRuta(branches[0].id); return }
+    // Arriba se pasó a «todas»: se suelta la elegida para que el paso 1 vuelva a pedirla
+    // en vez de quedarse con la anterior, que ya no es la que se está mirando.
+    setSucursalRuta('')
+  }, [user?.branchId, sucursalId, branches])
 
   // Al abrir el modal, si aún no hay depósito, se pone por defecto el punto de partida de
   // la sucursal: primero un origen guardado; si no hay, la ubicación de la sucursal misma.

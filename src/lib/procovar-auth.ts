@@ -59,6 +59,29 @@ function firmar(metodo: string, ruta: string, cuerpo: string): Record<string, st
   }
 }
 
+/**
+ * Una llamada GET firmada a Accesos.
+ *
+ * El resto de esta aplicación habla con Accesos por POST —el canje del código del login—,
+ * pero la tasa de cambio es una LECTURA y hacerla por POST sería mentir sobre lo que hace.
+ * La firma es la misma: sobre el método, la ruta con su query, la hora, un nonce y el
+ * hash del cuerpo, que en un GET es el de la cadena vacía.
+ */
+export async function pedirFirmado<T>(ruta: string): Promise<T> {
+  if (!SIGNING_KEY) throw new Error('PROCOVAR_AUTH_SIGNING_KEY no está configurada')
+
+  const res = await fetch(new URL(ruta, AUTH_URL).toString(), {
+    method: 'GET',
+    headers: firmar('GET', ruta, ''),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(10000),
+  })
+
+  if (!res.ok) throw new Error(`auth ${res.status}: ${(await res.text()).slice(0, 120)}`)
+
+  return (await res.json()) as T
+}
+
 async function llamar<T>(ruta: string, cuerpo: unknown): Promise<T> {
   if (!SIGNING_KEY) throw new Error('PROCOVAR_AUTH_SIGNING_KEY no está configurada')
 

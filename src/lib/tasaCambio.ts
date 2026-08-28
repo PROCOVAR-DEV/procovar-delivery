@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { pedirFirmado } from '@/lib/procovar-auth'
 
 /**
  * La tasa de cambio USD -> CUP: se PIDE a Accesos, no se teclea aquí.
@@ -13,9 +14,6 @@ import { prisma } from '@/lib/prisma'
  * Ahora la fuente es Accesos, que la mantiene por sucursal sacándola de Entrega. Aquí no
  * se guarda ninguna copia editable: si Accesos no contesta, no hay tasa, y se dice.
  */
-
-const AUTH = process.env.PROCOVAR_AUTH_URL || 'https://auth.procovar.cloud'
-const KEY = process.env.SERVICE_API_KEY || ''
 
 export interface Tasa {
   codigo: string
@@ -38,15 +36,17 @@ const RECUERDO_MS = Number(process.env.TASA_CACHE_MS || 5 * 60 * 1000)
 const recordadas = new Map<string, { tasa: Tasa | null; cuando: number }>()
 
 async function preguntarAAccesos(codigo: string): Promise<Tasa | null> {
-  const r = await fetch(`${AUTH}/api/service/tasas?codigo=${encodeURIComponent(codigo)}`, {
-    headers: { 'x-api-key': KEY, Accept: 'application/json' },
-    signal: AbortSignal.timeout(10000),
-    cache: 'no-store',
-  })
-
-  if (!r.ok) throw new Error(`Accesos contestó ${r.status}`)
-
-  const b = (await r.json()) as { tasa?: null; cupPorUsd?: number } & Partial<Tasa>
+  /**
+   * Firmado, como el resto de lo que delivery le pide a Accesos.
+   *
+   * Accesos no acepta una clave suelta en una cabecera: cada aplicación firma con SU
+   * llave lo que pide —método, ruta, hora, nonce y el hash del cuerpo—, así que una
+   * petición copiada de un registro no vale al minuto siguiente. delivery ya tiene esa
+   * llave para el login único; se reutiliza en vez de abrirle una segunda puerta.
+   */
+  const b = await pedirFirmado<{ tasa?: null; cupPorUsd?: number } & Partial<Tasa>>(
+    `/api/service/tasas?codigo=${encodeURIComponent(codigo)}`,
+  )
 
   // Accesos contesta 200 con `tasa: null` cuando esa sucursal no tiene: que falte es un
   // estado normal, no un error, y por eso no viene como 404.

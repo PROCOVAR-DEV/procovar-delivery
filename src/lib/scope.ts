@@ -82,3 +82,29 @@ export async function resolveScope(req: NextRequest, user: AuthUser): Promise<Sc
 export function scopeWhere(scope: Scope): { branchId?: string } {
   return scope.branchId ? { branchId: scope.branchId } : {}
 }
+
+/**
+ * La sucursal a la que PERTENECE la persona, si existe.
+ *
+ * Es distinta del alcance: el alcance mezcla el permiso con la sucursal elegida arriba, y
+ * hay sitios —la lista de sucursales— donde eso no vale. Ahí lo que se pregunta es «a
+ * cuáles puedes llegar», que sólo depende de la persona: si se acotara también por la
+ * elegida, elegir una devolvería una sola, el selector se volvería una etiqueta fija y no
+ * habría forma de cambiar a otra. La elección se comería la lista con la que se elige.
+ *
+ * Y se comprueba que exista, por lo mismo que en `resolveScope`: el token dura siete días
+ * y lleva la sucursal que la persona tenía al entrar. Una que ya no está no acota nada —
+ * deja la lista vacía, que es peor.
+ */
+export async function sucursalDeLaPersona(user: AuthUser): Promise<string | null> {
+  if (!user.branchId) return null
+
+  const existe = await prisma.branch.findUnique({ where: { id: user.branchId }, select: { id: true } })
+
+  if (!existe) {
+    console.warn(`[alcance] la sucursal ${user.branchId} de ${user.email} no existe: se le enseñan todas`)
+    return null
+  }
+
+  return user.branchId
+}

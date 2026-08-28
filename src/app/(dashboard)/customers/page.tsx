@@ -28,6 +28,8 @@ export default function CustomersPage() {
   const [query, setQuery] = useState('')
   const [municipio, setMunicipio] = useState('')
   const [sucursal, setSucursal] = useState('')
+  const [zona, setZona] = useState('')
+  const [origen, setOrigen] = useState('')
   const [pagina, setPagina] = useState(1)
   const [showForm, setShowForm] = useState(false)
 
@@ -50,16 +52,18 @@ export default function CustomersPage() {
 
   // Cualquier cambio de filtro vuelve a la página 1: quedarse en la 7 de una lista que
   // ahora tiene 2 enseña un vacío que parece un fallo.
-  useEffect(() => { setPagina(1) }, [buscado, municipio, sucursal])
+  useEffect(() => { setPagina(1) }, [buscado, municipio, sucursal, zona, origen])
 
   const { data, isLoading } = useQuery({
-    queryKey: ['customers', { buscado, municipio, sucursal, pagina }],
+    queryKey: ['customers', { buscado, municipio, sucursal, zona, origen, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/customers', {
         params: {
           ...(buscado ? { q: buscado } : {}),
           ...(municipio ? { municipio } : {}),
           ...(sucursal ? { sucursalCodigo: sucursal } : {}),
+          ...(zona ? { zona } : {}),
+          ...(origen ? { origen } : {}),
           pagina,
         },
         headers: { Authorization: `Bearer ${token}` },
@@ -73,6 +77,7 @@ export default function CustomersPage() {
         truncated: boolean
         municipios: { valor: string; clientes: number }[]
         sucursales: { valor: string; clientes: number }[]
+        zonas: { valor: string; clientes: number }[]
       }
     },
     enabled: !!token,
@@ -86,6 +91,7 @@ export default function CustomersPage() {
   const paginas = data?.paginas ?? 1
   const municipios = data?.municipios ?? []
   const sucursales = data?.sucursales ?? []
+  const zonas = data?.zonas ?? []
   const filtered = customers
 
   return (
@@ -140,10 +146,35 @@ export default function CustomersPage() {
               ))}
             </select>
           )}
-          {(municipio || sucursal || query) && (
+          {zonas.length > 1 && (
+            <select
+              value={zona}
+              onChange={(e) => setZona(e.target.value)}
+              className="px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+              title="Zona de reparto"
+            >
+              <option value="">Todas las zonas</option>
+              {zonas.map((z) => (
+                <option key={z.valor} value={z.valor}>{z.valor} ({z.clientes.toLocaleString()})</option>
+              ))}
+            </select>
+          )}
+          {/* De dónde salió: del espejo de PEDIDO o dado de alta a mano aquí. Los manuales
+              son los que nadie más conoce, y por eso hay que poder aislarlos. */}
+          <select
+            value={origen}
+            onChange={(e) => setOrigen(e.target.value)}
+            className="px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
+            title="De dónde salió el cliente"
+          >
+            <option value="">De PEDIDO y manuales</option>
+            <option value="pedido">Sólo los de PEDIDO</option>
+            <option value="manual">Sólo los manuales</option>
+          </select>
+          {(municipio || sucursal || zona || origen || query) && (
             <button
               type="button"
-              onClick={() => { setQuery(''); setMunicipio(''); setSucursal('') }}
+              onClick={() => { setQuery(''); setMunicipio(''); setSucursal(''); setZona(''); setOrigen('') }}
               className="px-3 py-2 text-sm text-ink-soft/70 hover:text-ink"
             >
               Quitar filtros
@@ -200,6 +231,38 @@ export default function CustomersPage() {
                 ))}
               </tbody>
             </table>
+          )}
+
+          {/* Los botones de página, que NO estaban.
+              La cabecera decía «página 1 de 4» y no había forma de llegar a la 2: la
+              lista viene paginada del servidor —son siete mil clientes— así que sin esto
+              sólo se podían ver los doscientos primeros. */}
+          {paginas > 1 && (
+            <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3 text-sm">
+              <span className="text-ink-soft/70">
+                {((pagina - 1) * (data?.porPagina ?? 200) + 1).toLocaleString()}–
+                {Math.min(pagina * (data?.porPagina ?? 200), total).toLocaleString()} de {total.toLocaleString()}
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                  disabled={pagina <= 1}
+                  className="px-3 py-1.5 rounded-xl border border-line disabled:opacity-40 hover:bg-ink/[0.03]"
+                >
+                  <Icon icon="mdi:chevron-left" className="inline" /> Anterior
+                </button>
+                <span className="text-ink-soft/70">{pagina} / {paginas}</span>
+                <button
+                  type="button"
+                  onClick={() => setPagina((p) => Math.min(paginas, p + 1))}
+                  disabled={pagina >= paginas}
+                  className="px-3 py-1.5 rounded-xl border border-line disabled:opacity-40 hover:bg-ink/[0.03]"
+                >
+                  Siguiente <Icon icon="mdi:chevron-right" className="inline" />
+                </button>
+              </div>
+            </div>
           )}
         </div>
       </div>
