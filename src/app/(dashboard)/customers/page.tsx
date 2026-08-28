@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
 import { Icon } from '@iconify/react'
+import Selector from '@/components/Selector'
 
 interface Customer {
   id: string
@@ -121,56 +122,44 @@ export default function CustomersPage() {
             base: son siete mil, y filtrar en la pantalla obliga a traérselos todos. */}
         <div className="flex flex-wrap gap-2">
           {sucursales.length > 1 && (
-            <select
-              value={sucursal}
-              onChange={(e) => setSucursal(e.target.value)}
-              className="px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-              title="Sucursal del cliente"
-            >
-              <option value="">Todas las sucursales</option>
-              {sucursales.map((s) => (
-                <option key={s.valor} value={s.valor}>{s.valor} ({s.clientes.toLocaleString()})</option>
-              ))}
-            </select>
+            <Selector
+              titulo="Sucursal del cliente"
+              valor={sucursal}
+              todos="Todas las sucursales"
+              onCambio={setSucursal}
+              opciones={sucursales.map((s) => ({ valor: s.valor, etiqueta: s.valor, nota: s.clientes.toLocaleString() }))}
+            />
           )}
           {municipios.length > 1 && (
-            <select
-              value={municipio}
-              onChange={(e) => setMunicipio(e.target.value)}
-              className="px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-              title="Municipio del cliente"
-            >
-              <option value="">Todos los municipios</option>
-              {municipios.map((m) => (
-                <option key={m.valor} value={m.valor}>{m.valor} ({m.clientes.toLocaleString()})</option>
-              ))}
-            </select>
+            <Selector
+              titulo="Municipio del cliente"
+              valor={municipio}
+              todos="Todos los municipios"
+              onCambio={setMunicipio}
+              opciones={municipios.map((m) => ({ valor: m.valor, etiqueta: m.valor, nota: m.clientes.toLocaleString() }))}
+            />
           )}
           {zonas.length > 1 && (
-            <select
-              value={zona}
-              onChange={(e) => setZona(e.target.value)}
-              className="px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-              title="Zona de reparto"
-            >
-              <option value="">Todas las zonas</option>
-              {zonas.map((z) => (
-                <option key={z.valor} value={z.valor}>{z.valor} ({z.clientes.toLocaleString()})</option>
-              ))}
-            </select>
+            <Selector
+              titulo="Zona de reparto"
+              valor={zona}
+              todos="Todas las zonas"
+              onCambio={setZona}
+              opciones={zonas.map((z) => ({ valor: z.valor, etiqueta: z.valor, nota: z.clientes.toLocaleString() }))}
+            />
           )}
           {/* De dónde salió: del espejo de PEDIDO o dado de alta a mano aquí. Los manuales
               son los que nadie más conoce, y por eso hay que poder aislarlos. */}
-          <select
-            value={origen}
-            onChange={(e) => setOrigen(e.target.value)}
-            className="px-3 py-2 border border-line rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40"
-            title="De dónde salió el cliente"
-          >
-            <option value="">De PEDIDO y manuales</option>
-            <option value="pedido">Sólo los de PEDIDO</option>
-            <option value="manual">Sólo los manuales</option>
-          </select>
+          <Selector
+            titulo="De dónde salió el cliente"
+            valor={origen}
+            todos="De PEDIDO y manuales"
+            onCambio={setOrigen}
+            opciones={[
+              { valor: 'pedido', etiqueta: 'Sólo los de PEDIDO' },
+              { valor: 'manual', etiqueta: 'Sólo los manuales' },
+            ]}
+          />
           {(municipio || sucursal || zona || origen || query) && (
             <button
               type="button"

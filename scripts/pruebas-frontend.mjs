@@ -64,6 +64,37 @@ async function conSesion() {
 
 const cerrar = async (ctx) => ctx.close()
 
+/**
+ * Elegir en uno de los desplegables nuevos.
+ *
+ * Ya no son `<select>` del navegador: son un botón que abre una lista con buscador,
+ * pintada en `document.body` para que no la recorte la barra de filtros. Se identifican
+ * por su `title`, que es lo único estable — la etiqueta cambia con lo que hay elegido.
+ */
+async function elegir(page, titulo, etiqueta) {
+  await page.click(`button[title="${titulo}"]`)
+  await page.waitForSelector('[role="listbox"]')
+  // Coincidencia EXACTA: «Sólo activos» y «Sólo archivados» comparten prefijo, y con
+  // `hasText` a secas se elegía el primero de los dos.
+  await page.locator('[role="listbox"] [role="option"]')
+    .filter({ hasText: new RegExp(`^${etiqueta.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`) })
+    .first()
+    .click()
+  await page.waitForSelector('[role="listbox"]', { state: 'detached' })
+}
+
+/** Las opciones que ofrece uno de esos desplegables. */
+async function opcionesDe(page, titulo) {
+  await page.click(`button[title="${titulo}"]`)
+  await page.waitForSelector('[role="listbox"]')
+
+  const t = await page.locator('[role="listbox"] [role="option"]').allInnerTexts()
+
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('[role="listbox"]', { state: 'detached' })
+  return t
+}
+
 // ---------------------------------------------------------------- pedidos
 
 /** Cuántos pedidos dice la cabecera que hay en TOTAL (no en la página). */
@@ -139,14 +170,11 @@ test('el filtro por vendedor y el de municipio acotan el CATÁLOGO, no la págin
   await page.waitForSelector('table tbody tr')
 
   const antes = await totalPedidos(page)
-  const vendedores = page.locator('select[title="Vendedor del pedido"]')
+  const opciones = await opcionesDe(page, 'Vendedor del pedido')
 
-  assert.equal(await vendedores.count(), 1, 'falta el filtro de vendedor')
+  assert.ok(opciones.length > 1, `el filtro de vendedor no trae vendedores: ${opciones}`)
 
-  const opciones = await vendedores.locator('option').allInnerTexts()
-  assert.ok(opciones.length > 1, 'el filtro de vendedor no trae vendedores')
-
-  await vendedores.selectOption({ label: opciones[1] })
+  await elegir(page, 'Vendedor del pedido', opciones[1].split('\n')[0])
   await page.waitForTimeout(800)
 
   const despues = await totalPedidos(page)
@@ -163,11 +191,11 @@ test('los archivados se ven, y se pueden esconder', async () => {
 
   const todos = await totalPedidos(page)
 
-  await page.selectOption('select[title="Archivados en PEDIDO"]', '0')
+  await elegir(page, 'Archivados en PEDIDO', 'Sólo activos')
   await page.waitForTimeout(800)
   const activos = await totalPedidos(page)
 
-  await page.selectOption('select[title="Archivados en PEDIDO"]', '1')
+  await elegir(page, 'Archivados en PEDIDO', 'Sólo archivados')
   await page.waitForTimeout(800)
   const archivados = await totalPedidos(page)
 
@@ -182,7 +210,7 @@ test('el estado del pedido se filtra y se ve en la tabla', async () => {
   await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('table tbody tr')
 
-  await page.selectOption('select[title="Estado del pedido en PEDIDO"]', 'completada')
+  await elegir(page, 'Estado del pedido en PEDIDO', 'Completada')
   await page.waitForTimeout(800)
   await page.waitForSelector('table tbody tr')
 
@@ -192,7 +220,7 @@ test('el estado del pedido se filtra y se ve en la tabla', async () => {
   assert.ok(estados.length > 0)
   for (const e of estados) assert.match(e, /Completada/)
 
-  await page.selectOption('select[title="Estado del pedido en PEDIDO"]', 'expirada')
+  await elegir(page, 'Estado del pedido en PEDIDO', 'Expirada')
   await page.waitForTimeout(800)
   const expiradas = await page.locator('table tbody tr td:nth-child(3)').allInnerTexts()
 
@@ -212,14 +240,12 @@ test('cada pedido dice de qué sucursal es, y se puede filtrar por ella', async 
 
   assert.ok(sucursales.some((s) => s.trim() && s.trim() !== '—'), `ninguna fila dice su sucursal: ${sucursales.slice(0, 3)}`)
 
-  const filtro = page.locator('select[title="Sucursal del pedido"]')
-
-  assert.equal(await filtro.count(), 1, 'falta el filtro de sucursal')
+  assert.equal(await page.locator('button[title="Sucursal del pedido"]').count(), 1, 'falta el filtro de sucursal')
 
   const antes = await totalPedidos(page)
-  const opciones = await filtro.locator('option').allInnerTexts()
+  const opciones = await opcionesDe(page, 'Sucursal del pedido')
 
-  await filtro.selectOption({ label: opciones[1] })
+  await elegir(page, 'Sucursal del pedido', opciones[1].split('\n')[0])
   await page.waitForTimeout(800)
 
   assert.ok(await totalPedidos(page) < antes, 'elegir una sucursal no acotó nada')
@@ -278,11 +304,9 @@ test('quien ve varias sucursales tiene selector, con "todas" incluido', async ()
    * Las opciones de un desplegable cerrado no son texto visible, así que un selector por
    * texto no las encuentra aunque estén: la prueba fallaba por eso y no por la pantalla.
    */
-  const selector = page.locator('select[title]').filter({ has: page.locator('option', { hasText: 'Todas las sucursales' }) })
+  await page.waitForSelector('button[title="Sucursal que se está mirando"]', { timeout: 15000 })
 
-  await selector.first().waitFor({ timeout: 15000 })
-
-  const opciones = await selector.first().locator('option').allInnerTexts()
+  const opciones = await opcionesDe(page, 'Sucursal que se está mirando')
 
   assert.ok(opciones.length >= 3, `el selector debería traer todas + cada sucursal: ${opciones}`)
   assert.ok(opciones[0].includes('Todas'))
@@ -315,10 +339,7 @@ test('quien lleva UNA sucursal ve su nombre y no un selector', async () => {
   await page.waitForSelector(`text=${suya.name}`, { timeout: 15000 })
 
   // Ni selector ni "todas las sucursales": para quien lleva una no hay nada que elegir.
-  assert.equal(
-    await page.locator('select').filter({ has: page.locator('option', { hasText: 'Todas las sucursales' }) }).count(),
-    0,
-  )
+  assert.equal(await page.locator('button[title="Sucursal que se está mirando"]').count(), 0)
   await ctx.close()
 })
 

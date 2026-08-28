@@ -277,8 +277,22 @@ export default function RoutesPage() {
    * quien pertenece a una sucursal no se le pregunta nunca.
    */
   useEffect(() => {
-    if (user?.branchId) { setSucursalRuta(user.branchId); return }
-    if (sucursalId) { setSucursalRuta(sucursalId); return }
+    if (!branches.length) return
+
+    /**
+     * La del token sólo vale si está en la lista.
+     *
+     * El token dura siete días y lleva la sucursal que la persona tenía al entrar. Si ya
+     * no existe, el servidor la ignora —enseña todas— pero aquí se seguía usando: el
+     * paso 1 quedaba con un id que no está entre las opciones, así que el desplegable
+     * enseñaba «Elige la sucursal…» con una elegida arriba y no había forma de avanzar.
+     */
+    const suya = branches.find((b) => b.id === user?.branchId)
+
+    if (suya) { setSucursalRuta(suya.id); return }
+    // La de la barra de arriba: es la que se está mirando, y preguntarla otra vez con la
+    // respuesta delante permite contestar distinto y armar una ruta descuadrada.
+    if (sucursalId && branches.some((b) => b.id === sucursalId)) { setSucursalRuta(sucursalId); return }
     if (branches.length === 1) { setSucursalRuta(branches[0].id); return }
     // Arriba se pasó a «todas»: se suelta la elegida para que el paso 1 vuelva a pedirla
     // en vez de quedarse con la anterior, que ya no es la que se está mirando.

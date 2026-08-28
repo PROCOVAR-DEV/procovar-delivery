@@ -6,8 +6,9 @@ import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import axios from 'axios'
-import { useQuery } from '@tanstack/react-query'
+import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query'
 import UserMenu from '@/components/UserMenu'
+import Selector from '@/components/Selector'
 
 interface Branch {
   id: string
@@ -24,6 +25,16 @@ function branchLabel(b?: Branch | null) {
 export default function Navbar({ title }: { title: string }) {
   const { token, language, setLanguage, sucursalId, setSucursalId } = useAppStore()
   const { code, currencies, setDisplayCurrency, aviso, hayCup } = useCurrency()
+  const queryClient = useQueryClient()
+  /**
+   * Si hay algo cargando, se dice.
+   *
+   * Cambiar de sucursal vuelve a pedirlo todo, y hasta que llega se sigue viendo lo de
+   * antes: durante un par de segundos la pantalla enseña los números de «todas» con
+   * «Camagüey» puesto arriba. Sin decir nada, eso no se lee como «está cargando» sino
+   * como «el selector no hace nada».
+   */
+  const cargando = useIsFetching() > 0
   const t = useT()
 
   const { data: branches = [] } = useQuery({
@@ -65,27 +76,41 @@ export default function Navbar({ title }: { title: string }) {
 
   return (
     <div className="h-16 bg-paper/80 backdrop-blur border-b border-line px-6 flex items-center justify-between sticky top-0 z-20">
-      <h2 className="text-[1.4rem] font-bold text-ink tracking-tight">{title}</h2>
+      <div className="flex items-center gap-2 min-w-0">
+        <h2 className="text-[1.4rem] font-bold text-ink tracking-tight truncate">{title}</h2>
+        {/* Que se vea que hay algo en marcha. Sin esto, el rato entre pedir los datos y
+            recibirlos se lee como que el filtro no funciona. */}
+        {cargando && (
+          <span className="flex items-center gap-1.5 text-[11px] font-medium text-ink-soft/70">
+            <Icon icon="mdi:loading" className="animate-spin text-sm" />
+            actualizando…
+          </span>
+        )}
+      </div>
       <div className="flex items-center gap-2.5">
         {branches.length > 0 && (
           <div className="flex items-center gap-1 bg-white border border-line rounded-xl pl-2.5 pr-1.5 py-1 shadow-sm">
             <Icon icon="mdi:store-outline" className="text-ink-soft/60 text-base" />
             {variasSucursales ? (
-              <select
-                value={sucursalId ?? ''}
-                onChange={(e) => {
-                  setSucursalId(e.target.value || null)
-                  // Recarga para que TODAS las vistas re-consulten scopeadas a la sucursal.
-                  if (typeof window !== 'undefined') window.location.reload()
+              <Selector
+                titulo="Sucursal que se está mirando"
+                className="!border-0 !bg-transparent !px-1 !py-0.5"
+                valor={sucursalId ?? ''}
+                todos={`Todas las sucursales (${branches.length})`}
+                opciones={branches.map((b) => ({ valor: b.id, etiqueta: b.name, nota: b.externalId ?? undefined }))}
+                onCambio={(v) => {
+                  setSucursalId(v || null)
+                  /**
+                   * Se vuelven a pedir los datos, NO se recarga la página.
+                   *
+                   * Antes hacía `location.reload()`: dos segundos en blanco y volver a
+                   * montarlo todo para cambiar un filtro. Invalidando las consultas,
+                   * react-query las repite con la sucursal nueva y mientras tanto el
+                   * indicador de al lado del título dice que está trabajando.
+                   */
+                  void queryClient.invalidateQueries()
                 }}
-                className="text-xs font-semibold bg-transparent text-ink py-1 pr-0.5 focus:outline-none cursor-pointer max-w-[180px]"
-                title={sucursalId ? branchLabel(branches.find((b) => b.id === sucursalId)) : 'Todas las sucursales'}
-              >
-                <option value="">Todas las sucursales ({branches.length})</option>
-                {branches.map((b) => (
-                  <option key={b.id} value={b.id}>{branchLabel(b)}</option>
-                ))}
-              </select>
+              />
             ) : (
               // Una sola: se dice cuál es y no se ofrece elegir. No hay nada que elegir.
               <span className="text-xs font-semibold text-ink py-1 pr-0.5 max-w-[180px] truncate">

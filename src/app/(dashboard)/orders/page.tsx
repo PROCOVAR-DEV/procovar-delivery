@@ -13,6 +13,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
+import Selector from '@/components/Selector'
 
 interface OrderItem {
   name?: string
@@ -265,107 +266,96 @@ export default function OrdersPage() {
             {/* La SUCURSAL, la primera: es por donde se empieza a mirar cuando se ven
                 todas. Con el conteo, para no elegir una vacía y volver. */}
             {sucursales.length > 1 && (
-              <select
-                value={sucursalFilter}
-                onChange={(e) => setSucursalFilter(e.target.value)}
-                className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                title="Sucursal del pedido"
-              >
-                <option value="">Todas las sucursales</option>
-                {sucursales.map((s) => (
-                  <option key={s.valor} value={s.valor}>{s.nombre} ({s.pedidos.toLocaleString()})</option>
-                ))}
-              </select>
+              <Selector
+                titulo="Sucursal del pedido"
+                valor={sucursalFilter}
+                todos="Todas las sucursales"
+                onCambio={setSucursalFilter}
+                opciones={sucursales.map((s) => ({ valor: s.valor, etiqueta: s.nombre, nota: s.pedidos.toLocaleString() }))}
+              />
             )}
 
             {/* El estado EN PEDIDO. Lo filtra la base, sobre los 50.000, no sobre la
                 página que se está viendo. */}
-            <select
-              value={estado}
-              onChange={(e) => setEstado(e.target.value)}
-              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              title="Estado del pedido en PEDIDO"
-            >
-              <option value="">Cualquier estado</option>
-              <option value="en_proceso">En proceso</option>
-              <option value="completada">Completada</option>
-              <option value="expirada">Expirada</option>
-            </select>
+            <Selector
+              titulo="Estado del pedido en PEDIDO"
+              valor={estado}
+              todos="Cualquier estado"
+              onCambio={setEstado}
+              opciones={[
+                { valor: 'en_proceso', etiqueta: 'En proceso' },
+                { valor: 'completada', etiqueta: 'Completada' },
+                { valor: 'expirada', etiqueta: 'Expirada' },
+              ]}
+            />
 
             {/* Archivar en PEDIDO es esconder de su lista, no borrar. Aquí se ven todos
                 por defecto: la mayor parte del histórico está archivada. */}
-            <select
-              value={archivado}
-              onChange={(e) => setArchivado(e.target.value)}
-              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              title="Archivados en PEDIDO"
-            >
-              <option value="">Archivados y activos</option>
-              <option value="0">Sólo activos</option>
-              <option value="1">Sólo archivados</option>
-            </select>
+            <Selector
+              titulo="Archivados en PEDIDO"
+              valor={archivado}
+              todos="Archivados y activos"
+              onCambio={setArchivado}
+              opciones={[
+                { valor: '0', etiqueta: 'Sólo activos' },
+                { valor: '1', etiqueta: 'Sólo archivados' },
+              ]}
+            />
 
-            <select
-              value={domicilio}
-              onChange={(e) => setDomicilio(e.target.value)}
-              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              title="Si el pedido lleva domicilio"
-            >
-              <option value="">Con y sin domicilio</option>
-              <option value="1">Sólo con domicilio</option>
-              <option value="0">Sólo sin domicilio</option>
-            </select>
+            <Selector
+              titulo="Si el pedido lleva domicilio"
+              valor={domicilio}
+              todos="Con y sin domicilio"
+              onCambio={setDomicilio}
+              opciones={[
+                { valor: '1', etiqueta: 'Sólo con domicilio' },
+                { valor: '0', etiqueta: 'Sólo sin domicilio' },
+              ]}
+            />
 
             {/* El costo lo pone el repartidor desde la APK. Sin él, el pedido no se puede
                 meter en una ruta: no se sabe lo que cuesta llevarlo. */}
-            <select
-              value={cotizado}
-              onChange={(e) => setCotizado(e.target.value)}
-              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              title="Si la APK ya le puso costo de domicilio"
-            >
-              <option value="">Cotizados y sin cotizar</option>
-              <option value="1">Ya cotizados por la APK</option>
-              <option value="0">Sin cotizar</option>
-            </select>
+            <Selector
+              titulo="Si la APK de Entrega ya le puso costo de domicilio"
+              valor={cotizado}
+              todos="Cotizados y sin cotizar"
+              onCambio={setCotizado}
+              opciones={[
+                { valor: '1', etiqueta: 'Ya cotizados por Entrega' },
+                { valor: '0', etiqueta: 'Sin cotizar' },
+              ]}
+            />
 
             {/* El estado de REPARTO es de delivery, no de PEDIDO: se calcula de la ruta y
                 se filtra sobre la página. Son dos cosas distintas a propósito. */}
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              title="Estado de reparto en delivery (se aplica sobre esta página)"
-            >
-              <option value="todos">Cualquier reparto</option>
-              <option value="pendiente">Sin ruta</option>
-              <option value="reparto">En reparto</option>
-              <option value="entregado">Entregado</option>
-            </select>
+            <Selector
+              titulo="Estado de reparto en delivery (se aplica sobre esta página)"
+              valor={statusFilter === 'todos' ? '' : statusFilter}
+              todos="Cualquier reparto"
+              onCambio={(v) => setStatusFilter(v || 'todos')}
+              opciones={[
+                { valor: 'pendiente', etiqueta: 'Sin ruta' },
+                { valor: 'reparto', etiqueta: 'En reparto' },
+                { valor: 'entregado', etiqueta: 'Entregado' },
+              ]}
+            />
 
-            <select
-              value={municipioFilter}
-              onChange={(e) => setMunicipioFilter(e.target.value)}
-              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="">Todos los municipios</option>
-              {municipios.map((m) => (
-                <option key={m.valor} value={m.valor}>{m.valor} ({m.pedidos})</option>
-              ))}
-            </select>
+            <Selector
+              titulo="Municipio del cliente"
+              valor={municipioFilter}
+              todos="Todos los municipios"
+              onCambio={setMunicipioFilter}
+              opciones={municipios.map((m) => ({ valor: m.valor, etiqueta: m.valor, nota: String(m.pedidos) }))}
+            />
 
             {vendedores.length > 0 && (
-              <select
-                value={vendedorFilter}
-                onChange={(e) => setVendedorFilter(e.target.value)}
-                className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                title="Vendedor del pedido"
-              >
-                <option value="">Todos los vendedores</option>
-                {vendedores.map((v) => (
-                  <option key={v.valor} value={v.valor}>{v.valor} ({v.pedidos})</option>
-                ))}
-              </select>
+              <Selector
+                titulo="Vendedor del pedido"
+                valor={vendedorFilter}
+                todos="Todos los vendedores"
+                onCambio={setVendedorFilter}
+                opciones={vendedores.map((v) => ({ valor: v.valor, etiqueta: v.valor, nota: String(v.pedidos) }))}
+              />
             )}
 
             {/* Por FECHA DEL PEDIDO, no por cuándo lo copió el espejo. */}
@@ -400,18 +390,19 @@ export default function OrdersPage() {
               )}
             </div>
 
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="recientes">Más recientes</option>
-              <option value="antiguos">Más antiguos</option>
-              <option value="precio_desc">Precio: mayor a menor</option>
-              <option value="precio_asc">Precio: menor a mayor</option>
-              <option value="distancia_desc">Distancia: más larga</option>
-              <option value="peso_desc">Peso: mayor</option>
-            </select>
+            <Selector
+              titulo="Cómo se ordena esta página"
+              valor={sortBy}
+              onCambio={(v) => setSortBy(v || 'recientes')}
+              opciones={[
+                { valor: 'recientes', etiqueta: 'Más recientes' },
+                { valor: 'antiguos', etiqueta: 'Más antiguos' },
+                { valor: 'precio_desc', etiqueta: 'Precio: mayor a menor' },
+                { valor: 'precio_asc', etiqueta: 'Precio: menor a mayor' },
+                { valor: 'distancia_desc', etiqueta: 'Distancia: más larga' },
+                { valor: 'peso_desc', etiqueta: 'Peso: mayor' },
+              ]}
+            />
             <div className="relative">
               <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
