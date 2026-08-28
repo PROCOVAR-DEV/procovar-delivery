@@ -298,6 +298,9 @@ export default function OrdersPage() {
                 vez —y entonces ninguno de los dos dice lo que se está viendo—. Quien sólo
                 tiene una sucursal no ve ni ese selector: ya viene puesta. */}
 
+            {/* Cada filtro en su sitio fijo: con `flex-wrap` a secas, un texto que crece
+                —«Cotizados y sin cotizar» al elegir— reordenaba la fila entera y el
+                desplegable de al lado se movía debajo del ratón. */}
             {/* El estado EN PEDIDO. Lo filtra la base, sobre los 50.000, no sobre la
                 página que se está viendo. */}
             <Selector
@@ -451,11 +454,19 @@ export default function OrdersPage() {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-md overflow-x-auto">
+        {/*
+          La tabla NO desaparece mientras se filtra.
+
+          Al cambiar un filtro se quedaba «Cargando» en una caja de 80px de alto: la
+          página encogía de golpe, la barra de filtros subía y el ratón acababa sobre otro
+          desplegable. Ahora se mantiene lo que ya se está viendo, apagado, hasta que llega
+          lo nuevo — y el indicador de arriba dice que se está trabajando.
+        */}
+        <div className={`bg-white rounded-2xl shadow-md overflow-x-auto transition-opacity ${isFetching && !isLoading ? 'opacity-60' : ''}`}>
           {isLoading ? (
-            <div className="p-8 text-center text-gray-500">{t('common.loading')}</div>
+            <div className="p-8 text-center text-gray-500 min-h-[24rem]">{t('common.loading')}</div>
           ) : filtered.length === 0 ? (
-            <div className="p-10 text-center text-gray-500 space-y-2">
+            <div className="p-10 text-center text-gray-500 space-y-2 min-h-[24rem]">
               <p>{t('ord.empty')}</p>
               {/* Un cero mudo se lee como "está roto". Casi siempre es que los filtros no
                   dejan pasar nada, y decirlo ahorra buscar el fallo donde no está. */}
@@ -470,21 +481,34 @@ export default function OrdersPage() {
               )}
             </div>
           ) : (
-            <table className="w-full min-w-[60rem] text-sm">
+            /*
+              Doce columnas no caben en ninguna pantalla, y arrastrar de lado para leer el
+              peso es trabajo. Se esconden por orden de lo prescindible:
+
+                Sucursal  — si arriba hay UNA elegida, la columna repite ocho veces lo
+                            mismo. Sólo se enseña con «todas».
+                Vehículo  — va con la ruta; si no está ruteado son dos guiones.
+                Ruta      — lo mismo, y cabe en el detalle.
+                Artículos — se ve entero al abrir el pedido.
+
+              Lo que nunca se va: cliente, dirección, peso, precio y estado, que es con lo
+              que se decide.
+            */
+            <table className="w-full table-fixed text-sm">
               <thead>
                 <tr className="border-b text-left text-gray-600">
-                  <th className="px-4 py-3 font-semibold">Fecha</th>
-                  <th className="px-4 py-3 font-semibold">Sucursal</th>
-                  <th className="px-4 py-3 font-semibold">Pedido</th>
-                  <th className="px-4 py-3 font-semibold">{t('ord.colClient')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('ord.colRoute')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('ord.colVehicle')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('ord.colItems')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('ord.colAddress')}</th>
-                  <th className="px-4 py-3 font-semibold text-right">{t('common.weight')}</th>
-                  <th className="px-4 py-3 font-semibold text-right">{t('common.price')}</th>
-                  <th className="px-4 py-3 font-semibold">{t('ord.colDelivery')}</th>
-                  <th className="px-4 py-3"></th>
+                  <th className="px-3 py-3 font-semibold w-[6.5rem]">Fecha</th>
+                  {!sucursalId && <th className="px-3 py-3 font-semibold w-[7rem] hidden 2xl:table-cell">Sucursal</th>}
+                  <th className="px-3 py-3 font-semibold w-[7.5rem]">Pedido</th>
+                  <th className="px-3 py-3 font-semibold">{t('ord.colClient')}</th>
+                  <th className="px-3 py-3 font-semibold w-[6rem] hidden xl:table-cell">{t('ord.colRoute')}</th>
+                  <th className="px-3 py-3 font-semibold w-[7rem] hidden 2xl:table-cell">{t('ord.colVehicle')}</th>
+                  <th className="px-3 py-3 font-semibold w-[10rem] hidden lg:table-cell">{t('ord.colItems')}</th>
+                  <th className="px-3 py-3 font-semibold">{t('ord.colAddress')}</th>
+                  <th className="px-3 py-3 font-semibold text-right w-[5.5rem]">{t('common.weight')}</th>
+                  <th className="px-3 py-3 font-semibold text-right w-[6rem]">{t('common.price')}</th>
+                  <th className="px-3 py-3 font-semibold w-[6.5rem] hidden md:table-cell">{t('ord.colDelivery')}</th>
+                  <th className="px-2 py-3 w-8"></th>
                 </tr>
               </thead>
               <tbody>
@@ -494,7 +518,7 @@ export default function OrdersPage() {
                     className="border-b hover:bg-blue-50/40 align-middle cursor-pointer"
                     onClick={() => setDetail(o)}
                   >
-                    <td className="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
+                    <td className="px-3 py-3 text-gray-600 text-xs whitespace-nowrap">
                       {fmtDate(fechaDe(o))}
                       {/* Sin `orderDate` la fecha es la de copiado, no la del pedido: se
                           avisa en vez de enseñarla como si fuera la buena. */}
@@ -502,10 +526,12 @@ export default function OrdersPage() {
                     </td>
                     {/* De qué sucursal es. Estaba sólo en el detalle, así que la lista
                         —que es donde se decide— no lo decía. */}
-                    <td className="px-4 py-3 text-xs text-gray-600">
-                      {o.branch?.name || <span className="text-gray-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3">
+                    {!sucursalId && (
+                      <td className="px-3 py-3 text-xs text-gray-600 hidden 2xl:table-cell">
+                        <span className="block truncate">{o.branch?.name || '—'}</span>
+                      </td>
+                    )}
+                    <td className="px-3 py-3">
                       {(() => { const e = estadoPedido(o); return (
                         <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-full ${e.cls}`}>{e.label}</span>
                       )})()}
@@ -521,19 +547,21 @@ export default function OrdersPage() {
                         <span className="block text-[10px] text-gray-400 mt-0.5">sin domicilio</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 font-medium">
-                      {o.customerName}
+                    <td className="px-3 py-3 font-medium">
+                      <span className="block truncate">{o.customerName}</span>
                       {o.operationNumber && (
                         <span className="block text-[11px] font-mono font-normal text-gray-400">{o.operationNumber}</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3 hidden xl:table-cell">
                       {o.route?.routeCode ? (
                         <span className="font-mono text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded-lg">{o.route.routeCode}</span>
                       ) : '—'}
                     </td>
-                    <td className="px-4 py-3 text-gray-600 text-xs">{o.route?.vehicle?.name || '—'}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3 text-gray-600 text-xs hidden 2xl:table-cell">
+                      <span className="block truncate">{o.route?.vehicle?.name || '—'}</span>
+                    </td>
+                    <td className="px-3 py-3 hidden lg:table-cell">
                       {o.items && o.items.length > 0 ? (
                         <div className="relative group inline-flex items-center gap-1">
                           <span className="text-[11px] bg-gray-100 rounded-full px-2 py-0.5 truncate max-w-[150px]">
@@ -557,21 +585,23 @@ export default function OrdersPage() {
                         </div>
                       ) : <span className="text-gray-300 text-xs italic">—</span>}
                     </td>
-                    <td className="px-4 py-3 text-gray-600 text-xs max-w-[200px] truncate">{o.endAddress || o.address}</td>
-                    <td className="px-4 py-3 text-right font-mono text-xs">{o.weight?.toFixed(1)} kg</td>
+                    <td className="px-3 py-3 text-gray-600 text-xs">
+                      <span className="block truncate">{o.endAddress || o.address}</span>
+                    </td>
+                    <td className="px-3 py-3 text-right font-mono text-xs whitespace-nowrap">{o.weight?.toFixed(1)} kg</td>
                     {/* Lo que Entrega le cobró al cliente. `price` es OTRA cosa: el
                         reparto de la carga del camión que calcula delivery, una cuenta
                         interna que no cobra nadie. Enseñar ésa como «Precio» era decir un
                         importe que no coincide con lo que se pagó. */}
-                    <td className="px-4 py-3 text-right font-semibold text-green-700 font-mono">
+                    <td className="px-3 py-3 text-right font-semibold text-green-700 font-mono whitespace-nowrap">
                       {o.pedidoCosto != null ? format(o.pedidoCosto) : <span className="text-gray-300 font-normal">sin cotizar</span>}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3 hidden md:table-cell">
                       {(() => { const s = deliveryStatus(o); return (
                         <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
                       )})()}
                     </td>
-                    <td className="px-4 py-3 text-right text-gray-300"><Icon icon="mdi:chevron-right" /></td>
+                    <td className="px-2 py-3 text-right text-gray-300"><Icon icon="mdi:chevron-right" /></td>
                   </tr>
                 ))}
               </tbody>

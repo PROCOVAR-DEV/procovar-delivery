@@ -456,8 +456,33 @@ test('el lote usa el peso que manda PEDIDO y no llama al almacén', async () => 
 test('una ruta se arma con los pedidos ya importados y suma SU peso', async () => {
   // El camino bueno: se eligen pedidos de la lista, no se re-teclea nada. Ya traen
   // ubicación, peso y costo de domicilio.
-  const disponibles = await pedir(`/api/orders/available?branchId=${habana.id}`)
-  const lista = (disponibles.json.orders ?? disponibles.json).slice(0, 3)
+  /**
+   * Si no quedan sueltos, esta prueba se hace los suyos.
+   *
+   * Cada ruta que se arma consume pedidos, y la siembra es finita: bastaba con haber
+   * corrido antes las pruebas de navegador —que también arman rutas— para que ésta
+   * fallara diciendo que armar rutas está roto. Ahora se los fabrica y no depende de lo
+   * que hayan dejado las demás.
+   */
+  const sueltos = async () => {
+    const r = await pedir(`/api/orders/available?branchId=${habana.id}`)
+
+    return (r.json.orders ?? r.json)
+  }
+
+  let lista = (await sueltos()).slice(0, 3)
+
+  if (lista.length < 2) {
+    const cliente = await prisma.customer.findFirst()
+
+    for (let i = lista.length; i < 2; i++) {
+      await pedir('/api/orders', {
+        metodo: 'POST',
+        cuerpo: { customerId: cliente.id, branchId: habana.id, items: [] },
+      })
+    }
+    lista = (await sueltos()).slice(0, 3)
+  }
 
   assert.ok(lista.length >= 2, 'hacen falta pedidos sin ruta para armar una')
 
@@ -917,6 +942,53 @@ test('sin Ventra delante, traer el catálogo lo DICE y no vacía lo que hay', as
   assert.ok([200, 502].includes(r.status), `status inesperado ${r.status}`)
   if (r.status === 502) assert.match(r.json.error, /Ventra/)
   assert.equal(await prisma.product.count(), antes)
+})
+
+test('los clientes se filtran por vendedor y por si tienen teléfono', async () => {
+  const conVendedor = await pedir('/api/customers')
+
+  assert.equal(conVendedor.status, 200)
+  assert.ok(Array.isArray(conVendedor.json.vendedores), 'no vienen los vendedores para el filtro')
+
+  const alguno = conVendedor.json.vendedores[0]
+
+  if (alguno) {
+    const r = await pedir(`/api/customers?vendedor=${encodeURIComponent(alguno.valor)}`)
+
+    assert.equal(r.status, 200)
+    // Todos los de la página tienen que ser suyos: si no, el filtro no acota nada.
+    for (const c of r.json.customers) assert.equal(c.vendedor, alguno.valor)
+  }
+
+  const sin = await pedir('/api/customers?telefono=0')
+
+  assert.equal(sin.status, 200)
+  for (const c of sin.json.customers) assert.ok(!c.phone, `${c.name} tiene teléfono y salió en «sin teléfono»`)
+})
+
+test('un pedido a mano lleva su costo, con la fórmula de Entrega', async () => {
+  const cliente = await prisma.customer.findFirst()
+  const r = await pedir('/api/orders', {
+    metodo: 'POST',
+    cuerpo: { customerId: cliente.id, branchId: habana.id, items: [] },
+  })
+
+  assert.equal(r.status, 200)
+
+  /**
+   * En local no hay Accesos con tarifa ni almacenes de verdad, así que sale sin costo —
+   * y lo que se comprueba es que lo DIGA. Un pedido sin precio y sin motivo manda a
+   * buscar el fallo donde no está.
+   */
+  if (r.json.order.pedidoCosto == null) {
+    assert.match(r.json.aviso ?? '', /Sin costo de domicilio/)
+  } else {
+    // Con datos, el importe sale de tarifa × distancia × peso: nunca negativo.
+    assert.ok(r.json.order.pedidoCosto >= 0)
+    assert.ok(r.json.order.deliveryDistanceKm > 0)
+  }
+
+  await prisma.order.delete({ where: { id: r.json.order.id } })
 })
 
 test.after(() => prisma.$disconnect())

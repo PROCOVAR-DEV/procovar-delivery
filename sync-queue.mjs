@@ -426,6 +426,10 @@ async function syncCustomers() {
       address: c.direccion ?? null,
       municipio: c.municipio ?? null,
       zona: c.zona ?? null,
+      // El código y el vendedor, a columnas: dentro de `meta` no se podían filtrar sin
+      // leerse los siete mil clientes en cada consulta.
+      codigo: c.codigo ?? null,
+      vendedor: c.vendedor?.nombre ?? c.vendedor?.codigo ?? null,
       lat: c.latitud,
       lng: c.longitud,
       sucursalCodigo: c.sucursalCodigo ?? null,

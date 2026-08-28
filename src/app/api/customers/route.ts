@@ -34,6 +34,9 @@ export async function GET(req: NextRequest) {
   const zona = params.get('zona')?.trim() || ''
   // De dónde salió: del espejo de PEDIDO o dado de alta a mano aquí.
   const origen = params.get('origen')?.trim() || ''
+  const vendedor = params.get('vendedor')?.trim() || ''
+  /** `1` sólo los que tienen teléfono, `0` sólo los que no. Sin él, los dos. */
+  const telefono = params.get('telefono')?.trim() || ''
   const pagina = Math.max(1, Number(params.get('pagina')) || 1)
 
   /**
@@ -65,6 +68,9 @@ export async function GET(req: NextRequest) {
           { municipio: { contains: q, mode: 'insensitive' as const } },
           { zona: { contains: q, mode: 'insensitive' as const } },
           { phone: { contains: q, mode: 'insensitive' as const } },
+          // Por su CÓDIGO, que es como lo nombra la gente cuando llama.
+          { codigo: { contains: q, mode: 'insensitive' as const } },
+          { vendedor: { contains: q, mode: 'insensitive' as const } },
         ],
       }
     : {}
@@ -78,6 +84,11 @@ export async function GET(req: NextRequest) {
       zona ? { zona } : {},
       origen === 'pedido' ? { source: 'pedido' } : {},
       origen === 'manual' ? { source: null } : {},
+      vendedor ? { vendedor } : {},
+      // Sin teléfono no se le puede avisar de que va el reparto: es una carencia real y
+      // por eso se puede listar.
+      telefono === '1' ? { phone: { not: null } } : {},
+      telefono === '0' ? { OR: [{ phone: null }, { phone: '' }] } : {},
     ].filter((x) => Object.keys(x).length > 0),
   }
 
@@ -100,6 +111,8 @@ export async function GET(req: NextRequest) {
         lat: true,
         lng: true,
         sucursalCodigo: true,
+        codigo: true,
+        vendedor: true,
         syncedAt: true,
       },
     }),
@@ -111,7 +124,7 @@ export async function GET(req: NextRequest) {
    * Salen de la base entera y no de la página que se ve, que ofrecería justo los
    * municipios que ya se están mirando.
    */
-  const [municipios, sucursales, zonas] = await Promise.all([
+  const [municipios, sucursales, zonas, vendedores, sinTelefono] = await Promise.all([
     prisma.customer.groupBy({
       by: ['municipio'],
       where: { ...porSucursal, municipio: { not: null } },
@@ -130,6 +143,15 @@ export async function GET(req: NextRequest) {
       _count: { _all: true },
       orderBy: { zona: 'asc' },
     }),
+    // Los vendedores que TIENEN clientes aquí. Es el filtro que más se pide: «los míos».
+    prisma.customer.groupBy({
+      by: ['vendedor'],
+      where: { ...porSucursal, vendedor: { not: null } },
+      _count: { _all: true },
+      orderBy: { vendedor: 'asc' },
+    }),
+    // Cuántos no tienen teléfono: sin él no se les puede avisar de que va el reparto.
+    prisma.customer.count({ where: { ...porSucursal, OR: [{ phone: null }, { phone: '' }] } }),
   ])
 
   return NextResponse.json({
@@ -143,6 +165,8 @@ export async function GET(req: NextRequest) {
     municipios: municipios.map((m) => ({ valor: m.municipio as string, clientes: m._count._all })),
     sucursales: sucursales.map((s) => ({ valor: s.sucursalCodigo as string, clientes: s._count._all })),
     zonas: zonas.map((z) => ({ valor: z.zona as string, clientes: z._count._all })),
+    vendedores: vendedores.map((v) => ({ valor: v.vendedor as string, clientes: v._count._all })),
+    sinTelefono,
   })
 }
 

@@ -38,11 +38,42 @@ export function emparejarConVentra(
     if (b.branchName) porClave.set(normalizarNombre(b.branchName), b.database)
   }
 
-  return sucursales.map((s) => ({
-    ...s,
-    database:
-      porClave.get(normalizarNombre(s.name))
-      ?? porClave.get(normalizarNombre(s.externalId ?? ''))
-      ?? null,
-  }))
+  /**
+   * Las formas en que puede venir escrito NUESTRO nombre.
+   *
+   * Los nombres de aquí llevan cosas que Ventra no usa: «Bayamo (Granma)» lleva las dos
+   * en una, y «Santiago de Cuba» lleva el «de Cuba» que allí no está. Los dos se quedaron
+   * sin catálogo en la primera pasada y sólo se vio porque el sondeo lo dice.
+   */
+  const formas = (s: SucursalLocal): string[] => {
+    const n = s.name
+    const sinParentesis = n.replace(/\([^)]*\)/g, ' ')
+    const dentro = [...n.matchAll(/\(([^)]*)\)/g)].map((m) => m[1])
+
+    return [n, sinParentesis, ...dentro, s.externalId ?? ''].map(normalizarNombre).filter(Boolean)
+  }
+
+  return sucursales.map((s) => {
+    const posibles = formas(s)
+    const exacta = posibles.map((f) => porClave.get(f)).find(Boolean)
+
+    if (exacta) return { ...s, database: exacta }
+
+    /**
+     * Último recurso: que una clave de Ventra esté CONTENIDA en nuestro nombre, y que
+     * todas las que encajen lleven a la MISMA base.
+     *
+     * Así «Santiago de Cuba» encuentra `santiago`. Si encajaran dos bases distintas se
+     * devuelve null a propósito: darle a una sucursal el catálogo de otra sale con
+     * precios y existencias creíbles que nadie cuestiona, y eso no se arregla después.
+     */
+    const candidatas = new Set<string>()
+
+    for (const [clave, base] of porClave) {
+      if (clave.length < 4) continue
+      if (posibles.some((f) => f.includes(clave) || clave.includes(f))) candidatas.add(base)
+    }
+
+    return { ...s, database: candidatas.size === 1 ? [...candidatas][0] : null }
+  })
 }

@@ -62,7 +62,14 @@ export async function GET(req: NextRequest) {
       {
         // Si ya hay alcance, la sucursal pedida sólo puede estrecharlo, no ampliarlo.
         ...(branchId && (!alcance.branchId || alcance.branchId === branchId) ? { branchId } : {}),
-        source: 'pedido',
+        /**
+         * Los de PEDIDO y los de aquí.
+         *
+         * Pedía sólo `source: 'pedido'`, así que un pedido metido a mano no aparecía
+         * nunca en el armador: se podía crear y no se podía repartir, que es todo lo que
+         * había que poder hacer con él.
+         */
+        source: { in: ['pedido', 'manual'] },
         routeId: null,
         endLat: { not: null },
         endLng: { not: null },

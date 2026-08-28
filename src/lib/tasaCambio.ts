@@ -18,6 +18,14 @@ import { pedirFirmado } from '@/lib/procovar-auth'
 export interface Tasa {
   codigo: string
   cupPorUsd: number
+  /**
+   * CUP por km y por kg: con lo que Entrega cobra el domicilio.
+   *
+   * `importe USD = (tarifaBase / cupPorUsd) × distancia × peso`. Es la fórmula de la APK
+   * tal cual, y por eso viaja: para que un pedido metido a mano aquí salga por el mismo
+   * número que uno hecho desde el teléfono, en vez de por una fórmula parecida.
+   */
+  tarifaBase: number | null
   fuente: string | null
   traidoAt: string
   /** false cuando lleva demasiado sin actualizarse en Accesos. */
@@ -65,6 +73,7 @@ async function preguntarAAccesos(codigo: string): Promise<Tasa | null> {
   return {
     codigo: b.codigo ?? codigo.toUpperCase(),
     cupPorUsd: b.cupPorUsd,
+    tarifaBase: typeof b.tarifaBase === 'number' ? b.tarifaBase : null,
     fuente: b.fuente ?? null,
     traidoAt: String(b.traidoAt ?? ''),
     fresca: b.fresca !== false,

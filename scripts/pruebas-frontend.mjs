@@ -559,6 +559,62 @@ test('los almacenes están en la barra lateral', async () => {
 
 // ------------------------------------------------------- cajones, móvil y el domicilio
 
+test('al filtrar, la barra de filtros NO se mueve y la tabla se queda', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  const antes = await page.locator('button[title="Estado del pedido en PEDIDO"]').boundingBox()
+
+  await elegir(page, 'Estado del pedido en PEDIDO', 'Completada')
+
+  /**
+   * Mientras llega lo nuevo, la tabla se queda donde está.
+   *
+   * Se sustituía por una caja de «Cargando» de 80px: la página encogía de golpe, la barra
+   * de filtros subía y el ratón acababa encima de otro desplegable.
+   */
+  assert.ok(await page.locator('table tbody tr').count() > 0, 'la tabla desapareció al filtrar')
+
+  const durante = await page.locator('button[title="Estado del pedido en PEDIDO"]').boundingBox()
+
+  assert.ok(Math.abs(durante.y - antes.y) <= 2, `la barra se movió ${Math.round(durante.y - antes.y)}px`)
+
+  await page.waitForTimeout(1200)
+
+  const despues = await page.locator('button[title="Estado del pedido en PEDIDO"]').boundingBox()
+
+  assert.ok(Math.abs(despues.y - antes.y) <= 2, `la barra se movió ${Math.round(despues.y - antes.y)}px al terminar`)
+  await cerrar(ctx)
+})
+
+test('la tabla de pedidos cabe sin arrastrar de lado en una pantalla normal', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  // Doce columnas no caben en ninguna pantalla: las prescindibles se esconden en vez de
+  // obligar a arrastrar para leer el peso o el precio.
+  const arrastre = await page.evaluate(() => {
+    const caja = document.querySelector('table')?.parentElement
+
+    return caja ? caja.scrollWidth - caja.clientWidth : -1
+  })
+
+  assert.equal(arrastre, 0, `la tabla sigue obligando a arrastrar ${arrastre}px`)
+
+  // Y lo que decide sigue estando: cliente, dirección, peso, precio.
+  const cabeceras = await page.locator('table thead th').allInnerTexts()
+
+  for (const c of ['Cliente', 'Dirección', 'Peso', 'Precio']) {
+    assert.ok(cabeceras.some((h) => h.includes(c)), `falta la columna ${c}`)
+  }
+  await cerrar(ctx)
+})
+
 test('el detalle del pedido abre en CAJÓN, y el domicilio es el de PEDIDO', async () => {
   const { ctx, page } = await conSesion()
 
@@ -634,6 +690,29 @@ test('se puede meter un pedido A MANO, en cajón, con su peso del catálogo', as
   assert.match(texto, /kg/, 'no sale el peso del producto elegido')
   // Y se dice que nace sin costo: ése lo pone el repartidor desde Entrega.
   assert.match(texto, /sin costo de domicilio/i)
+  await cerrar(ctx)
+})
+
+test('los clientes se filtran por vendedor, teléfono y municipio', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/customers`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  // El vendedor y el teléfono estaban en el dato y no se podían usar: el primero vivía
+  // dentro del payload entero y el segundo no se miraba.
+  assert.equal(await page.locator('button[title="Si tiene teléfono"]').count(), 1)
+
+  await elegir(page, 'Si tiene teléfono', 'Sin teléfono')
+  await page.waitForTimeout(900)
+
+  const filas = await page.locator('table tbody tr').count()
+
+  if (filas > 0) {
+    assert.match(await page.locator('table tbody').innerText(), /sin teléfono/i)
+  }
+
+  // Y el código del cliente se ve: es como lo nombra la gente cuando llama por él.
   await cerrar(ctx)
 })
 

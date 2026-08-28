@@ -18,6 +18,10 @@ interface Customer {
   phone?: string | null
   address?: string | null
   municipio?: string | null
+  /** El código en PEDIDO: es como lo nombra la gente cuando llama por él. */
+  codigo?: string | null
+  /** Quién lo atiende. */
+  vendedor?: string | null
   lat: number
   lng: number
   sucursalCodigo?: string | null
@@ -30,6 +34,8 @@ export default function CustomersPage() {
   const [query, setQuery] = useState('')
   const [municipio, setMunicipio] = useState('')
   const [zona, setZona] = useState('')
+  const [vendedor, setVendedor] = useState('')
+  const [telefono, setTelefono] = useState('')
   const [origen, setOrigen] = useState('')
   const [pagina, setPagina] = useState(1)
   const [showForm, setShowForm] = useState(false)
@@ -53,16 +59,18 @@ export default function CustomersPage() {
 
   // Cualquier cambio de filtro vuelve a la página 1: quedarse en la 7 de una lista que
   // ahora tiene 2 enseña un vacío que parece un fallo.
-  useEffect(() => { setPagina(1) }, [buscado, municipio, zona, origen])
+  useEffect(() => { setPagina(1) }, [buscado, municipio, zona, origen, vendedor, telefono])
 
   const { data, isLoading } = useQuery({
-    queryKey: ['customers', { buscado, municipio, zona, origen, pagina }],
+    queryKey: ['customers', { buscado, municipio, zona, origen, vendedor, telefono, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/customers', {
         params: {
           ...(buscado ? { q: buscado } : {}),
           ...(municipio ? { municipio } : {}),
           ...(zona ? { zona } : {}),
+          ...(vendedor ? { vendedor } : {}),
+          ...(telefono ? { telefono } : {}),
           ...(origen ? { origen } : {}),
           pagina,
         },
@@ -78,6 +86,8 @@ export default function CustomersPage() {
         municipios: { valor: string; clientes: number }[]
         sucursales: { valor: string; clientes: number }[]
         zonas: { valor: string; clientes: number }[]
+        vendedores: { valor: string; clientes: number }[]
+        sinTelefono: number
       }
     },
     enabled: !!token,
@@ -91,6 +101,8 @@ export default function CustomersPage() {
   const paginas = data?.paginas ?? 1
   const municipios = data?.municipios ?? []
   const zonas = data?.zonas ?? []
+  const vendedores = data?.vendedores ?? []
+  const sinTelefono = data?.sinTelefono ?? 0
   const filtered = customers
 
   return (
@@ -146,6 +158,37 @@ export default function CustomersPage() {
               opciones={municipios.map((m) => ({ valor: m.valor, etiqueta: m.valor, nota: m.clientes.toLocaleString() }))}
             />
           )}
+          {/*
+            De quién es el cliente y si se le puede llamar.
+
+            Los dos estaban en el dato y no se podían usar: el vendedor vivía dentro del
+            payload entero —filtrar por él era leerse los siete mil— y el teléfono no se
+            miraba. «Los míos» es el filtro que más se pide, y «sin teléfono» es una
+            carencia de verdad: a ése no se le puede avisar de que va el reparto.
+          */}
+          {vendedores.length > 1 && (
+            <Selector
+              titulo="Vendedor que lo atiende"
+              icono="mdi:account-tie-outline"
+              valor={vendedor}
+              todos={`Todos los vendedores (${vendedores.length})`}
+              onCambio={setVendedor}
+              opciones={vendedores.map((v) => ({ valor: v.valor, etiqueta: v.valor, nota: v.clientes.toLocaleString() }))}
+            />
+          )}
+
+          <Selector
+            titulo="Si tiene teléfono"
+            icono="mdi:phone-outline"
+            valor={telefono}
+            todos="Con y sin teléfono"
+            onCambio={setTelefono}
+            opciones={[
+              { valor: '1', etiqueta: 'Con teléfono' },
+              { valor: '0', etiqueta: 'Sin teléfono', nota: sinTelefono ? sinTelefono.toLocaleString() : undefined },
+            ]}
+          />
+
           {zonas.length > 1 && (
             <Selector
               titulo="Zona de reparto"
@@ -206,6 +249,7 @@ export default function CustomersPage() {
                 <tr>
                   <th className="px-4 py-2 text-left">Cliente</th>
                   <th className="px-4 py-2 text-left">Dirección</th>
+                  <th className="px-4 py-2 text-left">Vendedor</th>
                   <th className="px-4 py-2 text-left">Origen</th>
                 </tr>
               </thead>
@@ -214,11 +258,16 @@ export default function CustomersPage() {
                   <tr key={c.id} className="border-t border-line">
                     <td className="px-4 py-2 font-medium">
                       {c.name}
-                      {c.phone && <span className="block text-[11px] text-ink-soft/60">{c.phone}</span>}
+                      {/* El código es como lo nombra la gente cuando llama por él. */}
+                      {c.codigo && <span className="block font-mono text-[11px] text-ink-soft/60">{c.codigo}</span>}
+                      {c.phone
+                        ? <span className="block text-[11px] text-ink-soft/60">{c.phone}</span>
+                        : <span className="block text-[11px] text-amber-700">sin teléfono</span>}
                     </td>
                     <td className="px-4 py-2 text-ink-soft/80">
                       {[c.address, c.municipio].filter(Boolean).join(' · ') || '—'}
                     </td>
+                    <td className="px-4 py-2 text-xs text-ink-soft/80">{c.vendedor || '—'}</td>
                     <td className="px-4 py-2">
                       {c.source === 'pedido' ? (
                         <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 text-[11px] font-semibold">PEDIDO</span>

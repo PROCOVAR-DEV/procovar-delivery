@@ -78,6 +78,11 @@ model Customer {
   address        String?
   municipio      String?
   zona           String?
+  /// El código del cliente en PEDIDO (SC06TCP1257). Es como lo nombra la gente.
+  codigo         String?
+  /// De quién es: el vendedor que lo atiende. Estaba dentro de `meta` —el payload
+  /// entero— así que filtrar por él obligaba a leer y descartar los siete mil clientes.
+  vendedor       String?
   lat            Float
   lng            Float
   sucursalCodigo String?
@@ -87,6 +92,8 @@ model Customer {
   updatedAt      DateTime @updatedAt
 
   @@index([source, externalId])
+  @@index([vendedor])
+  @@index([codigo])
 }
 
 model Branch {

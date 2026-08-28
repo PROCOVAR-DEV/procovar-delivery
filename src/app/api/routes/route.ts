@@ -96,7 +96,10 @@ async function createRouteFromExistingOrders(
    */
   const orders = await prisma.order.findMany({
     where: {
-      id: { in: orderIds }, source: 'pedido', routeId: null,
+      // Los de PEDIDO y los metidos a mano: los dos se reparten igual. Pedía sólo
+      // `'pedido'`, así que un pedido manual se podía elegir en la lista y al generar la
+      // ruta contestaba «ya no están disponibles» — sin decir que el motivo era su origen.
+      id: { in: orderIds }, source: { in: ['pedido', 'manual'] }, routeId: null,
       endLat: { not: null }, endLng: { not: null },
       ...(opts.branchId ? { branchId: opts.branchId } : {}),
     },

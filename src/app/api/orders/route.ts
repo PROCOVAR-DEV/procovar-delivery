@@ -3,6 +3,9 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
 import { resolveScope, scopeWhere, sucursalDeLaPersona } from '@/lib/scope'
+import { costoDomicilioEntrega, distanciaHaversineKm } from '@/lib/domicilioEntrega'
+import { tasaDeSucursal } from '@/lib/tasaCambio'
+import { almacenesDeSucursal } from '@/lib/almacenes'
 import { leerFiltros, whereDeFiltros } from '@/lib/filtrosPedido'
 
 export const dynamic = 'force-dynamic'
@@ -237,6 +240,42 @@ export async function POST(req: NextRequest) {
     }
   })
 
+  /**
+   * El COSTO, con la fórmula de Entrega.
+   *
+   * Se calcula aquí y no se deja en blanco porque un pedido metido a mano se reparte hoy:
+   * dejarlo «sin cotizar» obliga a abrir la APK sólo para ponerle precio. Y se calcula
+   * con la MISMA fórmula que usa el repartidor —tarifa base × distancia × peso, distancia
+   * en línea recta del almacén al cliente— para que el mismo reparto no valga una cosa
+   * aquí y otra en el teléfono.
+   *
+   * La distancia sale del ALMACÉN PRINCIPAL de la sucursal, que es desde donde se mide
+   * (los almacenes se gestionan en esta misma aplicación). Sin almacén con punto, o sin
+   * tarifa o tasa de esa sucursal, se queda sin precio y se DICE por qué: un cero se suma
+   * y se lee como «este domicilio es gratis».
+   */
+  let costo: ReturnType<typeof costoDomicilioEntrega> = null
+  let porQueSinCosto: string | null = null
+
+  try {
+    const codigo = branch.externalId
+    const tasa = codigo ? await tasaDeSucursal(codigo) : null
+    const almacenes = codigo ? await almacenesDeSucursal(codigo) : []
+    const almacen = almacenes.find((a) => a.principal && a.latitud != null && a.longitud != null)
+      ?? almacenes.find((a) => a.latitud != null && a.longitud != null)
+
+    if (!almacen) porQueSinCosto = 'la sucursal no tiene un almacén con coordenadas'
+    else if (!tasa?.cupPorUsd) porQueSinCosto = `no hay tasa de cambio de ${codigo} en Accesos`
+    else if (!tasa?.tarifaBase) porQueSinCosto = `no hay tarifa base de ${codigo} en Entrega`
+    else {
+      const km = distanciaHaversineKm(almacen.latitud as number, almacen.longitud as number, lat, lng)
+
+      costo = costoDomicilioEntrega(tasa.tarifaBase, tasa.cupPorUsd, km, peso)
+    }
+  } catch (e) {
+    porQueSinCosto = `no se pudo calcular: ${(e as Error).message}`
+  }
+
   const order = await prisma.order.create({
     data: {
       source: 'manual',
@@ -252,8 +291,10 @@ export async function POST(req: NextRequest) {
       weight: Number(peso.toFixed(3)),
       items: items as unknown as Prisma.InputJsonValue,
       notes: body.notes?.trim() || null,
-      // Nace SIN precio de domicilio: lo pone el repartidor desde Entrega.
-      pedidoCosto: null,
+      // El costo va en `pedidoCosto` como el de los demás: es el que se cobra, calculado
+      // con la fórmula de Entrega. El repartidor puede corregirlo desde la APK.
+      pedidoCosto: costo?.usd ?? null,
+      deliveryDistanceKm: costo?.distanciaKm ?? null,
       requiereDomicilio: true,
       orderDate: new Date(),
       branchId: branch.id,
@@ -262,8 +303,10 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  return NextResponse.json({
-    order,
-    aviso: sinPeso ? `${sinPeso} producto(s) sin peso en Ventra: el peso total se queda corto.` : null,
-  })
+  const avisos = [
+    sinPeso ? `${sinPeso} producto(s) sin peso en Ventra: el peso total se queda corto.` : null,
+    costo == null ? `Sin costo de domicilio: ${porQueSinCosto ?? 'faltan datos'}.` : null,
+  ].filter(Boolean)
+
+  return NextResponse.json({ order, costo, aviso: avisos.join(' ') || null })
 }
