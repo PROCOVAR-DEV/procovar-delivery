@@ -82,6 +82,33 @@ export async function pedirFirmado<T>(ruta: string): Promise<T> {
   return (await res.json()) as T
 }
 
+/**
+ * Una escritura firmada a Accesos, con el método que haga falta.
+ *
+ * `llamar` de aquí abajo es POST fijo porque nació para el canje del código del login.
+ * Los almacenes se guardan con PUT —se manda la lista completa de cómo tiene que quedar,
+ * no un cambio suelto— y decir POST cuando es PUT es mentir sobre lo que hace, igual que
+ * lo era decir POST para leer la tasa.
+ */
+export async function enviarFirmado<T>(ruta: string, metodo: 'POST' | 'PUT' | 'DELETE', cuerpo: unknown): Promise<T> {
+  if (!SIGNING_KEY) throw new Error('PROCOVAR_AUTH_SIGNING_KEY no está configurada')
+
+  const texto = JSON.stringify(cuerpo ?? {})
+  const res = await fetch(new URL(ruta, AUTH_URL).toString(), {
+    method: metodo,
+    headers: firmar(metodo, ruta, texto),
+    body: texto,
+    cache: 'no-store',
+    signal: AbortSignal.timeout(15000),
+  })
+
+  const bruto = await res.text()
+
+  if (!res.ok) throw new Error(`auth ${res.status}: ${bruto.slice(0, 160)}`)
+
+  return (bruto ? JSON.parse(bruto) : {}) as T
+}
+
 async function llamar<T>(ruta: string, cuerpo: unknown): Promise<T> {
   if (!SIGNING_KEY) throw new Error('PROCOVAR_AUTH_SIGNING_KEY no está configurada')
 

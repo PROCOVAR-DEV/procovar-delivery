@@ -34,6 +34,9 @@ const navItems = [
   { href: '/orders', icon: 'mdi:package-variant-closed', key: 'nav.orders' },
   { href: '/customers', icon: 'mdi:account-multiple-outline', key: 'nav.customers' },
   { href: '/vehicles', icon: 'mdi:truck-outline', key: 'nav.vehicles' },
+  // Los almacenes vienen de Accesos, pero se gestionan aquí: el domicilio se mide desde
+  // ellos, y quien nota un punto mal puesto es el que reparte.
+  { href: '/warehouses', icon: 'mdi:warehouse', key: 'nav.warehouses' },
 ]
 
 export default function Sidebar() {

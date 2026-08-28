@@ -76,6 +76,19 @@ docker run --rm --network host -v "$PWD":/app -w /app \
 La sesión se pone a mano (la cookie `token` firmada con `JWT_SECRET`) para no depender de
 Accesos, que en local no está.
 
+Para las pantallas que hablan con Accesos —hoy la de **Almacenes**— hace falta además el
+Accesos de mentira, que contesta `/api/service/almacenes` y se guarda lo que le mandan:
+
+```bash
+node scripts/accesos-de-mentira.mjs 3610
+# y delivery levantado apuntando ahí:
+PROCOVAR_AUTH_URL=http://localhost:3610 \
+PROCOVAR_AUTH_SIGNING_KEY=00112233445566778899aabbccddeeff \
+npx next start -p 3399
+```
+
+No comprueba la firma: eso se comprueba en Accesos de verdad, y aquí sólo estorbaría.
+
 ## 4. El espejo entero — a mano, cuando se toca la integración
 
 Las tres capas de arriba prueban cada lado por su cuenta. Esto prueba la costura: que lo

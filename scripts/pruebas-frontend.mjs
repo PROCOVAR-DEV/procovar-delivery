@@ -466,6 +466,66 @@ test('elegida una sucursal, se ven sólo las suyas y sin encabezados', async () 
   await cerrar(ctx)
 })
 
+// ------------------------------------------------------- almacenes
+
+test('los almacenes de cada sucursal se ven, y sólo los de las sucursales de aquí', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('text=La Habana')
+
+  const texto = await page.locator('body').innerText()
+
+  assert.match(texto, /La Habana/)
+  assert.match(texto, /Camagüey/)
+  // Accesos devuelve todas las suyas; aquí sólo se enseñan las que existen en delivery.
+  assert.equal(/Sucursal ajena/.test(texto), false, 'se coló una sucursal que no es de aquí')
+  // Y se dice cuál no tiene ninguno: sin almacén no se puede cotizar un domicilio suyo.
+  assert.match(texto, /sin almacenes/)
+  await cerrar(ctx)
+})
+
+test('se añade un almacén y al recargar sigue ahí', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
+  await page.click('text=Camagüey')
+  await page.click('text=Añadir un almacén')
+  await page.fill('input[placeholder="Nombre del almacén"]', 'Nave del puerto')
+  await page.click('button:has-text("Guardar")')
+  await page.waitForSelector('text=Guardado en Accesos')
+
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('text=Camagüey')
+  await page.click('text=Camagüey')
+
+  assert.equal(await page.locator('input[value="Nave del puerto"]').count(), 1)
+  await cerrar(ctx)
+})
+
+test('un almacén sin coordenadas se guarda, pero avisado', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('text=Camagüey')
+  await page.click('text=Camagüey')
+
+  const texto = await page.locator('body').innerText()
+
+  // El de arriba se guardó sin punto: desde ahí no se puede medir el domicilio, y eso
+  // tiene que decirlo la pantalla en vez de dejar el domicilio sin cotizar en silencio.
+  assert.match(texto, /no se puede medir el domicilio/)
+  await cerrar(ctx)
+})
+
+test('los almacenes están en la barra lateral', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('nav a[href="/warehouses"]')
+  await cerrar(ctx)
+})
+
 test('el armador de rutas abre y lista pedidos de un día concreto', async () => {
   const { ctx, page, errores } = await conSesion()
 

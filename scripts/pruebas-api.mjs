@@ -757,4 +757,51 @@ test('un pedido SIN domicilio no necesita tasa: se importa igual', async () => {
   assert.equal(r.json.results[0].reason, 'sin-domicilio')
 })
 
+/* ─────────────── Los almacenes, que se gestionan aquí y viven en Accesos ─────────────── */
+
+test('los almacenes piden sesión', async () => {
+  const r = await pedir('/api/almacenes', { token: null })
+
+  assert.equal(r.status, 401)
+})
+
+test('sin Accesos delante, los almacenes contestan 502 con motivo, no revientan', async () => {
+  const r = await pedir('/api/almacenes')
+
+  // Con Accesos delante devuelve la lista; sin él, un 502 que DICE por qué. Lo que no
+  // puede pasar nunca es un 500 pelado: la pantalla no sabría qué contar.
+  assert.ok([200, 502].includes(r.status), `status inesperado ${r.status}: ${r.texto.slice(0, 120)}`)
+
+  if (r.status === 502) assert.match(r.json.error, /Accesos/)
+  else assert.ok(Array.isArray(r.json.sucursales))
+})
+
+test('el cuerpo del guardado se comprueba antes de molestar a Accesos', async () => {
+  const r = await pedir('/api/almacenes', { metodo: 'PUT', cuerpo: { codigo: 'HAB' } })
+
+  assert.equal(r.status, 400)
+})
+
+test('quien es de una sucursal no puede tocar los almacenes de otra', async () => {
+  // La ajena se saca del jefe, no se escribe a mano: la siembra puede ponerlo en
+  // cualquiera de las dos y la prueba tiene que seguir diciendo la verdad.
+  const ajena = jefe.branchId === habana.id ? camaguey : habana
+  const r = await pedir('/api/almacenes', {
+    token: TOKEN_JEFE,
+    metodo: 'PUT',
+    cuerpo: { codigo: ajena.externalId, almacenes: [] },
+  })
+
+  assert.equal(r.status, 403)
+})
+
+test('un código que no es de ninguna sucursal de aquí tampoco pasa', async () => {
+  const r = await pedir('/api/almacenes', {
+    metodo: 'PUT',
+    cuerpo: { codigo: 'NO-EXISTE', almacenes: [] },
+  })
+
+  assert.equal(r.status, 403)
+})
+
 test.after(() => prisma.$disconnect())
