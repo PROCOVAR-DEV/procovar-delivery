@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic'
  * El cotizador de UN pedido se retira.
  *
  * Esto lo llamaba PEDIDO para que delivery le dijera cuánto costaba un domicilio. Ya no:
- * el costo lo pone el repartidor desde delivery-apk y llega a PEDIDO por su webhook. El
+ * el costo lo pone el repartidor desde Entrega y llega a PEDIDO por su webhook. El
  * endpoint se quedó sin nadie que lo llamara.
  *
  * Y no era inofensivo estando ahí. Usaba `calculateHomeDeliveryPrice` —base + km + kg—,
@@ -23,7 +23,7 @@ export async function POST() {
   return NextResponse.json(
     {
       error:
-        'El cotizador individual se retiró. El costo del domicilio lo pone delivery-apk y lo escribe en PEDIDO. Para el reparto de carga de delivery, usa POST /api/quote/batch.',
+        'El cotizador individual se retiró. El costo del domicilio lo pone Entrega y lo escribe en PEDIDO. Para el reparto de carga de delivery, usa POST /api/quote/batch.',
     },
     { status: 410 },
   )

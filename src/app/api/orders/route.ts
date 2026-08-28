@@ -115,7 +115,7 @@ export async function GET(req: NextRequest) {
  * El alta manual de pedidos SE VA.
  *
  * Los pedidos entran por una sola puerta: el espejo de PEDIDO. El formulario que llamaba
- * aquí ya se quitó —eso lo hace delivery-apk—, pero el endpoint se quedó, y un endpoint
+ * aquí ya se quitó —eso lo hace Entrega—, pero el endpoint se quedó, y un endpoint
  * que crea pedidos sin sucursal, sin fecha y sin `source` es una segunda puerta abierta:
  * el pedido que entra por ella no cuadra con PEDIDO y no hay forma de saber de dónde
  * salió.
@@ -126,7 +126,7 @@ export async function GET(req: NextRequest) {
 export async function POST() {
   return NextResponse.json(
     {
-      error: 'El alta manual de pedidos se retiró. Los pedidos entran desde PEDIDO (espejo) y el costo del domicilio lo pone delivery-apk.',
+      error: 'El alta manual de pedidos se retiró. Los pedidos entran desde PEDIDO (espejo) y el costo del domicilio lo pone Entrega.',
     },
     { status: 410 },
   )

@@ -272,7 +272,7 @@ test('el alta manual de pedidos está retirada, y lo dice', async () => {
   })
 
   assert.equal(r.status, 410)
-  assert.match(r.json.error, /delivery-apk|PEDIDO/)
+  assert.match(r.json.error, /Entrega|PEDIDO/)
 })
 
 test('el cotizador individual está retirado: queda UNA fórmula', async () => {

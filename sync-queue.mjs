@@ -9,7 +9,7 @@
 // Lo que queda es lo único que hacía falta: pedirle a PEDIDO sus pedidos y sus clientes,
 // y guardarlos aquí para poder planificar las rutas a mano.
 //
-// El costo del domicilio NO se toca. Lo pone delivery-apk directamente en PEDIDO. Lo que
+// El costo del domicilio NO se toca. Lo pone Entrega directamente en PEDIDO. Lo que
 // se calcula aquí es el reparto de carga del camión, y se queda aquí.
 //
 // Uso:  node sync-queue.mjs [--once] [--poll 15000] [--recompute]

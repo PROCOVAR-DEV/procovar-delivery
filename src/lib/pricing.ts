@@ -43,7 +43,7 @@ export interface HomeDeliveryQuote {
  * según por qué endpoint entrara el pedido: el mismo domicilio costaba dos cosas y la
  * pantalla de Configuración decía que la fórmula era una sola.
  *
- * La usaba `/api/quote`, que se retiró: el costo lo pone delivery-apk. Queda UNA fórmula.
+ * La usaba `/api/quote`, que se retiró: el costo lo pone Entrega. Queda UNA fórmula.
  */
 
 /**

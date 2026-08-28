@@ -115,7 +115,7 @@ const emptyLoc: LocationValue = { address: '', lat: null, lng: null }
 // Aquí vivían `PendingStop` y `PedidoForm`: el alta de una entrega A MANO, con cliente,
 // dirección, productos y peso tecleados en el propio modal de crear ruta.
 //
-// Se fueron con el flujo manual. Esa entrega la crea delivery-apk, que es donde está el
+// Se fueron con el flujo manual. Esa entrega la crea Entrega, que es donde está el
 // repartidor; tenerlo en los dos sitios permitía que la misma entrega existiera dos veces
 // sin que nada las relacionara.
 
@@ -1463,7 +1463,7 @@ export default function RoutesPage() {
                       Aquí se creaba una entrega A MANO: cliente, dirección, productos y
                       peso tecleados en este formulario.
                       
-                      Se quita porque eso lo hace delivery-apk, que es donde está el
+                      Se quita porque eso lo hace Entrega, que es donde está el
                       repartidor. Tenerlo en los dos sitios significa que la misma entrega
                       puede existir dos veces —una tecleada aquí y otra en el teléfono— y
                       nada las relaciona: dos paradas, dos cobros, y ningún sistema sabe
