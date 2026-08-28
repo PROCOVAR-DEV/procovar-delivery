@@ -265,6 +265,63 @@ test('los clientes cargan y se encuentra uno que está más allá del tope', asy
   await cerrar(ctx)
 })
 
+// ------------------------------------------------------- sucursales
+
+test('quien ve varias sucursales tiene selector, con "todas" incluido', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
+
+  /**
+   * Se mira el `<select>`, no el texto de la página.
+   *
+   * Las opciones de un desplegable cerrado no son texto visible, así que un selector por
+   * texto no las encuentra aunque estén: la prueba fallaba por eso y no por la pantalla.
+   */
+  const selector = page.locator('select[title]').filter({ has: page.locator('option', { hasText: 'Todas las sucursales' }) })
+
+  await selector.first().waitFor({ timeout: 15000 })
+
+  const opciones = await selector.first().locator('option').allInnerTexts()
+
+  assert.ok(opciones.length >= 3, `el selector debería traer todas + cada sucursal: ${opciones}`)
+  assert.ok(opciones[0].includes('Todas'))
+  assert.ok(opciones.some((o) => /Habana/i.test(o)) && opciones.some((o) => /Camag/i.test(o)))
+  await cerrar(ctx)
+})
+
+test('quien lleva UNA sucursal ve su nombre y no un selector', async () => {
+  const jefe = await prisma.user.findFirst({ where: { branchId: { not: null } } })
+  const suya = await prisma.branch.findUnique({ where: { id: jefe.branchId } })
+  const ctx = await navegador.newContext({ viewport: { width: 1400, height: 900 } })
+  const suToken = jwt.sign(
+    { id: jefe.id, email: jefe.email, name: jefe.name, role: jefe.role, branchId: jefe.branchId },
+    SECRET,
+    { expiresIn: '1h' },
+  )
+
+  await ctx.addCookies([{ name: 'token', value: suToken, url: BASE, httpOnly: true }])
+  await ctx.addInitScript(
+    ([t, u]) => {
+      window.localStorage.setItem('token', t)
+      window.localStorage.setItem('user', JSON.stringify(u))
+    },
+    [suToken, { id: jefe.id, email: jefe.email, name: jefe.name, role: jefe.role, branchId: jefe.branchId }],
+  )
+
+  const page = await ctx.newPage()
+
+  await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector(`text=${suya.name}`, { timeout: 15000 })
+
+  // Ni selector ni "todas las sucursales": para quien lleva una no hay nada que elegir.
+  assert.equal(
+    await page.locator('select').filter({ has: page.locator('option', { hasText: 'Todas las sucursales' }) }).count(),
+    0,
+  )
+  await ctx.close()
+})
+
 // ------------------------------------------------------- barra y menú
 
 test('la barra lateral ya no lleva ni cerrar sesión ni los usuarios de Accesos', async () => {
