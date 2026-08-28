@@ -229,7 +229,7 @@ test('el estado del pedido se filtra y se ve en la tabla', async () => {
   await cerrar(ctx)
 })
 
-test('cada pedido dice de qué sucursal es, y se puede filtrar por ella', async () => {
+test('cada pedido dice de qué sucursal es', async () => {
   const { ctx, page } = await conSesion()
 
   await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
@@ -240,15 +240,13 @@ test('cada pedido dice de qué sucursal es, y se puede filtrar por ella', async 
 
   assert.ok(sucursales.some((s) => s.trim() && s.trim() !== '—'), `ninguna fila dice su sucursal: ${sucursales.slice(0, 3)}`)
 
-  assert.equal(await page.locator('button[title="Sucursal del pedido"]').count(), 1, 'falta el filtro de sucursal')
-
-  const antes = await totalPedidos(page)
-  const opciones = await opcionesDe(page, 'Sucursal del pedido')
-
-  await elegir(page, 'Sucursal del pedido', opciones[1].split('\n')[0])
-  await page.waitForTimeout(800)
-
-  assert.ok(await totalPedidos(page) < antes, 'elegir una sucursal no acotó nada')
+  /**
+   * Y NO hay un filtro de sucursal aquí: lo manda el selector de la barra.
+   *
+   * Dos sitios para elegir lo mismo es poder elegir dos cosas distintas a la vez, y
+   * entonces ninguno de los dos dice lo que se está viendo.
+   */
+  assert.equal(await page.locator('button[title="Sucursal del pedido"]').count(), 0)
   await cerrar(ctx)
 })
 

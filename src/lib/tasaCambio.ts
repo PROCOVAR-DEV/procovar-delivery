@@ -33,6 +33,16 @@ export interface Tasa {
  * reiniciar, que es lo correcto para algo que no es nuestro.
  */
 const RECUERDO_MS = Number(process.env.TASA_CACHE_MS || 5 * 60 * 1000)
+
+/**
+ * El «no hay tasa» se recuerda MUCHO menos.
+ *
+ * Una tasa que existe no cambia en cinco minutos, así que guardarla ese rato está bien.
+ * Pero «esta sucursal todavía no tiene» es un estado que alguien está arreglando ahora
+ * mismo: se pone en Entrega, Accesos la trae... y aquí seguía diciendo que no hay durante
+ * cinco minutos más. Pasó de verdad — la tasa estaba puesta y la pantalla seguía en USD.
+ */
+const RECUERDO_SIN_TASA_MS = Number(process.env.TASA_CACHE_VACIA_MS || 20 * 1000)
 const recordadas = new Map<string, { tasa: Tasa | null; cuando: number }>()
 
 async function preguntarAAccesos(codigo: string): Promise<Tasa | null> {
@@ -74,7 +84,9 @@ export async function tasaDeSucursal(codigo: string | null | undefined): Promise
   const clave = codigo.trim().toUpperCase()
   const guardada = recordadas.get(clave)
 
-  if (guardada && Date.now() - guardada.cuando < RECUERDO_MS) return guardada.tasa
+  const dura = guardada?.tasa ? RECUERDO_MS : RECUERDO_SIN_TASA_MS
+
+  if (guardada && Date.now() - guardada.cuando < dura) return guardada.tasa
 
   try {
     const tasa = await preguntarAAccesos(clave)

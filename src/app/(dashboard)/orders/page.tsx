@@ -74,7 +74,6 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState('todos')
   const [municipioFilter, setMunicipioFilter] = useState('')
   const [vendedorFilter, setVendedorFilter] = useState('')
-  const [sucursalFilter, setSucursalFilter] = useState('')
   // Los filtros del CATÁLOGO, los que aplica el servidor. Vacío = sin filtrar.
   const [estado, setEstado] = useState('')
   const [archivado, setArchivado] = useState('')
@@ -113,7 +112,7 @@ export default function OrdersPage() {
   // ahora tiene 2 páginas enseña un vacío que parece un fallo.
   useEffect(() => {
     setPagina(1)
-  }, [buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, sucursalFilter, desde, hasta])
+  }, [buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, desde, hasta])
 
   /**
    * Los pedidos, filtrados y paginados POR EL SERVIDOR.
@@ -122,7 +121,7 @@ export default function OrdersPage() {
    * que la dejaba colgada. Aquí sólo viaja la página que se está mirando.
    */
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, sucursalFilter, desde, hasta, pagina }],
+    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, desde, hasta, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/orders', {
         params: {
@@ -133,7 +132,6 @@ export default function OrdersPage() {
           ...(cotizado ? { cotizado } : {}),
           ...(municipioFilter ? { municipio: municipioFilter } : {}),
           ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
-          ...(sucursalFilter ? { branchId: sucursalFilter } : {}),
           ...(desde ? { desde } : {}),
           ...(hasta ? { hasta } : {}),
           pagina,
@@ -169,7 +167,6 @@ export default function OrdersPage() {
 
   const municipios = facetas?.municipios ?? []
   const vendedores = facetas?.vendedores ?? []
-  const sucursales = facetas?.sucursales ?? []
 
   // Estado de entrega del pedido (para el badge y el filtro):
   //  - Entregado: ya se entregó (deliveredAt) o su ruta está completada.
@@ -237,12 +234,12 @@ export default function OrdersPage() {
 
   /** ¿Hay algún filtro puesto? Sirve para saber si un cero es «no hay» o «no cuadra». */
   const hayFiltro = Boolean(
-    buscado || estado || archivado || domicilio || cotizado || municipioFilter || vendedorFilter || sucursalFilter || desde || hasta,
+    buscado || estado || archivado || domicilio || cotizado || municipioFilter || vendedorFilter || desde || hasta,
   )
 
   const limpiarFiltros = () => {
     setSearch(''); setEstado(''); setArchivado(''); setDomicilio(''); setCotizado('')
-    setMunicipioFilter(''); setVendedorFilter(''); setSucursalFilter(''); setDesde(''); setHasta('')
+    setMunicipioFilter(''); setVendedorFilter(''); setDesde(''); setHasta('')
   }
 
   const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString() : '—'
@@ -263,17 +260,10 @@ export default function OrdersPage() {
               {isFetching && <Icon icon="mdi:loading" className="ml-1.5 inline animate-spin text-gray-400" />}
             </span>
 
-            {/* La SUCURSAL, la primera: es por donde se empieza a mirar cuando se ven
-                todas. Con el conteo, para no elegir una vacía y volver. */}
-            {sucursales.length > 1 && (
-              <Selector
-                titulo="Sucursal del pedido"
-                valor={sucursalFilter}
-                todos="Todas las sucursales"
-                onCambio={setSucursalFilter}
-                opciones={sucursales.map((s) => ({ valor: s.valor, etiqueta: s.nombre, nota: s.pedidos.toLocaleString() }))}
-              />
-            )}
+            {/* La SUCURSAL no se filtra aquí: la manda el selector de la barra de arriba.
+                Tener dos sitios donde elegirla es poder elegir dos cosas distintas a la
+                vez —y entonces ninguno de los dos dice lo que se está viendo—. Quien sólo
+                tiene una sucursal no ve ni ese selector: ya viene puesta. */}
 
             {/* El estado EN PEDIDO. Lo filtra la base, sobre los 50.000, no sobre la
                 página que se está viendo. */}

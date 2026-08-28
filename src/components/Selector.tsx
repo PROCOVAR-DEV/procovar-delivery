@@ -35,6 +35,15 @@ interface Props {
   className?: string
   /** A partir de cuántas opciones aparece el buscador. */
   desdeCuantas?: number
+  /**
+   * Un icono DENTRO del botón.
+   *
+   * Va aquí y no en un envoltorio de fuera a propósito: el menú se coloca contra el borde
+   * del botón, así que con el icono fuera el botón empieza más a la derecha de lo que
+   * parece la caja, y el menú salía descolocado unos pixeles. Con el icono dentro, lo que
+   * se ve y lo que se mide son lo mismo.
+   */
+  icono?: string
 }
 
 export default function Selector({
@@ -45,6 +54,7 @@ export default function Selector({
   titulo,
   className = '',
   desdeCuantas = 7,
+  icono,
 }: Props) {
   const [abierto, setAbierto] = useState(false)
   const [busca, setBusca] = useState('')
@@ -88,10 +98,20 @@ export default function Selector({
       const abajo = window.innerHeight - r.bottom
       const alto = Math.min(320, filtradas.length * 38 + 60)
 
+      /**
+       * Pegado al borde IZQUIERDO del botón, salvo que se salga por la derecha.
+       *
+       * El menú es más ancho que algunos botones, así que se comprueba si cabe; si no,
+       * se alinea por la derecha en vez de empujarlo a un sitio cualquiera. Antes se
+       * recortaba con un `min` a secas y quedaba descolocado respecto al botón.
+       */
+      const ancho = Math.max(r.width, 240)
+      const cabe = r.left + ancho <= window.innerWidth - 8
+
       setPos({
         top: abajo < alto && r.top > alto ? r.top - alto - 4 : r.bottom + 4,
-        left: Math.min(r.left, window.innerWidth - Math.max(r.width, 240) - 8),
-        width: Math.max(r.width, 240),
+        left: cabe ? r.left : Math.max(8, r.right - ancho),
+        width: ancho,
       })
     }
 
@@ -160,6 +180,7 @@ export default function Selector({
           valor ? 'border-primary/50 text-ink font-medium' : 'border-line text-ink-soft'
         } hover:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/30 ${className}`}
       >
+        {icono && <Icon icon={icono} className="shrink-0 text-base text-ink-soft/60" />}
         <span className="truncate max-w-[190px]">{elegida?.etiqueta ?? todos ?? '—'}</span>
         {elegida?.nota && <span className="text-[11px] text-ink-soft/60 shrink-0">{elegida.nota}</span>}
         <Icon icon="mdi:chevron-down" className={`shrink-0 text-base text-ink-soft/50 transition-transform ${abierto ? 'rotate-180' : ''}`} />

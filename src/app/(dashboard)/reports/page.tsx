@@ -8,6 +8,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
+import Selector from '@/components/Selector'
 import * as XLSX from 'xlsx'
 
 interface Vehicle {
@@ -161,13 +162,13 @@ export default function ReportsPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">{t('rep.vehicle')}</label>
-              <select value={vehicleFilter} onChange={(e) => setVehicleFilter(e.target.value)}
-                className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[180px]">
-                <option value="">{t('rep.allVehicles')}</option>
-                {(vehicles as Vehicle[]).map((v) => (
-                  <option key={v.id} value={v.id}>{v.name}{v.plate ? ` (${v.plate})` : ''}</option>
-                ))}
-              </select>
+              <Selector
+                titulo="Vehículo"
+                valor={vehicleFilter === 'all' ? '' : vehicleFilter}
+                todos="Todos los vehículos"
+                onCambio={(val) => setVehicleFilter(val || 'all')}
+                opciones={vehicles.map((v) => ({ valor: v.id, etiqueta: v.name }))}
+              />
             </div>
             {(dateFrom || dateTo || vehicleFilter) && (
               <button onClick={clearFilters}

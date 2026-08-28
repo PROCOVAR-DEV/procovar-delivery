@@ -9,6 +9,7 @@ import { useAppStore } from '@/store/useAppStore'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
+import Selector from '@/components/Selector'
 
 interface Vehicle {
   id: string
@@ -632,15 +633,17 @@ export default function VehiclesPage() {
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">{t('common.status')}</label>
-                  <select
-                    value={form.status}
-                    onChange={(e) => setForm({ ...form, status: e.target.value })}
-                    className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="available">{t('veh.status.available')}</option>
-                    <option value="in_use">{t('veh.status.in_use')}</option>
-                    <option value="maintenance">{t('veh.status.maintenance')}</option>
-                  </select>
+                  <Selector
+                    titulo="Estado del vehículo"
+                    className="w-full justify-between"
+                    valor={form.status}
+                    onCambio={(val) => setForm({ ...form, status: val || 'available' })}
+                    opciones={[
+                      { valor: 'available', etiqueta: 'Disponible' },
+                      { valor: 'in_route', etiqueta: 'En ruta' },
+                      { valor: 'maintenance', etiqueta: 'En mantenimiento' },
+                    ]}
+                  />
                 </div>
               </div>
 

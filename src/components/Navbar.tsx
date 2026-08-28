@@ -89,12 +89,11 @@ export default function Navbar({ title }: { title: string }) {
       </div>
       <div className="flex items-center gap-2.5">
         {branches.length > 0 && (
-          <div className="flex items-center gap-1 bg-white border border-line rounded-xl pl-2.5 pr-1.5 py-1 shadow-sm">
-            <Icon icon="mdi:store-outline" className="text-ink-soft/60 text-base" />
+          <>
             {variasSucursales ? (
               <Selector
                 titulo="Sucursal que se está mirando"
-                className="!border-0 !bg-transparent !px-1 !py-0.5"
+                icono="mdi:store-outline"
                 valor={sucursalId ?? ''}
                 todos={`Todas las sucursales (${branches.length})`}
                 opciones={branches.map((b) => ({ valor: b.id, etiqueta: b.name, nota: b.externalId ?? undefined }))}
@@ -113,24 +112,23 @@ export default function Navbar({ title }: { title: string }) {
               />
             ) : (
               // Una sola: se dice cuál es y no se ofrece elegir. No hay nada que elegir.
-              <span className="text-xs font-semibold text-ink py-1 pr-0.5 max-w-[180px] truncate">
-                {branchLabel(unica)}
+              <span className="flex items-center gap-1.5 bg-white border border-line rounded-xl px-3 py-2 text-sm text-ink shadow-sm">
+                <Icon icon="mdi:store-outline" className="text-ink-soft/60 text-base" />
+                <span className="max-w-[180px] truncate">{branchLabel(unica)}</span>
               </span>
             )}
-          </div>
+          </>
         )}
-        <div className="flex items-center gap-1 bg-white border border-line rounded-xl pl-2.5 pr-1.5 py-1 shadow-sm">
-          <Icon icon="mdi:translate" className="text-ink-soft/60 text-base" />
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value as 'es' | 'en')}
-            className="text-xs font-semibold bg-transparent text-ink py-1 pr-0.5 focus:outline-none cursor-pointer"
-            title={t('navbar.language')}
-          >
-            <option value="es">ES</option>
-            <option value="en">EN</option>
-          </select>
-        </div>
+        <Selector
+          titulo={t('navbar.language')}
+          icono="mdi:translate"
+          valor={language}
+          onCambio={(v) => setLanguage((v || 'es') as 'es' | 'en')}
+          opciones={[
+            { valor: 'es', etiqueta: 'Español', nota: 'ES' },
+            { valor: 'en', etiqueta: 'English', nota: 'EN' },
+          ]}
+        />
         {/* USD / CUP.
             La tasa es POR SUCURSAL y la mantiene Accesos. Una sucursal sin tasa se queda
             en USD y se dice por qué al pasar el ratón: convertir con la tasa de otra
@@ -146,16 +144,17 @@ export default function Navbar({ title }: { title: string }) {
             className={`text-base ${aviso ? 'text-amber-500' : 'text-ink-soft/60'}`}
           />
           {hayCup ? (
-            <select
-              value={code}
-              onChange={(e) => setDisplayCurrency(e.target.value)}
-              className="text-xs font-semibold font-mono bg-transparent text-ink py-1 pr-0.5 focus:outline-none cursor-pointer"
-              title={aviso ?? t('navbar.currency')}
-            >
-              {currencies.map((c) => (
-                <option key={c.code} value={c.code}>{c.code}</option>
-              ))}
-            </select>
+            <Selector
+              titulo={aviso ?? t('navbar.currency')}
+              className="!border-0 !bg-transparent !px-1 !py-0.5"
+              valor={code}
+              onCambio={(v) => setDisplayCurrency(v || 'USD')}
+              opciones={currencies.map((c) => ({
+                valor: c.code,
+                etiqueta: c.code,
+                nota: c.code === 'USD' ? undefined : `1 USD = ${c.rate}`,
+              }))}
+            />
           ) : (
             // Sin tasa no se ofrece elegir: un desplegable con una sola opción invita a
             // buscar la otra donde no está.

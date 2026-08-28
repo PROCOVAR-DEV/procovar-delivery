@@ -28,7 +28,6 @@ export default function CustomersPage() {
   const { token } = useAppStore()
   const [query, setQuery] = useState('')
   const [municipio, setMunicipio] = useState('')
-  const [sucursal, setSucursal] = useState('')
   const [zona, setZona] = useState('')
   const [origen, setOrigen] = useState('')
   const [pagina, setPagina] = useState(1)
@@ -53,16 +52,15 @@ export default function CustomersPage() {
 
   // Cualquier cambio de filtro vuelve a la página 1: quedarse en la 7 de una lista que
   // ahora tiene 2 enseña un vacío que parece un fallo.
-  useEffect(() => { setPagina(1) }, [buscado, municipio, sucursal, zona, origen])
+  useEffect(() => { setPagina(1) }, [buscado, municipio, zona, origen])
 
   const { data, isLoading } = useQuery({
-    queryKey: ['customers', { buscado, municipio, sucursal, zona, origen, pagina }],
+    queryKey: ['customers', { buscado, municipio, zona, origen, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/customers', {
         params: {
           ...(buscado ? { q: buscado } : {}),
           ...(municipio ? { municipio } : {}),
-          ...(sucursal ? { sucursalCodigo: sucursal } : {}),
           ...(zona ? { zona } : {}),
           ...(origen ? { origen } : {}),
           pagina,
@@ -91,7 +89,6 @@ export default function CustomersPage() {
   const total = data?.total ?? 0
   const paginas = data?.paginas ?? 1
   const municipios = data?.municipios ?? []
-  const sucursales = data?.sucursales ?? []
   const zonas = data?.zonas ?? []
   const filtered = customers
 
@@ -121,15 +118,9 @@ export default function CustomersPage() {
         {/* Los mismos filtros que en Pedidos, con lo que un cliente tiene. Los aplica la
             base: son siete mil, y filtrar en la pantalla obliga a traérselos todos. */}
         <div className="flex flex-wrap gap-2">
-          {sucursales.length > 1 && (
-            <Selector
-              titulo="Sucursal del cliente"
-              valor={sucursal}
-              todos="Todas las sucursales"
-              onCambio={setSucursal}
-              opciones={sucursales.map((s) => ({ valor: s.valor, etiqueta: s.valor, nota: s.clientes.toLocaleString() }))}
-            />
-          )}
+          {/* La sucursal la manda el selector de la barra de arriba, no éste. Ver la nota
+              en la pantalla de Pedidos: dos sitios para elegir lo mismo es poder elegir
+              dos cosas distintas. */}
           {municipios.length > 1 && (
             <Selector
               titulo="Municipio del cliente"
@@ -160,10 +151,10 @@ export default function CustomersPage() {
               { valor: 'manual', etiqueta: 'Sólo los manuales' },
             ]}
           />
-          {(municipio || sucursal || zona || origen || query) && (
+          {(municipio || zona || origen || query) && (
             <button
               type="button"
-              onClick={() => { setQuery(''); setMunicipio(''); setSucursal(''); setZona(''); setOrigen('') }}
+              onClick={() => { setQuery(''); setMunicipio(''); setZona(''); setOrigen('') }}
               className="px-3 py-2 text-sm text-ink-soft/70 hover:text-ink"
             >
               Quitar filtros

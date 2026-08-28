@@ -14,6 +14,7 @@ import { useAvisos } from '@/components/Avisos'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
+import Selector from '@/components/Selector'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false })
 
@@ -1026,16 +1027,14 @@ export default function RoutesPage() {
                 </button>
                 {expandedStep === 1 && (
                   <div className="p-3 border-t space-y-2">
-                    <select
-                      value={sucursalRuta}
-                      onChange={(e) => setSucursalRuta(e.target.value)}
-                      className="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="">Elige la sucursal…</option>
-                      {branches.map((b) => (
-                        <option key={b.id} value={b.id}>{b.name}</option>
-                      ))}
-                    </select>
+                    <Selector
+                        titulo="Sucursal de la ruta"
+                        className="w-full justify-between"
+                        valor={sucursalRuta}
+                        todos="Elige la sucursal…"
+                        onCambio={setSucursalRuta}
+                        opciones={branches.map((b) => ({ valor: b.id, etiqueta: b.name }))}
+                      />
                     <p className="text-xs text-gray-500">
                       Los pedidos, los vehículos y el punto de partida serán los de esta sucursal.
                     </p>
@@ -1076,16 +1075,14 @@ export default function RoutesPage() {
                   <div className="p-3 border-t space-y-2">
                     {(savedOrigins as SavedOrigin[]).length > 0 && (
                       <div className="mb-2">
-                        <select
-                          value={selectedOriginId}
-                          onChange={(e) => handleSelectSavedOrigin(e.target.value)}
-                          className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                        >
-                          <option value="">{t('routes.selectSavedOrigin')}</option>
-                          {(savedOrigins as SavedOrigin[]).map((o) => (
-                            <option key={o.id} value={o.id}>{o.name} · {o.address}</option>
-                          ))}
-                        </select>
+                        <Selector
+                          titulo="Punto de partida guardado"
+                          className="w-full justify-between"
+                          valor={selectedOriginId}
+                          todos="Elige un punto guardado…"
+                          onCambio={handleSelectSavedOrigin}
+                          opciones={savedOrigins.map((o) => ({ valor: o.id, etiqueta: o.name, nota: o.address }))}
+                        />
                         {selectedOriginId && (
                           <div className="flex justify-end mt-1">
                             <button
@@ -1184,16 +1181,18 @@ export default function RoutesPage() {
                     ) : (
                       <>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          <select
-                            value={selectedVehicleId}
-                            onChange={(e) => setSelectedVehicleId(e.target.value)}
-                            className="w-full px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-                          >
-                            <option value="">{t('routes.selectVehicle')}</option>
-                            {(vehicles as Vehicle[]).filter((v) => v.status === 'available').map((v) => (
-                              <option key={v.id} value={v.id}>{v.name}{v.plate ? ` (${v.plate})` : ''} · {t('routes.capacity', { c: v.capacity })}</option>
-                            ))}
-                          </select>
+                          <Selector
+                            titulo="Vehículo de la ruta"
+                            className="w-full justify-between"
+                            valor={selectedVehicleId}
+                            todos="Elige el vehículo…"
+                            onCambio={setSelectedVehicleId}
+                            opciones={vehicles.map((v) => ({
+                              valor: v.id,
+                              etiqueta: v.name,
+                              nota: `${v.capacity} kg`,
+                            }))}
+                          />
                           <input
                             type="text"
                             value={routeName}
@@ -1273,21 +1272,14 @@ export default function RoutesPage() {
                         esta pantalla inservible.
                       */}
                       <div className="flex flex-wrap gap-2 mb-2">
-                        <select
-                          value={sucursalRuta}
-                          onChange={(e) => setSucursalRuta(e.target.value)}
-                          className={`px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 min-w-[10rem] ${
-                            sucursalRuta ? '' : 'border-amber-400 bg-amber-50'
-                          }`}
-                        >
-                          {/* Sin sucursal no se debería crear una ruta: se marca en
-                              ámbar en vez de dejar elegido algo por defecto que luego
-                              nadie recuerda haber elegido. */}
-                          <option value="">Elige la sucursal…</option>
-                          {branches.map((b) => (
-                            <option key={b.id} value={b.id}>{b.name}</option>
-                          ))}
-                        </select>
+                        <Selector
+                        titulo="Sucursal de la ruta"
+                        className="w-full justify-between"
+                        valor={sucursalRuta}
+                        todos="Elige la sucursal…"
+                        onCambio={setSucursalRuta}
+                        opciones={branches.map((b) => ({ valor: b.id, etiqueta: b.name }))}
+                      />
                         <input
                           type="date"
                           value={diaPedidos}
@@ -1316,16 +1308,13 @@ export default function RoutesPage() {
                         estaba ignorando.
                       */}
                       <div className="flex flex-wrap gap-2 mb-2">
-                        <select
-                          value={filtroVendedor}
-                          onChange={(e) => setFiltroVendedor(e.target.value)}
-                          className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 flex-1 min-w-[9rem]"
-                        >
-                          <option value="">Todos los vendedores</option>
-                          {vendedoresEnLista.map((v) => (
-                            <option key={v} value={v}>{v}</option>
-                          ))}
-                        </select>
+                        <Selector
+                          titulo="Vendedor del pedido"
+                          valor={filtroVendedor}
+                          todos="Todos los vendedores"
+                          onCambio={setFiltroVendedor}
+                          opciones={vendedoresEnLista.map((v) => ({ valor: v, etiqueta: v }))}
+                        />
                         <input
                           type="number" min="0" step="0.5"
                           value={kmMax}
@@ -1364,16 +1353,13 @@ export default function RoutesPage() {
                             className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           />
                         </div>
-                        <select
-                          value={availMunicipio}
-                          onChange={(e) => setAvailMunicipio(e.target.value)}
-                          className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-[45%]"
-                        >
-                          <option value="todos">Todos</option>
-                          {availMunicipios.map((m) => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select>
+                        <Selector
+                          titulo="Municipio del cliente"
+                          valor={availMunicipio === 'todos' ? '' : availMunicipio}
+                          todos="Todos los municipios"
+                          onCambio={(v) => setAvailMunicipio(v || 'todos')}
+                          opciones={availMunicipios.map((m) => ({ valor: m, etiqueta: m }))}
+                        />
                       </div>
 
                       {/* Barra de capacidad del camión */}
