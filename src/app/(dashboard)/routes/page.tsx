@@ -217,7 +217,7 @@ export default function RoutesPage() {
     enabled: !!token,
   })
 
-  const { data: availableOrders = [], isLoading: loadingAvailable } = useQuery({
+  const { data: disponibles, isLoading: loadingAvailable } = useQuery({
     // La sucursal y el día entran en la clave: si no, al cambiarlos se seguiría viendo
     // la lista anterior en cache y parecería que el filtro no hace nada.
     queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos, filtroVendedor, kmMax, costoMin],
@@ -233,10 +233,25 @@ export default function RoutesPage() {
         },
         headers: { Authorization: `Bearer ${token}` },
       })
-      return res.data as AvailableOrder[]
+      /**
+       * Con tope, y diciéndolo.
+       *
+       * El endpoint devuelve `{ orders, total, truncated }`: antes devolvía TODOS los
+       * pedidos sin ruta —en producción son doce mil— y la pantalla se quedaba esperando.
+       * Se acepta también la forma vieja (un array pelado) por si queda algún cliente sin
+       * actualizar.
+       */
+      const d = res.data
+
+      return Array.isArray(d)
+        ? { orders: d as AvailableOrder[], truncated: false }
+        : (d as { orders: AvailableOrder[]; truncated: boolean })
     },
     enabled: !!token,
   })
+
+  const availableOrders = disponibles?.orders ?? []
+  const listaRecortada = disponibles?.truncated ?? false
 
   /**
    * Los vendedores que aparecen en los pedidos disponibles.
@@ -1158,6 +1173,18 @@ export default function RoutesPage() {
                       <div className="flex items-center justify-between mb-2">
                         <h5 className="text-sm font-semibold text-gray-700">{t('routes.availableOrders')}</h5>
                       </div>
+
+                      {/* Una lista recortada en silencio se lee como "esto es todo lo que
+                          hay", y quien arma la ruta da por hecho que no falta nada. */}
+                      {listaRecortada && (
+                        <p className="mb-2 flex items-start gap-1.5 rounded-xl bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                          <Icon icon="mdi:alert-outline" className="mt-px shrink-0 text-sm" />
+                          <span>
+                            Hay más pedidos de los que caben en la lista. Elegí la sucursal y el día
+                            para verlos todos: una ruta se arma con los de un sitio y un día.
+                          </span>
+                        </p>
+                      )}
 
                       {/*
                         Sucursal y día, antes que el buscador.

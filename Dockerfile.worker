@@ -12,6 +12,12 @@ RUN apk add --no-cache openssl
 ENV NODE_ENV=production
 
 # Dependencias primero (mejor cache de capas).
+# Playwright es una herramienta de PRUEBAS: aquí sólo se instala el paquete, nunca los
+# navegadores. Su script de instalación se baja ~150 MB de Chromium por su cuenta, y en la
+# imagen de producción eso es tiempo de build y peso de imagen para algo que nunca se va a
+# ejecutar: los navegadores viven en la imagen de Playwright, que es donde corren las
+# pruebas (ver PRUEBAS.md).
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package.json package-lock.json* ./
 RUN npm ci
 

@@ -26,12 +26,19 @@ export async function GET(req: NextRequest) {
   const scope = await resolveScope(req, user)
   const orders = await prisma.order.findMany({
     where: scopeWhere(scope),
-    // Por la fecha DEL PEDIDO. `createdAt` es cuándo lo copió el espejo, y el espejo trae
-    // quince días de una vez: ordenar por ella los deja a todos empatados en hoy.
-    //
-    // El orden FINAL se afina abajo: un pedido sin `orderDate` tiene que caer donde le
-    // toca por su fecha de copiado, y eso es un COALESCE que Prisma no sabe pedir.
-    orderBy: [{ orderDate: 'desc' }, { createdAt: 'desc' }],
+    /**
+     * La VENTANA la elige `createdAt`; el orden que se ve, la fecha del pedido (abajo).
+     *
+     * Ordenar aquí por `orderDate` parece lo correcto y no lo es todavía: en Postgres un
+     * nulo en un DESC va PRIMERO, y ahora mismo los 12.000 pedidos que ya están en el
+     * espejo lo tienen en null —la columna es nueva—. Con un tope, esos nulos se comerían
+     * la ventana entera y los recién traídos, que son los que sí traen fecha, no
+     * entrarían nunca.
+     *
+     * `createdAt` no tiene nulos y dice cuándo entró en el espejo, que para elegir "los
+     * más recientes" vale. El orden final es un COALESCE y se hace abajo.
+     */
+    orderBy: { createdAt: 'desc' },
     take: TOPE_LISTA,
     select: {
       id: true,

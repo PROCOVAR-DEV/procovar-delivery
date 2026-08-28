@@ -5,6 +5,9 @@ import { resolveScope, scopeWhere } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
+/** Cuántos pedidos como mucho. Ver el porqué junto al `take`. */
+const TOPE = 2000
+
 /**
  * GET /api/orders/available — Pedidos YA importados de PEDIDO que están listos para
  * meter en una ruta: son de origen `pedido`, tienen geolocalización y todavía NO están
@@ -68,10 +71,34 @@ export async function GET(req: NextRequest) {
       endLat: { not: null },
       endLng: { not: null },
     },
-    orderBy: [{ orderDate: 'desc' }, { createdAt: 'desc' }],
+    /**
+     * La ventana la elige `createdAt`; el orden que se ve, la fecha del pedido.
+     *
+     * Ordenar en la base por `orderDate` parece lo correcto y no lo es todavía: en
+     * Postgres un nulo en un DESC va PRIMERO, y ahora mismo TODOS los pedidos que ya
+     * están en el espejo lo tienen en null —la columna es nueva—. Con un tope, esos
+     * nulos se comerían la ventana entera y los pedidos con fecha, que son los recién
+     * traídos, no entrarían nunca.
+     *
+     * `createdAt` no tiene nulos y es un buen apoderado de la recencia: es cuándo entró
+     * en el espejo. El orden final se hace abajo, sobre las filas ya traídas.
+     */
+    orderBy: { createdAt: 'desc' },
+    /**
+     * Y un tope, que no había.
+     *
+     * En producción hay 12.621 pedidos sin ruta. Esto los devolvía TODOS, y para sacar
+     * el municipio y el vendedor tenía que leer el `meta` de cada uno —el pedido entero
+     * de PEDIDO— y descartarlo. La pantalla de armar rutas se quedaba esperando.
+     *
+     * Una ruta se arma con los pedidos de UNA sucursal y de UN día: para eso están los
+     * filtros. El tope es la red por debajo, para cuando no se usan.
+     */
+    take: TOPE,
     select: {
       id: true,
       orderDate: true,
+      createdAt: true,
       operationNumber: true,
       customerName: true,
       address: true,
@@ -152,5 +179,22 @@ export async function GET(req: NextRequest) {
     return true
   })
 
-  return NextResponse.json(filtered)
+  /**
+   * Por la fecha DEL PEDIDO, con la de copiado de respaldo.
+   *
+   * Es lo que hay que ordenar y es un COALESCE, que Prisma 5 no sabe pedir. Son como
+   * mucho `TOPE` filas ya traídas: ordenarlas aquí no cuesta nada.
+   */
+  filtered.sort(
+    (a, b) =>
+      new Date(b.orderDate ?? b.createdAt).getTime() - new Date(a.orderDate ?? a.createdAt).getTime(),
+  )
+
+  // Se dice si se cortó. Una lista recortada en silencio se lee como "esto es todo lo
+  // que hay", y quien arma la ruta da por hecho que no falta ningún pedido.
+  return NextResponse.json({
+    orders: filtered,
+    total: filtered.length,
+    truncated: orders.length >= TOPE,
+  })
 }
