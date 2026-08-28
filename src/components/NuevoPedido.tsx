@@ -18,6 +18,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Icon } from '@iconify/react'
 import Drawer from '@/components/Drawer'
 import CustomerPicker, { type Customer } from '@/components/CustomerPicker'
+import ClienteNuevo from '@/components/ClienteNuevo'
 import ProductPicker, { type Product } from '@/components/ProductPicker'
 import Selector from '@/components/Selector'
 import { useAppStore } from '@/store/useAppStore'
@@ -37,11 +38,14 @@ export default function NuevoPedido({ abierto, alCerrar }: { abierto: boolean; a
   const { token, sucursalId, user } = useAppStore()
   const queryClient = useQueryClient()
   const [cliente, setCliente] = useState<Customer | null>(null)
+  /** Cuando el cliente no está en la lista, se da de alta aquí mismo. */
+  const [creandoCliente, setCreandoCliente] = useState(false)
   const [lineas, setLineas] = useState<Linea[]>([])
   const [notas, setNotas] = useState('')
   const [sucursal, setSucursal] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [aviso, setAviso] = useState<string | null>(null)
+  const [costo, setCosto] = useState<{ usd: number; distanciaKm: number } | null>(null)
 
   const { data: branches = [] } = useQuery<Sucursal[]>({
     queryKey: ['branches'],
@@ -80,8 +84,9 @@ export default function NuevoPedido({ abierto, alCerrar }: { abierto: boolean; a
           { headers: { Authorization: `Bearer ${token}` } },
         )
       ).data,
-    onSuccess: (r: { aviso: string | null }) => {
+    onSuccess: (r: { aviso: string | null; costo?: { usd: number; distanciaKm: number } | null }) => {
       setAviso(r?.aviso ?? null)
+      setCosto(r?.costo ?? null)
       setError(null)
       queryClient.invalidateQueries({ queryKey: ['orders'] })
       // Se limpia para poder meter el siguiente sin cerrar y volver a abrir.
@@ -122,8 +127,10 @@ export default function NuevoPedido({ abierto, alCerrar }: { abierto: boolean; a
     >
       <div className="space-y-5">
         <p className="text-sm text-ink-soft">
-          Para lo que no viene de PEDIDO. Nace <b>sin costo de domicilio</b>: ése lo pone el
-          repartidor desde Entrega, igual que en los demás.
+          Para lo que no viene de PEDIDO. El costo del domicilio se calcula con la{' '}
+          <b>misma fórmula que Entrega</b> —tarifa de la sucursal × distancia desde el
+          almacén × peso—, así que sale por el mismo número que si se hiciera desde el
+          teléfono. El repartidor puede corregirlo allí.
         </p>
 
         {hayQuePreguntar && (
@@ -157,9 +164,36 @@ export default function NuevoPedido({ abierto, alCerrar }: { abierto: boolean; a
             <>
               <CustomerPicker onPick={setCliente} />
               {/* Sólo salen los que tienen geolocalización: sin ella no se puede repartir. */}
-              <p className="mt-1 text-[11px] text-ink-soft/70">
-                Salen los clientes de PEDIDO que tienen ubicación. Los de aquí se dan de alta en Clientes.
-              </p>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-ink-soft/70">
+                <span>Salen los clientes de PEDIDO que tienen ubicación.</span>
+                {/*
+                  Y si no está, se crea AQUÍ.
+                  
+                  Mandaba a la pantalla de Clientes: había que salirse del pedido a medias,
+                  darlo de alta allí y volver a empezar. El caso es justo éste — alguien
+                  que llama y no está en la lista.
+                */}
+                <button
+                  type="button"
+                  onClick={() => setCreandoCliente((v) => !v)}
+                  className="font-medium text-primary hover:underline"
+                >
+                  {creandoCliente ? 'Cancelar' : '¿No está? Crearlo aquí'}
+                </button>
+              </div>
+
+              {creandoCliente && (
+                <div className="mt-3 rounded-xl border border-line p-3">
+                  <ClienteNuevo
+                    alGuardar={(c) => {
+                      // Se elige solo: es el que se estaba buscando.
+                      setCliente({ ...c, externalId: '', lat: c.lat, lng: c.lng } as Customer)
+                      setCreandoCliente(false)
+                    }}
+                    alCancelar={() => setCreandoCliente(false)}
+                  />
+                </div>
+              )}
             </>
           )}
         </div>
@@ -233,7 +267,8 @@ export default function NuevoPedido({ abierto, alCerrar }: { abierto: boolean; a
         {error && <p className="text-sm text-red-600">{error}</p>}
         {crear.isSuccess && !error && (
           <p className="text-sm text-green-700">
-            Pedido creado.{aviso ? ` ${aviso}` : ''} Ya se puede meter en una ruta.
+            Pedido creado{costo ? ` · domicilio ${costo.usd} USD (${costo.distanciaKm} km)` : ''}.
+            {aviso ? ` ${aviso}` : ''} Ya se puede meter en una ruta.
           </p>
         )}
       </div>

@@ -688,8 +688,8 @@ test('se puede meter un pedido A MANO, en cajón, con su peso del catálogo', as
   const texto = await page.locator('[role="dialog"]').innerText()
 
   assert.match(texto, /kg/, 'no sale el peso del producto elegido')
-  // Y se dice que nace sin costo: ése lo pone el repartidor desde Entrega.
-  assert.match(texto, /sin costo de domicilio/i)
+  // Y se dice con qué se cobra: la misma fórmula que usa el repartidor.
+  assert.match(texto, /misma fórmula que Entrega/i)
   await cerrar(ctx)
 })
 
@@ -713,6 +713,26 @@ test('los clientes se filtran por vendedor, teléfono y municipio', async () => 
   }
 
   // Y el código del cliente se ve: es como lo nombra la gente cuando llama por él.
+  await cerrar(ctx)
+})
+
+test('si el cliente no está, se crea dentro del propio pedido', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+  await page.click('button:has-text("Nuevo pedido")')
+  await page.waitForSelector('[role="dialog"]')
+
+  /**
+   * Mandaba a la pantalla de Clientes: salirse del pedido a medias, darlo de alta allí y
+   * volver a empezar. Y el caso es justo ése — alguien que llama y no está en la lista.
+   */
+  await page.click('button:has-text("¿No está? Crearlo aquí")')
+  await page.waitForSelector('[role="dialog"] input[placeholder="Nombre *"]')
+
+  // La ubicación es obligatoria: sin ella el cliente no se puede repartir ni cotizar.
+  assert.match(await page.locator('[role="dialog"]').innerText(), /sin ubicación no se puede repartir/i)
   await cerrar(ctx)
 })
 

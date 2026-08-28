@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from 'react'
 import Navbar from '@/components/Navbar'
-import LocationInput, { LocationValue } from '@/components/LocationInput'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
 import Drawer from '@/components/Drawer'
+import ClienteNuevo from '@/components/ClienteNuevo'
 
 interface Customer {
   id: string
@@ -27,7 +27,6 @@ interface Customer {
   sucursalCodigo?: string | null
 }
 
-const emptyLoc: LocationValue = { address: '', lat: null, lng: null }
 
 export default function CustomersPage() {
   const { token } = useAppStore()
@@ -140,7 +139,9 @@ export default function CustomersPage() {
           subtitulo="Local de delivery: los de PEDIDO llegan solos"
           ancho="lg"
         >
-          <ManualCustomerForm onDone={() => setShowForm(false)} />
+          {/* El mismo formulario que se usa dentro del pedido a mano: uno solo, para
+              que no haya dos formas distintas de que falte un dato. */}
+          <ClienteNuevo alGuardar={() => setShowForm(false)} alCancelar={() => setShowForm(false)} />
         </Drawer>
 
         {/* Los mismos filtros que en Pedidos, con lo que un cliente tiene. Los aplica la
@@ -320,55 +321,3 @@ export default function CustomersPage() {
 }
 
 // Form de cliente MANUAL (source=null) local de delivery. NO crea nada en PEDIDO.
-function ManualCustomerForm({ onDone }: { onDone: () => void }) {
-  const { token } = useAppStore()
-  const queryClient = useQueryClient()
-  const [name, setName] = useState('')
-  const [phone, setPhone] = useState('')
-  const [municipio, setMunicipio] = useState('')
-  const [loc, setLoc] = useState<LocationValue>(emptyLoc)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  const canSave = name.trim() !== '' && loc.lat != null && loc.lng != null
-
-  const save = async () => {
-    if (!canSave || saving) return
-    setSaving(true)
-    setError('')
-    try {
-      await axios.post(
-        '/api/customers',
-        { name: name.trim(), phone, municipio, address: loc.address, lat: loc.lat, lng: loc.lng },
-        { headers: { Authorization: `Bearer ${token}` } },
-      )
-      await queryClient.invalidateQueries({ queryKey: ['customers'] })
-      onDone()
-    } catch (e) {
-      setError((e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'No se pudo guardar')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre *"
-          className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-        <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Teléfono"
-          className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-        <input value={municipio} onChange={(e) => setMunicipio(e.target.value)} placeholder="Municipio"
-          className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />
-      </div>
-      <LocationInput value={loc} onChange={setLoc} label="Dirección y ubicación *" />
-      {error && <p className="text-sm text-red-600">{error}</p>}
-      <div className="flex justify-end">
-        <button disabled={!canSave || saving} onClick={save}
-          className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary/90 disabled:opacity-50">
-          {saving ? 'Guardando…' : 'Guardar cliente'}
-        </button>
-      </div>
-    </div>
-  )
-}
