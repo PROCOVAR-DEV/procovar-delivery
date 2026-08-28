@@ -440,6 +440,8 @@ test('el lote usa el peso que manda PEDIDO y no llama al almacén', async () => 
 
   assert.equal(r.status, 200)
   assert.equal(r.json.weightsSource, 'pedido', 'con todos los pesos puestos no hay que ir al almacén')
+  // El peso se calcula aunque el pedido acabe saltándose por falta de tasa: es lo que
+  // hace falta para las rutas, y sin él «no se pudo cotizar» se lee como «no se sabe nada».
   assert.equal(r.json.results[0].weightKg, 12.8)
 })
 
@@ -678,6 +680,81 @@ test('pero una sucursal que SÍ existe sigue acotando', async () => {
 
   assert.ok(r.json.total > 0)
   assert.equal(r.json.orders.every((o) => o.branch?.id === camaguey.id), true)
+})
+
+// ------------------------------------------------------ tasa de cambio
+
+test('sin tasa de SU sucursal, el pedido no se cotiza — y no se usa la de otra', async () => {
+  const key = process.env.SERVICE_API_KEY
+
+  if (!key) {
+    console.log('# (saltada: falta SERVICE_API_KEY)')
+    return
+  }
+
+  /**
+   * El error que más daño hace de los posibles aquí.
+   *
+   * Convertir un domicilio de Granma con la tasa de La Habana da un número creíble que
+   * nadie cuestiona y que aparece en la caja. Antes pasaba: la tasa era una sola, escrita
+   * a mano en Configuración, la misma para las ocho sucursales.
+   *
+   * Sin Accesos delante, `tasaDeSucursal` devuelve null y el pedido se salta diciendo cuál
+   * falta. Eso se arregla; un importe equivocado no, porque nadie sabe que lo está.
+   */
+  const r = await pedir('/api/quote/batch', {
+    token: null,
+    metodo: 'POST',
+    cabeceras: { 'x-api-key': key },
+    cuerpo: {
+      preview: true,
+      orders: [
+        {
+          sucursalExternalId: 'HAB',
+          customerName: 'Prueba',
+          lat: 23.12, lng: -82.38,
+          requiereDomicilio: true,
+          items: [{ name: 'X', packs: 1, quantity: 6, pesoLineaKg: 5 }],
+        },
+      ],
+    },
+  })
+
+  assert.equal(r.status, 200)
+
+  const uno = r.json.results[0]
+
+  assert.equal(uno.status, 'skipped')
+  assert.match(uno.reason, /sin-tasa/, `se esperaba que se saltara por falta de tasa: ${JSON.stringify(uno)}`)
+  // Y que DIGA de qué sucursal falta: "sin tasa" a secas manda a buscar en el sitio malo.
+  assert.match(uno.reason, /HAB/)
+})
+
+test('un pedido SIN domicilio no necesita tasa: se importa igual', async () => {
+  const key = process.env.SERVICE_API_KEY
+
+  if (!key) return
+
+  // Hace falta para las rutas y la capacidad del camión, pero no lleva precio.
+  const r = await pedir('/api/quote/batch', {
+    token: null,
+    metodo: 'POST',
+    cabeceras: { 'x-api-key': key },
+    cuerpo: {
+      preview: true,
+      orders: [
+        {
+          sucursalExternalId: 'HAB',
+          customerName: 'Prueba',
+          lat: 23.12, lng: -82.38,
+          requiereDomicilio: false,
+          items: [{ name: 'X', packs: 1, quantity: 6, pesoLineaKg: 5 }],
+        },
+      ],
+    },
+  })
+
+  assert.equal(r.json.results[0].reason, 'sin-domicilio')
 })
 
 test.after(() => prisma.$disconnect())

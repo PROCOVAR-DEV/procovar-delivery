@@ -9,6 +9,7 @@ import {
 } from '@/lib/homeDeliveryQuote'
 import { haversineDistance, calculateDomicilioOficial } from '@/lib/pricing'
 import { fetchWeightCatalog } from '@/lib/warehouse'
+import { tasaDeSucursal } from '@/lib/tasaCambio'
 import type { WeightCatalog } from '@/lib/productMatch'
 
 export const dynamic = 'force-dynamic'
@@ -115,10 +116,26 @@ export async function POST(req: NextRequest) {
     return best
   }
 
-  // Tipo de cambio = la tasa CUP de "Monedas" (no se repite en el domicilio). Fallback: 700.
-  const cupList = Array.isArray(settings.currencies) ? (settings.currencies as Array<{ code?: string; rate?: number }>) : []
-  const cupEntry = cupList.find((c) => String(c.code || '').toUpperCase() === 'CUP')
-  const tc = Number(cupEntry?.rate) || settings.cupRate || settings.domTipoCambio || 700
+  /**
+   * La tasa CUP la pone ACCESOS, por sucursal. Aquí ya no se teclea ninguna.
+   *
+   * Antes salía del bloque «Monedas» de Configuración: un número escrito a mano, el mismo
+   * para las ocho sucursales y sin nadie que lo refrescara. Con eso, un domicilio de
+   * Santiago se convertía con la tasa de La Habana —creíble, y mal— y encima discrepaba
+   * de PEDIDO, que sí la trae de Entrega.
+   *
+   * Se pide por sucursal y se recuerda unos minutos: cada lote son doscientos pedidos y
+   * sin eso serían doscientas llamadas para cotizar una tanda.
+   */
+  const tasas = new Map<string, number | null>()
+
+  async function tasaDe(codigo: string | null | undefined): Promise<number | null> {
+    const clave = (codigo || '').toUpperCase()
+
+    if (!clave) return null
+    if (!tasas.has(clave)) tasas.set(clave, (await tasaDeSucursal(clave))?.cupPorUsd ?? null)
+    return tasas.get(clave) ?? null
+  }
   const results: Array<Record<string, unknown>> = []
   let quoted = 0
   let persisted = 0
@@ -156,17 +173,47 @@ export async function POST(req: NextRequest) {
       continue
     }
 
+    /**
+     * Sin tasa de ESA sucursal no se cotiza. No se cae a la de otra.
+     *
+     * Un domicilio convertido con la tasa de otra provincia sale con un número creíble
+     * que nadie cuestiona y que queda mal en la caja. Se salta, se dice cuál falta, y se
+     * arregla poniéndola en Accesos.
+     */
+    // Un pedido que NO lleva domicilio no se cotiza, así que tampoco necesita tasa: se
+    // importa igual —hace falta para las rutas y la capacidad del camión— pero sin precio.
+    const sinDomicilio = input.requiereDomicilio === false
+
+    /**
+     * El peso y la distancia se calculan ANTES de mirar la tasa.
+     *
+     * Un pedido que se salta por falta de tasa sigue teniendo un peso y una distancia, y
+     * son justo lo que hace falta para las rutas y la capacidad del camión. Saltarlo sin
+     * decirlos convierte «no se pudo cotizar» en «no se sabe nada de este pedido», que
+     * son dos cosas muy distintas.
+     */
     const { total: itemsTotal, items: weightedItems } = computeItemsWeights(input.items, catalog)
     const weightKg = itemsTotal > 0 ? itemsTotal : (Number(input.weight) || 0)
     const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
 
-    // Un pedido que NO lleva domicilio no se cotiza: se importa (para rutas/capacidad) pero
-    // SIN costo. Se marca 'sin-domicilio' para que el worker no escriba precio en PEDIDO.
-    const sinDomicilio = input.requiereDomicilio === false
+    const tc = sinDomicilio ? 0 : await tasaDe(input.sucursalExternalId)
+
+    if (!sinDomicilio && tc == null) {
+      skipped++
+      results.push({
+        ref,
+        status: 'skipped',
+        reason: `sin-tasa-de-cambio (${input.sucursalExternalId ?? 'sin sucursal'})`,
+        weightKg,
+        distanceKm,
+        branch: { id: branch.id, name: branch.name },
+      })
+      continue
+    }
 
     const dom = sinDomicilio
       ? { usd: 0, cup: 0, ckk: 0 }
-      : calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
+      : calculateDomicilioOficial(distanceKm, weightKg, veh.costoKmUsd, veh.capacidadKg, tc as number, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
     const price = dom.usd // se guarda en USD (base); el front convierte a CUP con la tasa
     if (!sinDomicilio) quoted++
 

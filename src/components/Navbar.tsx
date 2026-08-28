@@ -23,7 +23,7 @@ function branchLabel(b?: Branch | null) {
 
 export default function Navbar({ title }: { title: string }) {
   const { token, language, setLanguage, sucursalId, setSucursalId } = useAppStore()
-  const { code, currencies, setDisplayCurrency } = useCurrency()
+  const { code, currencies, setDisplayCurrency, aviso, hayCup } = useCurrency()
   const t = useT()
 
   const { data: branches = [] } = useQuery({
@@ -106,18 +106,36 @@ export default function Navbar({ title }: { title: string }) {
             <option value="en">EN</option>
           </select>
         </div>
-        <div className="flex items-center gap-1 bg-white border border-line rounded-xl pl-2.5 pr-1.5 py-1 shadow-sm">
-          <Icon icon="mdi:cash-multiple" className="text-ink-soft/60 text-base" />
-          <select
-            value={code}
-            onChange={(e) => setDisplayCurrency(e.target.value)}
-            className="text-xs font-semibold font-mono bg-transparent text-ink py-1 pr-0.5 focus:outline-none cursor-pointer"
-            title={t('navbar.currency')}
-          >
-            {currencies.map((c) => (
-              <option key={c.code} value={c.code}>{c.code}</option>
-            ))}
-          </select>
+        {/* USD / CUP.
+            La tasa es POR SUCURSAL y la mantiene Accesos. Una sucursal sin tasa se queda
+            en USD y se dice por qué al pasar el ratón: convertir con la tasa de otra
+            provincia da un importe creíble que nadie cuestiona y que aparece en la caja. */}
+        <div
+          className={`flex items-center gap-1 bg-white border rounded-xl pl-2.5 pr-1.5 py-1 shadow-sm ${
+            aviso ? 'border-amber-300' : 'border-line'
+          }`}
+          title={aviso ?? t('navbar.currency')}
+        >
+          <Icon
+            icon={aviso ? 'mdi:cash-remove' : 'mdi:cash-multiple'}
+            className={`text-base ${aviso ? 'text-amber-500' : 'text-ink-soft/60'}`}
+          />
+          {hayCup ? (
+            <select
+              value={code}
+              onChange={(e) => setDisplayCurrency(e.target.value)}
+              className="text-xs font-semibold font-mono bg-transparent text-ink py-1 pr-0.5 focus:outline-none cursor-pointer"
+              title={aviso ?? t('navbar.currency')}
+            >
+              {currencies.map((c) => (
+                <option key={c.code} value={c.code}>{c.code}</option>
+              ))}
+            </select>
+          ) : (
+            // Sin tasa no se ofrece elegir: un desplegable con una sola opción invita a
+            // buscar la otra donde no está.
+            <span className="text-xs font-semibold font-mono text-ink py-1 pr-0.5">USD</span>
+          )}
         </div>
         {/* El avatar abre el menú de la cuenta: quién eres, ir a otra aplicación y salir.
             Antes esto era un adorno y cerrar sesión estaba abajo de la barra lateral,

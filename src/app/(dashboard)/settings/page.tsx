@@ -7,7 +7,6 @@ import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
 import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
-import { CurrencyDef } from '@/lib/useCurrency'
 
 export default function SettingsPage() {
   const { token } = useAppStore()
@@ -23,10 +22,6 @@ export default function SettingsPage() {
     domTipoCambio: '700',
     domFactorCapacidad: '0.5',
   })
-  // La tasa se edita como TEXTO (permite vaciar el campo y escribir libre); se convierte
-  // a número solo al guardar (cleanList). Si se guardara número, borrar lo dejaba en 0.
-  const [currencies, setCurrencies] = useState<Array<{ code: string; rate: number | string }>>([])
-  const [curSaved, setCurSaved] = useState(false)
   const [homeSaved, setHomeSaved] = useState(false)
   // Initialize local form state from the server only ONCE. Re-syncing on every
   // refetch (e.g. window focus) would wipe edits the user hasn't saved yet.
@@ -54,41 +49,17 @@ export default function SettingsPage() {
         domTipoCambio: (settings.domTipoCambio ?? 700).toString(),
         domFactorCapacidad: (settings.domFactorCapacidad ?? 0.5).toString(),
       })
-      const list: CurrencyDef[] = Array.isArray(settings.currencies) ? settings.currencies : []
-      // Seed with legacy CUP rate the first time so existing setup is preserved.
-      if (list.length === 0 && settings.cupRate) {
-        setCurrencies([{ code: 'CUP', rate: settings.cupRate }])
-      } else {
-        setCurrencies(list)
-      }
     }
   }, [settings])
 
-  const updateCurrencies = useMutation({
-    mutationFn: async (payload: unknown) => {
-      const res = await axios.put('/api/settings', payload, { headers: { Authorization: `Bearer ${token}` } })
-      return res.data
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] })
-      setCurSaved(true)
-      setTimeout(() => setCurSaved(false), 3000)
-    }
-  })
-
-  const cleanList = (list: Array<{ code: string; rate: number | string }>): CurrencyDef[] =>
-    list
-      .map((c) => ({ code: String(c.code).trim().toUpperCase(), rate: Number(c.rate) }))
-      .filter((c) => c.code && c.code !== 'USD' && Number.isFinite(c.rate) && c.rate > 0)
-
-  const cleanCurrencies = () => cleanList(currencies)
-
-  // Delete a row and persist immediately.
-  const deleteCurrencyRow = (i: number) => {
-    const next = currencies.filter((_, idx) => idx !== i)
-    setCurrencies(next)
-    updateCurrencies.mutate({ currencies: cleanList(next) })
-  }
+  /**
+   * Todo lo de MONEDAS se fue con su bloque.
+   *
+   * Era un campo donde alguien escribía la tasa CUP a mano, la misma para las ocho
+   * sucursales y sin nadie que la refrescara. Ahora la mantiene Accesos por sucursal,
+   * sacándola de Entrega, igual que PEDIDO. Dos sitios donde escribir el mismo número es
+   * la forma garantizada de que acaben diciendo cosas distintas.
+   */
 
   const updateHome = useMutation({
     mutationFn: async (data: unknown) => {
@@ -125,99 +96,19 @@ export default function SettingsPage() {
     })
   }
 
-  const saveCurrencies = () => {
-    const clean = cleanCurrencies()
-    setCurrencies(clean)
-    updateCurrencies.mutate({ currencies: clean })
-  }
-
   return (
     <div className="flex flex-col">
       <Navbar title={t('set.title')} />
       <div className="p-6 space-y-6">
 
-        {/* Monedas — bloque prominente arriba */}
-        <div className="bg-white rounded-2xl shadow-md p-6 border-l-4 border-yellow-400">
-          <h3 className="font-bold text-gray-800 mb-1 flex items-center gap-2">
-            <Icon icon="mdi:cash-multiple" className="text-xl text-yellow-500" />
-            {t('set.currenciesTitle')}
-          </h3>
-          <p className="text-xs text-gray-500 mb-4">{t('set.currenciesHelp')}</p>
-
-          <div className="space-y-2">
-            <div className="grid grid-cols-[100px_1fr_auto] gap-3 text-xs font-medium text-gray-500 px-1">
-              <span>{t('set.code')}</span>
-              <span>{t('set.unitsPerUsd')}</span>
-              <span></span>
-            </div>
-            {currencies.map((c, i) => (
-              <div key={i} className="grid grid-cols-[100px_1fr_auto] gap-3 items-center">
-                <input
-                  type="text"
-                  value={c.code}
-                  onChange={(e) => setCurrencies(currencies.map((x, idx) => idx === i ? { ...x, code: e.target.value.toUpperCase() } : x))}
-                  placeholder="CUP"
-                  maxLength={5}
-                  className="px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-400 text-sm font-mono uppercase"
-                />
-                <input
-                  type="number"
-                  step="0.0001"
-                  min="0"
-                  value={c.rate}
-                  onChange={(e) => setCurrencies(currencies.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))}
-                  placeholder="320"
-                  className="px-3 py-2 border rounded-xl focus:outline-none focus:ring-2 focus:ring-yellow-400 text-sm"
-                />
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={saveCurrencies}
-                    disabled={updateCurrencies.isPending}
-                    className="text-green-600 hover:text-green-700 px-2 disabled:opacity-50"
-                    title={t('common.save')}
-                  >
-                    <Icon icon="mdi:content-save-outline" className="text-lg" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteCurrencyRow(i)}
-                    disabled={updateCurrencies.isPending}
-                    className="text-red-400 hover:text-red-600 px-2 disabled:opacity-50"
-                    title={t('common.delete')}
-                  >
-                    <Icon icon="mdi:trash-can-outline" className="text-lg" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-3 mt-4">
-            <button
-              type="button"
-              onClick={() => setCurrencies([...currencies, { code: '', rate: '' }])}
-              className="text-sm text-blue-600 hover:underline"
-            >
-              {t('set.addCurrency')}
-            </button>
-            <button
-              type="button"
-              onClick={saveCurrencies}
-              disabled={updateCurrencies.isPending}
-              className="ml-auto px-5 py-2.5 bg-yellow-400 text-gray-900 rounded-xl font-semibold hover:bg-yellow-500 disabled:opacity-50"
-            >
-              {updateCurrencies.isPending ? t('set.saving') : t('set.saveCurrencies')}
-            </button>
-          </div>
-
-          {curSaved && (
-            <div className="mt-3 bg-green-50 text-green-700 px-4 py-2 rounded-xl text-sm flex items-center gap-2">
-              <Icon icon="mdi:check-circle" className="text-lg" /> {t('set.currenciesSaved')}
-            </div>
-          )}
-        </div>
-
+        {/* El bloque de MONEDAS se fue.
+            Era un campo donde alguien escribía la tasa CUP a mano: el mismo número para
+            las ocho sucursales y sin nadie que lo refrescara. Con eso, un domicilio de
+            Santiago se convertía con la tasa de La Habana —creíble, y mal— y encima
+            discrepaba de PEDIDO, que sí la trae de Entrega.
+            La tasa la mantiene ahora Accesos, por sucursal, sacándola de Entrega. Aquí no
+            hay nada que teclear: dos sitios donde escribir el mismo número es la forma
+            garantizada de que acaben diciendo cosas distintas. */}
         {/* La ÚNICA fórmula de precio del sistema. Se llamaba "envío a domicilio
             individual" de cuando había otra fórmula para el cotizador de uno; ésa se
             retiró junto con el endpoint, así que ya no hay a qué distinguirla.
