@@ -25,6 +25,21 @@ export interface OrderQuoteInput {
   sucursalExternalId?: string
   /** La fecha del pedido EN PEDIDO (ISO). No es la de copiado: ver `Order.orderDate`. */
   orderDate?: string | null
+  /**
+   * Lo que hace falta para filtrar el catálogo EN EL SERVIDOR.
+   *
+   * Todo esto viaja además dentro de `meta`, pero ahí dentro no se puede filtrar sin leer
+   * y descartar el pedido entero de cada fila. Con 50.000 pedidos eso no es un filtro.
+   */
+  pedidoUpdatedAt?: string | null
+  estado?: string | null
+  archivado?: boolean
+  fechaComprometida?: string | null
+  /** El costo que la APK puso EN PEDIDO. No es `deliveryPrice`, que es el reparto de carga. */
+  pedidoCosto?: number | null
+  municipio?: string | null
+  vendedor?: string | null
+  sucursalCodigo?: string | null
   customerName?: string
   address?: string
   phone?: string
@@ -208,6 +223,16 @@ export function buildOrderData(
     // filtrar el día del armador de rutas por `createdAt` daba cero en cualquier día que
     // no fuera hoy: el espejo trae quince días de una vez y todos nacen con la de hoy.
     orderDate: input.orderDate ? new Date(input.orderDate) : null,
+    // La marca de agua del espejo y los campos por los que se filtra. Ver OrderQuoteInput.
+    pedidoUpdatedAt: input.pedidoUpdatedAt ? new Date(input.pedidoUpdatedAt) : null,
+    estado: input.estado ?? null,
+    archivado: input.archivado === true,
+    fechaComprometida: input.fechaComprometida ? new Date(input.fechaComprometida) : null,
+    requiereDomicilio: input.requiereDomicilio ?? null,
+    pedidoCosto: input.pedidoCosto ?? null,
+    municipio: input.municipio ?? null,
+    vendedor: input.vendedor ?? null,
+    sucursalCodigo: input.sucursalCodigo ?? null,
     externalId: input.externalId || input.operationNumber || null,
     customerPhone: input.phone || null,
     // Guarda TODO el payload del pedido/cliente sin perder nada.

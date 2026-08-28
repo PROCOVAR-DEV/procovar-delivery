@@ -142,6 +142,12 @@ async function main() {
   for (let i = 0; i < 40; i++) {
     const dia = diaMenos(i % 10)
     const conPeso = i % 4 !== 0
+    // Estados y archivado repartidos, que es como está el catálogo de verdad: la mayor
+    // parte del histórico archivado, y de todo un poco en cada estado.
+    const completada = i % 3 === 0
+    const archivado = i % 5 !== 0
+    // Un tercio con la fecha comprometida ya pasada: ésos son los «expirados».
+    const comprometida = completada ? null : (i % 3 === 1 ? diaMenos(i % 10 + 2) : diaMenos(-3))
 
     pedidos.push({
       source: 'pedido',
@@ -158,6 +164,16 @@ async function main() {
       deliveryPrice: 3.5 + i * 0.1,
       deliveryDistanceKm: 4 + (i % 7),
       orderDate: dia,
+      pedidoUpdatedAt: dia,
+      estado: completada ? 'completada' : 'en_proceso',
+      archivado,
+      fechaComprometida: comprometida,
+      requiereDomicilio: i % 6 !== 0,
+      // Sólo unos pocos los ha cotizado la APK, igual que en producción.
+      pedidoCosto: i % 7 === 0 ? 3.5 : null,
+      municipio: clientes[i].municipio,
+      vendedor: `Vendedor ${i % 4}`,
+      sucursalCodigo: 'HAB',
       branchId: habana.id,
       userId: admin.id,
       items: conPeso
@@ -178,7 +194,9 @@ async function main() {
     customerName: 'ZZZZ Cliente Camagüey', address: 'Calle CMG', endAddress: 'Calle CMG',
     lat: 21.38, lng: -77.91, endLat: 21.38, endLng: -77.91,
     weight: 5, deliveryPrice: 2, deliveryDistanceKm: 3,
-    orderDate: diaMenos(1), branchId: camaguey.id, userId: jefeCmg.id,
+    orderDate: diaMenos(1), pedidoUpdatedAt: diaMenos(1), branchId: camaguey.id, userId: jefeCmg.id,
+    estado: 'en_proceso', archivado: false, requiereDomicilio: true,
+    municipio: 'Camagüey', vendedor: 'Vendedor CMG', sucursalCodigo: 'CMG',
     items: [], meta: { cliente: { municipio: 'Camagüey' } },
   })
   // Y uno viejo, de hace un año: el espejo no lo traería, pero si alguien lo tiene aquí
@@ -188,7 +206,9 @@ async function main() {
     customerName: 'Cliente del año pasado', address: 'Calle vieja', endAddress: 'Calle vieja',
     lat: 23.11, lng: -82.36, endLat: 23.11, endLng: -82.36,
     weight: 2, deliveryPrice: 1, deliveryDistanceKm: 2,
-    orderDate: diaMenos(400), branchId: habana.id, userId: admin.id,
+    orderDate: diaMenos(400), pedidoUpdatedAt: diaMenos(400), branchId: habana.id, userId: admin.id,
+    estado: 'completada', archivado: true, requiereDomicilio: true,
+    municipio: 'Cerro', vendedor: 'Vendedor 0', sucursalCodigo: 'HAB',
     items: [], meta: { cliente: { municipio: 'Cerro' } },
   })
   // Uno SIN `orderDate`, como los que entraron antes de que se guardara: tiene que
@@ -199,6 +219,7 @@ async function main() {
     lat: 23.12, lng: -82.37, endLat: 23.12, endLng: -82.37,
     weight: 1, deliveryPrice: 1, deliveryDistanceKm: 1,
     orderDate: null, branchId: habana.id, userId: admin.id,
+    estado: null, archivado: false, municipio: 'Playa', vendedor: 'Vendedor 1', sucursalCodigo: 'HAB',
     items: [], meta: {},
   })
 

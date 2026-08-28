@@ -57,6 +57,10 @@ async function pedir(ruta, { token = TOKEN_ADMIN, metodo = 'GET', cuerpo, cabece
 
 const soloFecha = (d) => new Date(d).toISOString().slice(0, 10)
 
+/** La lista de pedidos ahora viene paginada: `{ orders, total, pagina, paginas }`. */
+const listaPedidos = async (query = '', opciones = {}) =>
+  (await pedir(`/api/orders${query ? `?${query}` : ''}`, opciones))
+
 // ---------------------------------------------------------------- sesión
 
 test('sin sesión, todo contesta 401 y no filtra nada', async () => {
@@ -76,27 +80,138 @@ test('un token firmado con otro secreto no vale', async () => {
 // ---------------------------------------------------------------- pedidos
 
 test('la lista de pedidos NO devuelve `meta`, que era lo que la hacía impagable', async () => {
-  const r = await pedir('/api/orders')
+  const r = await listaPedidos()
 
   assert.equal(r.status, 200)
-  assert.ok(Array.isArray(r.json))
-  assert.ok(r.json.length > 0, 'la siembra tiene pedidos')
-  for (const o of r.json) {
+  assert.ok(Array.isArray(r.json.orders))
+  assert.ok(r.json.orders.length > 0, 'la siembra tiene pedidos')
+  for (const o of r.json.orders) {
     assert.equal(o.meta, undefined, `el pedido ${o.operationNumber} sigue mandando meta`)
   }
 })
 
-test('de `meta` sí salen el municipio y el vendedor, que son los que se filtran', async () => {
-  const r = await pedir('/api/orders')
-  const conVendedor = r.json.filter((o) => o.vendedor)
+test('la lista viene PAGINADA, con el total de verdad', async () => {
+  const r = await listaPedidos('porPagina=10')
 
-  assert.ok(conVendedor.length > 0, 'el vendedor tiene que llegar a la pantalla')
-  assert.ok(r.json.some((o) => o.municipio), 'el municipio también')
+  assert.equal(r.json.orders.length, 10, 'la página tiene que respetar el tamaño pedido')
+  assert.ok(r.json.total > 10, 'y el total tiene que ser el del catálogo, no el de la página')
+  assert.equal(r.json.paginas, Math.ceil(r.json.total / 10))
+
+  // La segunda página trae pedidos DISTINTOS: si el `skip` no se aplicara, serían los mismos.
+  const dos = await listaPedidos('porPagina=10&pagina=2')
+  const primeros = new Set(r.json.orders.map((o) => o.id))
+
+  assert.equal(dos.json.orders.some((o) => primeros.has(o.id)), false, 'la página 2 repite pedidos de la 1')
+})
+
+test('el catálogo trae los ARCHIVADOS: ahí está casi todo el histórico', async () => {
+  const todos = await listaPedidos('porPagina=200')
+  const archivados = todos.json.orders.filter((o) => o.archivado)
+
+  assert.ok(archivados.length > 0, 'sin archivados no hay catálogo: en producción son 51.871 de 56.208')
+
+  const soloActivos = await listaPedidos('archivado=0&porPagina=200')
+
+  assert.ok(soloActivos.json.total < todos.json.total)
+  assert.equal(soloActivos.json.orders.every((o) => o.archivado === false), true)
+
+  const soloArchivados = await listaPedidos('archivado=1&porPagina=200')
+
+  assert.equal(soloArchivados.json.orders.every((o) => o.archivado === true), true)
+  assert.equal(soloArchivados.json.total + soloActivos.json.total, todos.json.total)
+})
+
+test('el filtro por estado distingue completada, en proceso y expirada', async () => {
+  const completadas = await listaPedidos('estado=completada&porPagina=200')
+
+  assert.ok(completadas.json.total > 0)
+  assert.equal(completadas.json.orders.every((o) => o.estado === 'completada'), true)
+
+  // «Expirada» no es una columna: es que la fecha comprometida pasó y no se completó.
+  const expiradas = await listaPedidos('estado=expirada&porPagina=200')
+
+  assert.ok(expiradas.json.total > 0, 'la siembra tiene pedidos con la fecha comprometida pasada')
+  for (const o of expiradas.json.orders) {
+    assert.notEqual(o.estado, 'completada')
+    assert.ok(new Date(o.fechaComprometida) < new Date(), `${o.operationNumber} no está expirado`)
+  }
+
+  const enProceso = await listaPedidos('estado=en_proceso&porPagina=200')
+
+  assert.equal(enProceso.json.orders.some((o) => o.estado === 'completada'), false)
+  // Los tres son excluyentes y cubren todo lo que tiene estado.
+  assert.equal(
+    completadas.json.total + expiradas.json.total + enProceso.json.total,
+    (await listaPedidos('porPagina=1')).json.total,
+    'los tres estados tienen que sumar el catálogo entero',
+  )
+})
+
+test('se puede filtrar por domicilio y por si la APK ya lo cotizó', async () => {
+  const conDom = await listaPedidos('domicilio=1&porPagina=200')
+  const sinDom = await listaPedidos('domicilio=0&porPagina=200')
+
+  assert.ok(conDom.json.total > 0 && sinDom.json.total > 0)
+  assert.equal(conDom.json.orders.every((o) => o.requiereDomicilio === true), true)
+  assert.equal(sinDom.json.orders.some((o) => o.requiereDomicilio === true), false)
+
+  const cotizados = await listaPedidos('cotizado=1&porPagina=200')
+
+  assert.ok(cotizados.json.total > 0)
+  assert.equal(cotizados.json.orders.every((o) => o.pedidoCosto != null), true)
+})
+
+test('se puede filtrar por municipio y por vendedor, con lo que existe de verdad', async () => {
+  const f = await pedir('/api/orders/facetas')
+
+  assert.equal(f.status, 200)
+  assert.ok(f.json.municipios.length > 0 && f.json.vendedores.length > 0)
+
+  const m = f.json.municipios[0]
+  const r = await listaPedidos(`municipio=${encodeURIComponent(m.valor)}&porPagina=200`)
+
+  assert.equal(r.json.total, m.pedidos, 'el conteo de la faceta tiene que cuadrar con el filtro')
+  assert.equal(r.json.orders.every((o) => o.municipio === m.valor), true)
+
+  const v = f.json.vendedores[0]
+  const rv = await listaPedidos(`vendedor=${encodeURIComponent(v.valor)}&porPagina=200`)
+
+  assert.equal(rv.json.total, v.pedidos)
+})
+
+test('la búsqueda mira folio, cliente, dirección, municipio y vendedor', async () => {
+  const uno = (await listaPedidos('porPagina=1')).json.orders[0]
+
+  const porFolio = await listaPedidos(`q=${encodeURIComponent(uno.operationNumber)}`)
+  assert.ok(porFolio.json.orders.some((o) => o.id === uno.id), 'no se encuentra por su folio')
+
+  const porCliente = await listaPedidos(`q=${encodeURIComponent(uno.customerName.slice(0, 6))}`)
+  assert.ok(porCliente.json.total > 0)
+})
+
+test('los filtros se combinan sin pisarse', async () => {
+  const combinado = await listaPedidos('estado=completada&archivado=1&domicilio=1&porPagina=200')
+
+  for (const o of combinado.json.orders) {
+    assert.equal(o.estado, 'completada')
+    assert.equal(o.archivado, true)
+    assert.equal(o.requiereDomicilio, true)
+  }
+  // Y no puede dar más que el más restrictivo de ellos por separado.
+  const soloEstado = await listaPedidos('estado=completada&porPagina=1')
+  assert.ok(combinado.json.total <= soloEstado.json.total)
+})
+
+test('el municipio y el vendedor llegan como columnas, no dentro de `meta`', async () => {
+  const r = await listaPedidos('porPagina=200')
+
+  assert.ok(r.json.orders.some((o) => o.vendedor), 'el vendedor tiene que llegar a la pantalla')
+  assert.ok(r.json.orders.some((o) => o.municipio), 'el municipio también')
 })
 
 test('la lista trae la fecha del PEDIDO, no sólo la de copiado', async () => {
-  const r = await pedir('/api/orders')
-  const conFecha = r.json.filter((o) => o.orderDate)
+  const r = await listaPedidos('porPagina=200')
+  const conFecha = r.json.orders.filter((o) => o.orderDate)
 
   assert.ok(conFecha.length > 0)
   // La siembra crea todos los pedidos AHORA con fechas de días distintos: si `orderDate`
@@ -105,29 +220,47 @@ test('la lista trae la fecha del PEDIDO, no sólo la de copiado', async () => {
   assert.ok(dias.size > 3, `se esperaban pedidos de varios días, llegaron ${dias.size}`)
 })
 
-test('la lista viene ordenada por la fecha del pedido, de más nuevo a más viejo', async () => {
-  const r = await pedir('/api/orders')
-  const fechas = r.json.map((o) => new Date(o.orderDate || o.createdAt).getTime())
+test('la lista viene ordenada por la fecha del pedido, y los sin fecha AL FINAL', async () => {
+  const r = await listaPedidos('porPagina=200')
+  const conFecha = r.json.orders.filter((o) => o.orderDate)
+  const sinFecha = r.json.orders.filter((o) => !o.orderDate)
+
+  const fechas = conFecha.map((o) => new Date(o.orderDate).getTime())
 
   for (let i = 1; i < fechas.length; i++) {
     assert.ok(fechas[i - 1] >= fechas[i], `fuera de orden en la posición ${i}`)
   }
+
+  /**
+   * Los que no tienen fecha van al final, no al principio.
+   *
+   * En Postgres un nulo en un DESC va PRIMERO: sin decir nada, los pedidos viejos —los
+   * que entraron antes de que se guardara la fecha— se plantaban en lo alto de la primera
+   * página, delante de los de hoy. Y con la paginación en el servidor eso no se puede
+   * arreglar reordenando después: la página ya viene elegida.
+   */
+  if (sinFecha.length && conFecha.length) {
+    const posiciones = r.json.orders.map((o, i) => (o.orderDate ? -1 : i)).filter((i) => i >= 0)
+    const ultimoConFecha = r.json.orders.map((o, i) => (o.orderDate ? i : -1)).filter((i) => i >= 0).pop()
+
+    assert.ok(Math.min(...posiciones) > ultimoConFecha, 'los pedidos sin fecha no están al final')
+  }
 })
 
 test('la respuesta tiene un tamaño razonable: ya no se manda el pedido entero', async () => {
-  const r = await pedir('/api/orders')
-  const porPedido = r.bytes / r.json.length
+  const r = await listaPedidos('porPagina=200')
+  const porPedido = r.bytes / r.json.orders.length
 
   // Con `meta` dentro eran varios KB por fila (pedido + cliente + vendedor + gestor).
   assert.ok(porPedido < 1500, `${Math.round(porPedido)} B por pedido: alguien volvió a meter el payload entero`)
 })
 
 test('el alcance por sucursal no deja ver los pedidos de otra', async () => {
-  const suyos = await pedir('/api/orders', { token: TOKEN_JEFE })
+  const suyos = await listaPedidos('porPagina=200', { token: TOKEN_JEFE })
 
   assert.equal(suyos.status, 200)
-  assert.ok(suyos.json.length > 0, 'el jefe de Camagüey tiene pedidos')
-  for (const o of suyos.json) {
+  assert.ok(suyos.json.orders.length > 0, 'el jefe de Camagüey tiene pedidos')
+  for (const o of suyos.json.orders) {
     assert.equal(o.branch?.id, camaguey.id, 'se coló un pedido de otra sucursal')
   }
 })
@@ -152,7 +285,7 @@ test('el cotizador individual está retirado: queda UNA fórmula', async () => {
 // -------------------------------------------------- pedidos para armar ruta
 
 test('el filtro por día usa la fecha del pedido: pedir otro día YA no da cero', async () => {
-  const orders = (await pedir('/api/orders')).json
+  const orders = (await listaPedidos('porPagina=200')).json.orders
   const conFecha = orders.filter((o) => o.orderDate && o.branch?.id === habana.id)
   // Un día que NO es hoy y que sí tiene pedidos sembrados.
   const hoy = soloFecha(new Date())

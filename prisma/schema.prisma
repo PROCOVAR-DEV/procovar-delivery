@@ -161,10 +161,43 @@ model Order {
   source          String?
   // La FECHA DEL PEDIDO en PEDIDO, que no es `createdAt`.
   //
-  // `createdAt` es cuándo lo copió el espejo, y el espejo copia quince días de golpe:
+  // `createdAt` es cuándo lo copió el espejo, y el espejo copia muchos días de golpe:
   // todos los pedidos quedaban con la fecha de hoy. El armador de rutas filtra por día,
   // así que cualquier día que no fuera hoy devolvía CERO pedidos aunque los hubiera.
   orderDate       DateTime?
+  // Cuándo se tocó por última vez EN PEDIDO. Es la marca de agua del espejo: la próxima
+  // sincronización pide `since=max(pedidoUpdatedAt)` y sólo se trae lo que se movió.
+  //
+  // Se guarda aquí y no en una tabla de estado a propósito: un contador aparte se
+  // desincroniza del contenido —se adelanta si una tanda falla a medias— y entonces el
+  // espejo se salta pedidos para siempre sin dar ningún error. Derivándola de los datos,
+  // lo que no se guardó no cuenta como sincronizado.
+  pedidoUpdatedAt DateTime?
+  // El ESTADO en PEDIDO, tal cual: 'completada', 'en_proceso' o nada.
+  //
+  // Delivery necesita verlos todos —una ruta se arma también con pedidos ya completados—
+  // pero mezclados sin distinguir no se puede trabajar. Se guarda para poder FILTRAR, no
+  // para decidir nada: quien manda sobre el estado es PEDIDO.
+  estado          String?
+  // Archivado en PEDIDO (borrado blando: se esconde de su lista, no se borra). Son la
+  // inmensa mayoría del histórico.
+  archivado       Boolean   @default(false)
+  // Cuándo se comprometió la entrega. `expirado` NO se guarda: es que esta fecha ya pasó
+  // y el pedido no se completó, y un booleano guardado se queda viejo al día siguiente.
+  fechaComprometida DateTime?
+  // Si el pedido lleva domicilio, y el costo que le puso la APK EN PEDIDO. Este último no
+  // es `deliveryPrice`: aquél es el reparto de carga que calcula delivery para sus rutas.
+  // Son dos números distintos y confundirlos es cobrar uno por el otro.
+  requiereDomicilio Boolean?
+  pedidoCosto     Float?
+  // Municipio del cliente y vendedor del pedido, COPIADOS de `meta`.
+  //
+  // Estaban sólo dentro del JSON, así que para filtrar por ellos había que leerse el
+  // pedido entero de cada fila y descartarlo. Con 50.000 pedidos eso no es un filtro:
+  // es traerse la base a memoria en cada consulta.
+  municipio       String?
+  vendedor        String?
+  sucursalCodigo  String?
   // Id/folio del pedido en PEDIDO. Usado para idempotencia (re-cotizar no duplica).
   externalId      String?
   // Itemized breakdown of what to deliver to this client: [{ description, quantity }]
@@ -181,6 +214,14 @@ model Order {
 
   @@index([source, externalId])
   @@index([orderDate])
+  // Los índices son de los filtros que la pantalla ofrece de verdad. Uno por columna y no
+  // uno compuesto: se combinan de todas las formas y Postgres los cruza por su cuenta.
+  @@index([pedidoUpdatedAt])
+  @@index([estado])
+  @@index([archivado])
+  @@index([municipio])
+  @@index([vendedor])
+  @@index([requiereDomicilio])
 }
 
 model OrderVehicle {

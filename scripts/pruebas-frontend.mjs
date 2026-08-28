@@ -66,6 +66,14 @@ const cerrar = async (ctx) => ctx.close()
 
 // ---------------------------------------------------------------- pedidos
 
+/** Cuántos pedidos dice la cabecera que hay en TOTAL (no en la página). */
+async function totalPedidos(page) {
+  const txt = await page.locator('text=/[\\d.,]+ pedidos/').first().innerText()
+
+  return Number(txt.replace(/[^\d]/g, ''))
+}
+
+
 test('la lista de pedidos carga y pinta filas, sin quedarse en "Cargando"', async () => {
   const { ctx, page, errores } = await conSesion()
 
@@ -99,33 +107,38 @@ test('el filtro por fechas acota de verdad, y un rango vacío lo explica', async
   await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('table tbody tr')
 
-  const total = await page.locator('table tbody tr').count()
+  const total = await totalPedidos(page)
 
-  // Un rango de hace un año: la mayoría de los pedidos sembrados quedan fuera.
+  // Un rango de hace muchos años: no queda ni un pedido sembrado.
   await page.fill('input[title="Desde (fecha del pedido)"]', '2020-01-01')
   await page.fill('input[title="Hasta (fecha del pedido)"]', '2020-12-31')
-  await page.waitForTimeout(300)
+  await page.waitForTimeout(900)
 
-  const vacio = await page.locator('table tbody tr').count()
+  assert.equal(await page.locator('table tbody tr').count(), 0, 'un rango sin pedidos debería vaciar la tabla')
 
-  assert.equal(vacio, 0, 'un rango sin pedidos debería vaciar la tabla')
-  // Y no dejar un cero mudo, que es lo que se lee como "esto está roto".
-  await assert.doesNotReject(page.waitForSelector('text=/últimos días/i', { timeout: 5000 }))
+  /**
+   * Y no dejar un cero mudo, que es lo que se lee como "esto está roto".
+   *
+   * Cuando hay filtros puestos, un vacío casi nunca significa "no hay": significa que los
+   * filtros no dejan pasar nada. La pantalla lo dice y ofrece quitarlos.
+   */
+  await page.waitForSelector('text=/Ningún pedido cuadra/i', { timeout: 5000 })
 
-  // Se quita el filtro y vuelven todos.
-  await page.click('button[title="Quitar el filtro de fechas"]')
+  // Y quitándolos vuelven todos.
+  await page.click('text=/quitarlos todos/i')
   await page.waitForSelector('table tbody tr')
-  assert.equal(await page.locator('table tbody tr').count(), total)
+  await page.waitForTimeout(500)
+  assert.equal(await totalPedidos(page), total)
   await cerrar(ctx)
 })
 
-test('el filtro por vendedor y el de municipio están y acotan', async () => {
+test('el filtro por vendedor y el de municipio acotan el CATÁLOGO, no la página', async () => {
   const { ctx, page } = await conSesion()
 
   await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('table tbody tr')
 
-  const total = await page.locator('table tbody tr').count()
+  const antes = await totalPedidos(page)
   const vendedores = page.locator('select[title="Vendedor del pedido"]')
 
   assert.equal(await vendedores.count(), 1, 'falta el filtro de vendedor')
@@ -134,8 +147,77 @@ test('el filtro por vendedor y el de municipio están y acotan', async () => {
   assert.ok(opciones.length > 1, 'el filtro de vendedor no trae vendedores')
 
   await vendedores.selectOption({ label: opciones[1] })
-  await page.waitForTimeout(200)
-  assert.ok(await page.locator('table tbody tr').count() < total, 'elegir un vendedor no acotó nada')
+  await page.waitForTimeout(800)
+
+  const despues = await totalPedidos(page)
+
+  assert.ok(despues < antes, `elegir un vendedor no acotó: ${antes} -> ${despues}`)
+  await cerrar(ctx)
+})
+
+test('los archivados se ven, y se pueden esconder', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  const todos = await totalPedidos(page)
+
+  await page.selectOption('select[title="Archivados en PEDIDO"]', '0')
+  await page.waitForTimeout(800)
+  const activos = await totalPedidos(page)
+
+  await page.selectOption('select[title="Archivados en PEDIDO"]', '1')
+  await page.waitForTimeout(800)
+  const archivados = await totalPedidos(page)
+
+  assert.ok(archivados > 0, 'no se ve ni un archivado: ahí está casi todo el histórico')
+  assert.equal(activos + archivados, todos, 'archivados + activos tiene que dar el catálogo entero')
+  await cerrar(ctx)
+})
+
+test('el estado del pedido se filtra y se ve en la tabla', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  await page.selectOption('select[title="Estado del pedido en PEDIDO"]', 'completada')
+  await page.waitForTimeout(800)
+  await page.waitForSelector('table tbody tr')
+
+  // Toda la columna de estado dice lo mismo que se pidió.
+  const estados = await page.locator('table tbody tr td:nth-child(2)').allInnerTexts()
+
+  assert.ok(estados.length > 0)
+  for (const e of estados) assert.match(e, /Completada/)
+
+  await page.selectOption('select[title="Estado del pedido en PEDIDO"]', 'expirada')
+  await page.waitForTimeout(800)
+  const expiradas = await page.locator('table tbody tr td:nth-child(2)').allInnerTexts()
+
+  assert.ok(expiradas.length > 0, 'no hay expirados y la siembra tiene')
+  for (const e of expiradas) assert.match(e, /Expirada/)
+  await cerrar(ctx)
+})
+
+test('la paginación trae páginas distintas, no la misma dos veces', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  const primeros = await page.locator('table tbody tr td:nth-child(3)').allInnerTexts()
+  const siguiente = page.locator('button:has(svg), button').filter({ hasText: /siguiente|next|›|>/i }).first()
+
+  if (await siguiente.count()) {
+    await siguiente.click()
+    await page.waitForTimeout(800)
+
+    const segundos = await page.locator('table tbody tr td:nth-child(3)').allInnerTexts()
+
+    assert.notDeepEqual(segundos, primeros, 'la página 2 enseña lo mismo que la 1')
+  }
   await cerrar(ctx)
 })
 

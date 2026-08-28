@@ -76,80 +76,188 @@ let _redisPub = null;
 })();
 
 /**
- * Los pedidos RECIENTES, no los pendientes ni todos.
+ * TODOS los pedidos, no un recorte de los últimos días.
  *
- * Antes pedía `onlyPending=1` porque delivery era quien cotizaba: le interesaban los que
- * aún no tenían precio. Ahora el precio lo pone delivery-apk, y con ese filtro delivery
- * se perdería justo los ya cotizados —la mayoría, y los que hacen falta para armar una
- * ruta—.
+ * Aquí ha habido dos errores seguidos, opuestos y los dos malos.
  *
- * Pero quitar el filtro y ya fue un error mío que tiró el proceso: son ~55.000 pedidos,
- * y traerlos enteros para mandarlos en UNA llamada agotó la memoria de Node. Lo que hace
- * falta aquí son los de los últimos días: una ruta se arma con lo que hay que repartir
- * ahora, no con el histórico de dos años.
+ * El primero: pedir `onlyPending=1`, de cuando delivery era quien cotizaba. Con el precio
+ * puesto por la APK, ese filtro se lleva justo los pedidos ya cotizados —la mayoría, y los
+ * que hacen falta para armar una ruta—.
+ *
+ * El segundo, mío: quitar el filtro y traerlo todo en UNA llamada. Son 56.000 pedidos con
+ * sus líneas, y montar ese JSON agotó la memoria de Node. De ahí salió el recorte a
+ * quince días... que dejó fuera el catálogo entero. Una ruta se arma también con pedidos
+ * ya completados, y la mitad del trabajo es mirar lo de la semana pasada.
+ *
+ * Lo que arregla las dos cosas no es elegir cuántos días, es no traerlos dos veces:
+ *
+ *   - La PRIMERA vez se recorre el histórico por tramos de días, de lo nuevo a lo viejo.
+ *     Tarda, y pasa una sola vez.
+ *   - A partir de ahí se pide `since=<lo más nuevo que ya tengo>`: lo que se movió desde
+ *     entonces. Suele ser nada o cuatro filas.
+ *
+ * La marca de agua sale de los propios datos —`max(pedidoUpdatedAt)` de lo guardado— y no
+ * de un contador aparte. Un contador se adelanta si una tanda falla a medias, y entonces
+ * el espejo se salta pedidos para siempre sin dar ningún error.
  */
-const DIAS = Number(process.env.SYNC_DIAS || 15);
+
+/** Cuántos días por petición al recorrer el histórico. */
+const TRAMO_DIAS = Number(process.env.SYNC_TRAMO_DIAS || 3);
+
+/** Hasta dónde atrás llega el histórico. */
+const HISTORICO_DIAS = Number(process.env.SYNC_HISTORICO_DIAS || 420);
 
 /**
- * Sólo los pedidos que YA tienen el costo del domicilio puesto.
+ * Cuánto histórico se recupera POR CICLO.
  *
- * Lo pone el repartidor desde delivery-apk. Sin él, el pedido no se puede meter en una
- * ruta —no se sabe lo que cuesta llevarlo— y sólo sirve para que el que arma la ruta lo
- * descarte a mano.
- *
- * Se puede apagar con SYNC_SOLO_COTIZADOS=0 el día que haga falta ver también los que
- * están a medias, pero por defecto va puesto.
+ * El histórico no se trae de una sentada: se va estirando hacia atrás un poco en cada
+ * vuelta. Así lo reciente está disponible desde el primer ciclo —que es lo que hace falta
+ * para trabajar hoy— y el año entero acaba de llenarse solo al cabo de un rato, sin un
+ * proceso de una hora que si se corta hay que volver a empezar.
  */
-const SOLO_COTIZADOS = process.env.SYNC_SOLO_COTIZADOS !== '0';
+const HISTORICO_POR_CICLO = Number(process.env.SYNC_HISTORICO_POR_CICLO || 30);
 
 /**
- * Un día por petición, no los quince de golpe.
+ * Y además, SIEMPRE, una repasada a los últimos días.
  *
- * Pedir los 15 días juntos son ~7.000 pedidos con todas sus líneas en UNA respuesta, y
- * PEDIDO tiene que construir ese JSON entero en memoria antes de mandarlo: le agotó el
- * heap y tiró la API. Arreglar aquí el consumo de memoria mandándoselo al otro no es
- * arreglarlo.
- *
- * Por día son unos 470 pedidos, un tamaño que ninguno de los dos lados nota.
+ * `since` se fía de que PEDIDO toque `updatedAt` en cada cambio. Si alguna vez no lo hace
+ * —una carga masiva, una corrección por SQL— ese pedido no vuelve a aparecer nunca. Un
+ * repaso corto de los últimos días lo recoge igual. Cuesta poco y tapa el único agujero
+ * que tiene el sincronizado incremental.
  */
-async function traerPedidos() {
-  const dias = [];
+const REPASO_DIAS = Number(process.env.SYNC_REPASO_DIAS || 3);
 
-  for (let d = DIAS - 1; d >= 0; d--) {
-    dias.push(new Date(Date.now() - d * 86400000).toISOString().slice(0, 10));
-  }
+/**
+ * Sólo los pedidos que LLEVAN domicilio.
+ *
+ * Apagado por defecto: el usuario quiere el catálogo completo y filtrarlo en pantalla.
+ * Los que no llevan domicilio también valen —se ven en el mapa, y un pedido puede pasar a
+ * llevarlo—. Con SYNC_SOLO_DOMICILIO=1 se restringe.
+ */
+const SOLO_DOMICILIO = process.env.SYNC_SOLO_DOMICILIO === '1';
 
-  const todos = [];
+/**
+ * Y de ésos, sólo los que YA tienen el costo puesto.
+ *
+ * También apagado por defecto, y por un número: de los 1.243 pedidos con domicilio y
+ * geolocalización de los últimos quince días, los que la APK ya cotizó son SEIS. Con esto
+ * puesto, delivery se queda con seis pedidos y parece roto. Se pone a 1 el día que la APK
+ * esté cotizando de verdad.
+ */
+const SOLO_COTIZADOS = process.env.SYNC_SOLO_COTIZADOS === '1';
 
-  for (const dia of dias) {
-    try {
-      todos.push(...(await traerPedidosDeUnDia(dia)));
-    } catch (e) {
-      // Un día que falla no tumba los otros catorce.
-      log(`día ${dia} falló: ${e.message}`);
-    }
-    await sleep(150);
-  }
+const comoFecha = (d) => d.toISOString().slice(0, 10);
 
-  return todos;
+const delEspejo = () => ({
+  source: 'pedido',
+  ...(SUCURSAL_CODIGO ? { sucursalCodigo: SUCURSAL_CODIGO } : {}),
+});
+
+/**
+ * Hasta dónde llega el espejo, por los dos extremos.
+ *
+ *   `marca`      — lo más nuevo que ya tenemos según PEDIDO. Es el `since` de la próxima
+ *                  petición: lo que se movió desde entonces.
+ *   `masViejo`   — la fecha del pedido más antiguo que tenemos. Dice cuánto histórico
+ *                  falta por recuperar.
+ *
+ * Los dos salen de los propios datos y no de un contador aparte. Un contador se adelanta
+ * si una tanda falla a medias, y entonces el espejo se salta pedidos para siempre sin dar
+ * ningún error. Y sobre todo: `marca` sola no vale para saber si el histórico está
+ * completo. En cuanto se guarda UN pedido de hoy, `marca` deja de ser nula — así que un
+ * recorrido cortado a la mitad parecería terminado y el año anterior no se traería nunca.
+ */
+async function hastaDondeLlega() {
+  const [nuevo, viejo] = await Promise.all([
+    prisma.order.aggregate({ where: delEspejo(), _max: { pedidoUpdatedAt: true } }),
+    prisma.order.aggregate({ where: { ...delEspejo(), orderDate: { not: null } }, _min: { orderDate: true } }),
+  ]);
+
+  return { marca: nuevo._max.pedidoUpdatedAt ?? null, masViejo: viejo._min.orderDate ?? null };
 }
 
-async function traerPedidosDeUnDia(dia) {
-  const q = new URLSearchParams({ desde: dia, hasta: dia });
-  // SÓLO los que llevan domicilio Y ya tienen el costo puesto.
-  //
-  // Un pedido que se recoge en el almacén no se reparte, y uno que lleva domicilio pero
-  // todavía no ha pasado por el repartidor no se puede meter en una ruta: no se sabe lo
-  // que cuesta llevarlo. Los dos llenaban la lista del que arma rutas de pedidos que
-  // tenía que descartar a mano.
-  q.set('soloDomicilio', '1');
+/** Cuántos días hace de esa fecha. */
+const diasDesde = (d) => Math.floor((Date.now() - d.getTime()) / 86400000);
+
+/** Los parámetros que comparten todas las peticiones. */
+function parametrosBase() {
+  const q = new URLSearchParams();
+  if (SOLO_DOMICILIO) q.set('soloDomicilio', '1');
   if (SOLO_COTIZADOS) q.set('conCosto', '1');
   if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
+  // Los archivados TAMBIÉN: son 51.871 de 56.208 y ahí está casi todo el histórico.
+  return q;
+}
+
+async function pedirOrders(q) {
   const res = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY } });
   if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);
   const { orders = [] } = await res.json();
   return orders;
 }
+
+/**
+ * Un tramo de días. Se procesa y se suelta: no se acumulan 50.000 pedidos en memoria para
+ * mandarlos al final, que es exactamente lo que tiró el proceso la vez anterior.
+ */
+async function porTramos(desdeDias, hastaDias, alTraer) {
+  for (let d = hastaDias; d <= desdeDias; d += TRAMO_DIAS) {
+    const hasta = comoFecha(new Date(Date.now() - d * 86400000));
+    const desde = comoFecha(new Date(Date.now() - Math.min(d + TRAMO_DIAS - 1, desdeDias) * 86400000));
+    const q = parametrosBase();
+
+    q.set('desde', desde);
+    q.set('hasta', hasta);
+    q.set('limit', '5000');
+
+    try {
+      const orders = await pedirOrders(q);
+
+      if (orders.length) await alTraer(orders, `${desde}..${hasta}`);
+    } catch (e) {
+      // Un tramo que falla no tumba el resto: se recogerá en la próxima pasada.
+      log(`tramo ${desde}..${hasta} falló: ${e.message}`);
+    }
+    await sleep(150);
+  }
+}
+
+/**
+ * Lo que cambió desde la marca de agua, por páginas.
+ *
+ * Se pagina por la propia marca: se pide `since`, se procesa, y la siguiente petición
+ * arranca del `updatedAt` más nuevo de lo que acaba de llegar. Sin eso, un lote de más de
+ * `limit` pedidos devolvería siempre los mismos y el bucle no avanzaría nunca.
+ */
+async function porCambios(desde, alTraer) {
+  let marca = desde;
+
+  for (let vuelta = 0; vuelta < 200; vuelta++) {
+    const q = parametrosBase();
+
+    q.set('since', marca.toISOString());
+    q.set('limit', '2000');
+
+    const orders = await pedirOrders(q);
+
+    if (!orders.length) return;
+
+    await alTraer(orders, `cambios desde ${marca.toISOString()}`);
+
+    const masNuevo = orders.reduce((max, o) => {
+      const t = new Date(o.updatedAt || 0).getTime();
+      return t > max ? t : max;
+    }, 0);
+
+    // Sin avance no hay nada más que traer, o PEDIDO no manda `updatedAt`: se para en vez
+    // de girar en el sitio hasta el tope de vueltas.
+    if (!masNuevo || masNuevo <= marca.getTime()) return;
+    marca = new Date(masNuevo);
+    await sleep(150);
+  }
+  log('sincronizado incremental: 200 vueltas y sigue habiendo cambios; se sigue en el próximo ciclo');
+}
+
 
 
 // Cotiza TODO el lote en UNA sola llamada. Es imprescindible: el precio de cada pedido
@@ -178,6 +286,20 @@ async function quoteBatch(pedidos) {
       // La fecha del PEDIDO. Sin ella, el Order nace con la de hoy —cuándo lo copió el
       // espejo— y filtrar por día en el armador de rutas devuelve cero cualquier otro día.
       orderDate: pedido.fecha ?? null,
+      /**
+       * Y todo lo que hace falta para poder FILTRAR el catálogo en el servidor.
+       *
+       * Estaba dentro de `meta` —el pedido entero— así que filtrar por municipio o por
+       * estado obligaba a leer y descartar 50.000 pedidos completos en cada consulta.
+       */
+      pedidoUpdatedAt: pedido.updatedAt ?? null,
+      estado: pedido.estado ?? null,
+      archivado: pedido.archivado === true,
+      fechaComprometida: pedido.fechaComprometida ?? null,
+      pedidoCosto: pedido.costoDomicilio ?? null,
+      municipio: pedido.cliente?.municipio ?? null,
+      vendedor: pedido.vendedor?.nombre || pedido.vendedor?.codigo || null,
+      sucursalCodigo: pedido.sucursalCodigo ?? null,
       // SOLO los marcados requiere_domicilio=true llevan costo. Los false (y los que no
       // traen el dato) se importan igual —hacen falta para las rutas y la capacidad del
       // camión— pero SIN precio de domicilio.
@@ -296,6 +418,32 @@ async function syncCustomers() {
   return { up, del: del.count };
 }
 
+/**
+ * Un lote de pedidos: cotizarlo y guardarlo.
+ *
+ * Se trocea en 200 porque el reparto de carga se calcula por envío y 200 es un tamaño
+ * realista de camión — y porque mandar miles en un solo POST es lo que reventó la
+ * memoria la vez anterior.
+ */
+const LOTE = 200;
+
+async function guardarLote(orders, de) {
+  let guardados = 0;
+
+  for (let i = 0; i < orders.length; i += LOTE) {
+    try {
+      const { byRef } = await quoteBatch(orders.slice(i, i + LOTE));
+
+      guardados += byRef.size;
+    } catch (e) {
+      log(`lote ${i / LOTE + 1} de ${de} falló: ${e.message}`);
+    }
+    await sleep(200);   // sin esto, veinte lotes seguidos ahogan a delivery
+  }
+  log(`${de}: ${orders.length} pedidos, ${guardados} guardados`);
+  return guardados;
+}
+
 async function cycle() {
   if (!KEY) throw new Error('Falta SERVICE_API_KEY.');
 
@@ -307,42 +455,63 @@ async function cycle() {
   } catch (e) {
     log('sync de clientes falló:', e.message);
   }
-  const orders = await traerPedidos();
 
-  // GUARD GLOBAL: sin fórmula, la cola entera espera.
+  // GUARD GLOBAL: sin fórmula, la cola entera espera. Se comprueba ANTES de traer nada:
+  // pedirle a PEDIDO cincuenta mil pedidos para tirarlos no le hace gracia a nadie.
   if (!(await checkFormula())) {
     log('esperando configuración -> falta la FÓRMULA del domicilio (Ajustes). La cola queda en espera.');
     return;
   }
 
-  // El lote entero de una vez. Además de calcular, ESTA llamada es la que guarda los
-  // pedidos en delivery: quoteBatch hace el upsert de cada Order por su externalId.
-  //
-  // Y va en un solo envío porque el precio de cada pedido es su fracción de peso del
-  // costo del camión: cotizarlos de uno en uno daría un reparto distinto y mal.
+  const { marca, masViejo } = await hastaDondeLlega();
+  let total = 0;
+
   /**
-   * Por lotes, y no todo de una vez.
-   *
-   * El reparto de carga se calcula por envío, así que idealmente iría junto; pero
-   * mandar miles de pedidos en un solo POST es lo que reventó la memoria. Un lote de
-   * 200 es un tamaño realista de camión y mantiene el cálculo con sentido.
+   * 1. Lo que se movió desde la última vez. Es lo que hace que un ciclo cueste nada.
    */
-  const LOTE = 200;
-  let guardados = 0;
-
-  for (let i = 0; i < orders.length; i += LOTE) {
-    const trozo = orders.slice(i, i + LOTE);
-
-    try {
-      const { byRef } = await quoteBatch(trozo);
-
-      guardados += byRef.size;
-    } catch (e) {
-      log(`lote ${i / LOTE + 1} falló: ${e.message}`);
-    }
-    await sleep(200);   // sin esto, veinte lotes seguidos ahogan a delivery
+  if (marca) {
+    await porCambios(marca, async (orders, de) => { total += await guardarLote(orders, de); });
   }
-  log(`${orders.length} pedidos de los últimos ${DIAS} días (${guardados} con reparto)`);
+
+  /**
+   * 2. Una repasada corta a los últimos días, siempre.
+   *
+   * Tapa el único agujero del sincronizado incremental: un pedido cambiado sin que PEDIDO
+   * tocara su `updatedAt` —una carga masiva, una corrección por SQL— no volvería a
+   * aparecer nunca. Y es lo que llena el espejo la primerísima vez.
+   */
+  await porTramos(REPASO_DIAS, 0, async (orders, de) => { total += await guardarLote(orders, `repaso ${de}`); });
+
+  /**
+   * 3. Y se estira el histórico un poco más hacia atrás.
+   *
+   * Un trozo por ciclo, no el año de una sentada: lo reciente ya está desde el primer
+   * ciclo, y si el proceso se reinicia a mitad la próxima vuelta sigue por donde iba —lo
+   * dice el pedido más antiguo que hay guardado, no un contador que se puede adelantar—.
+   */
+  const yaCubiertos = masViejo ? diasDesde(masViejo) : REPASO_DIAS;
+
+  if (yaCubiertos < HISTORICO_DIAS) {
+    const hasta = Math.min(yaCubiertos + HISTORICO_POR_CICLO, HISTORICO_DIAS);
+    let delHistorico = 0;
+
+    await porTramos(hasta, yaCubiertos, async (orders, de) => {
+      delHistorico += await guardarLote(orders, de);
+    });
+    total += delHistorico;
+
+    /**
+     * Se avisa sólo cuando el histórico avanza de verdad.
+     *
+     * Cuando ya no queda nada más atrás, este barrido vuelve a mirar la misma ventana en
+     * cada ciclo y no encuentra nada — que es lo correcto, y cuesta diez peticiones
+     * vacías—. Pero anunciarlo cada cinco minutos como si estuviera trabajando hace que
+     * el registro parezca un proceso atascado.
+     */
+    if (delHistorico) log(`histórico: recuperados ${delHistorico} pedidos de entre ${yaCubiertos} y ${hasta} días atrás`);
+  }
+
+  if (!total) log(`sin cambios${marca ? ` desde ${marca.toISOString()}` : ''}`);
 }
 
 // RECOMPUTE: recotiza TODOS los pedidos con la fórmula vigente y refresca los Order de
@@ -351,27 +520,12 @@ async function cycle() {
 // Ya NO escribe nada en PEDIDO: el costo que ve el cliente lo pone la APK. Lo que se
 // recalcula aquí es el reparto de carga para las rutas de delivery, y se queda aquí.
 async function recomputeAll() {
-  const q = new URLSearchParams(); // sin onlyPending => todos los que tienen geolocalización
-  q.set('soloDomicilio', '1');
-  if (SOLO_COTIZADOS) q.set('conCosto', '1');
-  if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
-  const res = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY } });
-  if (!res.ok) throw new Error(`PEDIDO ${res.status}: ${await res.text().catch(() => '')}`);
-  const { orders = [] } = await res.json();
-  log(`recompute: ${orders.length} pedidos con geo`);
-  // Por lotes, por lo mismo que el ciclo normal: todo de una vez agota la memoria.
-  let n = 0;
-  for (let i = 0; i < orders.length; i += 200) {
-    const { byRef } = await quoteBatch(orders.slice(i, i + 200));
+  log(`recompute: recorriendo ${HISTORICO_DIAS} días y recotizando con la fórmula vigente`);
 
-    for (const o of orders.slice(i, i + 200)) {
-      const r = byRef.get(o.id);
+  let total = 0;
 
-      if (r && r.status === 'quoted' && r.price != null) n++;
-    }
-    await sleep(200);
-  }
-  log(`recompute LISTO: ${n} pedidos recosteados en delivery (PEDIDO no se toca).`);
+  await porTramos(HISTORICO_DIAS, 0, async (orders, de) => { total += await guardarLote(orders, de); });
+  log(`recompute LISTO: ${total} pedidos recosteados en delivery (PEDIDO no se toca).`);
 }
 
 async function main() {

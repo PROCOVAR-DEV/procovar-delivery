@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
 import { resolveScope, scopeWhere } from '@/lib/scope'
+import { leerFiltros, whereDeFiltros } from '@/lib/filtrosPedido'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,20 +20,25 @@ export async function GET(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const params = new URL(req.url).searchParams
-  const q = params.get('q')?.trim().toLowerCase() || ''
 
   /**
-   * Filtros por sucursal y por día, para armar una ruta.
+   * Los MISMOS filtros que la lista de pedidos.
    *
-   * Una ruta se hace con los pedidos de UNA sucursal y de UN día. Sin poder acotar por
-   * eso hay que buscarlos a ojo entre miles, que es lo que hacía la pantalla inservible
-   * aunque el servidor conteste rápido.
-   *
-   * La sucursal pedida se aplica ADEMÁS del alcance, nunca en su lugar: quien sólo ve
-   * una sucursal no puede pedir los pedidos de otra pasando el parámetro a mano.
+   * Salen de `lib/filtrosPedido` para que signifiquen lo mismo en las dos pantallas: si
+   * «expirado» quiere decir una cosa aquí y otra en la lista, los números no cuadran y
+   * nadie sabe cuál creerse. Se aplican en la base: con 50.000 pedidos, filtrar en el
+   * navegador es mandárselos todos primero.
    */
-  const branchId = params.get('branchId')?.trim() || ''
+  const filtros = leerFiltros(params)
+
+  /**
+   * Y el DÍA, que aquí es lo primero que se elige.
+   *
+   * Una ruta se hace con los pedidos de UNA sucursal y de UN día. `fecha` es el atajo
+   * para eso; el rango `desde`/`hasta` de los filtros generales sigue valiendo.
+   */
   const fecha = params.get('fecha')?.trim() || ''
+  const branchId = params.get('branchId')?.trim() || ''
 
   const scope = await resolveScope(req, user)
   const alcance = scopeWhere(scope)
@@ -49,104 +55,67 @@ export async function GET(req: NextRequest) {
     porDia = { gte: desde, lt: hasta }
   }
 
-  const orders = await prisma.order.findMany({
-    where: {
-      ...alcance,
-      // Si ya hay alcance, la sucursal pedida sólo puede estrecharlo, no ampliarlo.
-      ...(branchId && (!alcance.branchId || alcance.branchId === branchId)
-        ? { branchId }
-        : {}),
+  const where = {
+    AND: [
+      alcance,
+      whereDeFiltros(filtros),
+      {
+        // Si ya hay alcance, la sucursal pedida sólo puede estrecharlo, no ampliarlo.
+        ...(branchId && (!alcance.branchId || alcance.branchId === branchId) ? { branchId } : {}),
+        source: 'pedido',
+        routeId: null,
+        endLat: { not: null },
+        endLng: { not: null },
+      },
       /**
        * Por la fecha DEL PEDIDO, no por la de copiado.
        *
        * Esto filtraba por `createdAt`, que es cuándo el espejo trajo el pedido. Y el
-       * espejo trae quince días de una vez, así que todos nacían con la fecha de hoy:
-       * pedir cualquier otro día devolvía CERO pedidos aunque estuvieran ahí. Se
-       * mantiene `createdAt` como respaldo para los que entraron antes de que se
-       * guardara la fecha buena.
+       * espejo trae muchos días de una vez, así que todos nacían con la fecha de hoy:
+       * pedir cualquier otro día devolvía CERO pedidos aunque estuvieran ahí. Se mantiene
+       * `createdAt` de respaldo para los que entraron antes de que se guardara la buena.
        */
-      ...(porDia ? { OR: [{ orderDate: porDia }, { orderDate: null, createdAt: porDia }] } : {}),
-      source: 'pedido',
-      routeId: null,
-      endLat: { not: null },
-      endLng: { not: null },
-    },
-    /**
-     * La ventana la elige `createdAt`; el orden que se ve, la fecha del pedido.
-     *
-     * Ordenar en la base por `orderDate` parece lo correcto y no lo es todavía: en
-     * Postgres un nulo en un DESC va PRIMERO, y ahora mismo TODOS los pedidos que ya
-     * están en el espejo lo tienen en null —la columna es nueva—. Con un tope, esos
-     * nulos se comerían la ventana entera y los pedidos con fecha, que son los recién
-     * traídos, no entrarían nunca.
-     *
-     * `createdAt` no tiene nulos y es un buen apoderado de la recencia: es cuándo entró
-     * en el espejo. El orden final se hace abajo, sobre las filas ya traídas.
-     */
-    orderBy: { createdAt: 'desc' },
-    /**
-     * Y un tope, que no había.
-     *
-     * En producción hay 12.621 pedidos sin ruta. Esto los devolvía TODOS, y para sacar
-     * el municipio y el vendedor tenía que leer el `meta` de cada uno —el pedido entero
-     * de PEDIDO— y descartarlo. La pantalla de armar rutas se quedaba esperando.
-     *
-     * Una ruta se arma con los pedidos de UNA sucursal y de UN día: para eso están los
-     * filtros. El tope es la red por debajo, para cuando no se usan.
-     */
-    take: TOPE,
-    select: {
-      id: true,
-      orderDate: true,
-      createdAt: true,
-      operationNumber: true,
-      customerName: true,
-      address: true,
-      endAddress: true,
-      endLat: true,
-      endLng: true,
-      weight: true,
-      deliveryPrice: true,
-      deliveryDistanceKm: true,
-      items: true,
-      meta: true,
-    },
-  })
+      ...(porDia ? [{ OR: [{ orderDate: porDia }, { orderDate: null, createdAt: porDia }] }] : []),
+    ],
+  }
+
+  const [total, orders] = await Promise.all([
+    prisma.order.count({ where }),
+    prisma.order.findMany({
+      where,
+      // Los nulos al final: en Postgres un nulo en un DESC va PRIMERO y los pedidos sin
+      // fecha se plantarían en lo alto de la lista, delante de los de hoy.
+      orderBy: [{ orderDate: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      take: TOPE,
+      select: {
+        id: true,
+        orderDate: true,
+        createdAt: true,
+        operationNumber: true,
+        customerName: true,
+        address: true,
+        endAddress: true,
+        endLat: true,
+        endLng: true,
+        weight: true,
+        deliveryPrice: true,
+        deliveryDistanceKm: true,
+        items: true,
+        estado: true,
+        archivado: true,
+        requiereDomicilio: true,
+        pedidoCosto: true,
+        municipio: true,
+        vendedor: true,
+      },
+    }),
+  ])
 
   /**
-   * El municipio y el VENDEDOR salen de `meta`, que guarda el pedido tal como llegó.
+   * Los filtros que aún se aplican aquí: los que no son del catálogo.
    *
-   * El vendedor ya viaja en el payload de PEDIDO y aquí se estaba ignorando. Es uno de
-   * los filtros que más falta hacen: una ruta se suele armar con los clientes de un
-   * vendedor, porque son los que caen cerca unos de otros.
-   */
-  const conExtras = orders.map((o) => {
-    const { meta, ...rest } = o
-    const m = meta as { cliente?: { municipio?: string }; vendedor?: { nombre?: string; codigo?: string } } | null
-
-    return {
-      ...rest,
-      municipio: m?.cliente?.municipio || null,
-      vendedor: m?.vendedor?.nombre || m?.vendedor?.codigo || null,
-    }
-  })
-
-  /**
-   * Filtros para acotar qué pedidos entran en la ruta.
-   *
-   * Con miles en la lista, elegir a ojo es el trabajo de verdad. Cada uno responde a una
-   * pregunta que se hace al armar una ruta: de quién son, dónde caen, cuánto pesan y si
-   * el domicilio compensa el viaje.
-   */
-  const vendedor = params.get('vendedor')?.trim().toLowerCase() || ''
-  /**
-   * Convierte a número SÓLO si venía algo. `Number(null)` es 0, no NaN.
-   *
-   * Ese cero se colaba como "distancia máxima 0 km" cuando el filtro ni siquiera se
-   * había usado, y descartaba todos los pedidos que tuvieran alguna distancia medida:
-   * la lista salía vacía sin que nadie hubiera filtrado nada. Con un filtro puesto sí
-   * funcionaba, que es lo que lo hacía difícil de ver — parecía que los filtros iban
-   * bien y que lo roto era la lista.
+   * La distancia y el costo son de delivery —los calcula él— y no tienen sitio en
+   * `filtrosPedido`, que describe el pedido tal como viene de PEDIDO.
    */
   const numero = (v: string | null) => {
     if (v == null || v.trim() === '') return null
@@ -158,20 +127,7 @@ export async function GET(req: NextRequest) {
   const kmMax = numero(params.get('kmMax'))
   const costoMin = numero(params.get('costoMin'))
 
-  const filtered = conExtras.filter((o) => {
-    if (q) {
-      // Una sola caja que busca por folio, cliente, dirección y municipio: quien la usa
-      // no se para a pensar en qué campo está lo que recuerda.
-      const cuadra =
-        o.customerName.toLowerCase().includes(q) ||
-        (o.endAddress || o.address || '').toLowerCase().includes(q) ||
-        (o.operationNumber || '').toLowerCase().includes(q) ||
-        (o.municipio || '').toLowerCase().includes(q) ||
-        (o.vendedor || '').toLowerCase().includes(q)
-
-      if (!cuadra) return false
-    }
-    if (vendedor && (o.vendedor || '').toLowerCase() !== vendedor) return false
+  const filtered = orders.filter((o) => {
     // Sin distancia medida no se descarta por distancia: no saberla no es estar lejos.
     if (kmMax != null && o.deliveryDistanceKm != null && o.deliveryDistanceKm > kmMax) return false
     if (costoMin != null && (o.deliveryPrice ?? 0) < costoMin) return false
@@ -179,22 +135,11 @@ export async function GET(req: NextRequest) {
     return true
   })
 
-  /**
-   * Por la fecha DEL PEDIDO, con la de copiado de respaldo.
-   *
-   * Es lo que hay que ordenar y es un COALESCE, que Prisma 5 no sabe pedir. Son como
-   * mucho `TOPE` filas ya traídas: ordenarlas aquí no cuesta nada.
-   */
-  filtered.sort(
-    (a, b) =>
-      new Date(b.orderDate ?? b.createdAt).getTime() - new Date(a.orderDate ?? a.createdAt).getTime(),
-  )
-
-  // Se dice si se cortó. Una lista recortada en silencio se lee como "esto es todo lo
-  // que hay", y quien arma la ruta da por hecho que no falta ningún pedido.
+  // Se dice si se cortó. Una lista recortada en silencio se lee como "esto es todo lo que
+  // hay", y quien arma la ruta da por hecho que no falta ningún pedido.
   return NextResponse.json({
     orders: filtered,
-    total: filtered.length,
-    truncated: orders.length >= TOPE,
+    total,
+    truncated: total > orders.length,
   })
 }

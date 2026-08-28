@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import Navbar from '@/components/Navbar'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false })
-import Pagination, { usePagedList } from '@/components/Pagination'
+import Pagination from '@/components/Pagination'
 import { useAppStore } from '@/store/useAppStore'
 import { useCurrency } from '@/lib/useCurrency'
 import { useT } from '@/lib/i18n'
@@ -39,6 +39,13 @@ interface OrderRow {
   deliveryDistanceKm?: number | null
   municipio?: string | null
   vendedor?: string | null
+  /** El estado EN PEDIDO: 'completada', 'en_proceso' o nada. */
+  estado?: string | null
+  archivado?: boolean
+  fechaComprometida?: string | null
+  requiereDomicilio?: boolean | null
+  /** Lo que la APK cobró de domicilio EN PEDIDO. No es `price`, que es el de delivery. */
+  pedidoCosto?: number | null
   items?: OrderItem[]
   /** La fecha del pedido EN PEDIDO. `createdAt` es cuándo lo copió el espejo. */
   orderDate?: string | null
@@ -64,11 +71,17 @@ export default function OrdersPage() {
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('recientes')
   const [statusFilter, setStatusFilter] = useState('todos')
-  const [municipioFilter, setMunicipioFilter] = useState('todos')
-  const [vendedorFilter, setVendedorFilter] = useState('todos')
-  // Rango de fechas del PEDIDO (no de cuándo lo copió el espejo). Vacío = sin filtrar.
+  const [municipioFilter, setMunicipioFilter] = useState('')
+  const [vendedorFilter, setVendedorFilter] = useState('')
+  // Los filtros del CATÁLOGO, los que aplica el servidor. Vacío = sin filtrar.
+  const [estado, setEstado] = useState('')
+  const [archivado, setArchivado] = useState('')
+  const [domicilio, setDomicilio] = useState('')
+  const [cotizado, setCotizado] = useState('')
+  // Rango de fechas del PEDIDO (no de cuándo lo copió el espejo).
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
+  const [pagina, setPagina] = useState(1)
   const [detail, setDetail] = useState<OrderRow | null>(null)
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
@@ -81,14 +94,74 @@ export default function OrdersPage() {
     return () => { document.body.style.overflow = prev }
   }, [detail])
 
-  const { data: orders = [], isLoading } = useQuery({
-    queryKey: ['orders'],
+  /**
+   * La búsqueda espera medio segundo antes de preguntar.
+   *
+   * Sin eso son ocho consultas contra 50.000 pedidos para escribir "Sánchez".
+   */
+  const [buscado, setBuscado] = useState('')
+
+  useEffect(() => {
+    const id = setTimeout(() => setBuscado(search.trim()), 400)
+
+    return () => clearTimeout(id)
+  }, [search])
+
+  // Cualquier cambio de filtro vuelve a la página 1: quedarse en la 7 de una lista que
+  // ahora tiene 2 páginas enseña un vacío que parece un fallo.
+  useEffect(() => {
+    setPagina(1)
+  }, [buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, desde, hasta])
+
+  /**
+   * Los pedidos, filtrados y paginados POR EL SERVIDOR.
+   *
+   * Son 50.000: filtrar en la pantalla obliga a mandárselos todos primero, y eso es lo
+   * que la dejaba colgada. Aquí sólo viaja la página que se está mirando.
+   */
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, desde, hasta, pagina }],
     queryFn: async () => {
-      const res = await axios.get('/api/orders', { headers: { Authorization: `Bearer ${token}` } })
-      return res.data as OrderRow[]
+      const res = await axios.get('/api/orders', {
+        params: {
+          ...(buscado ? { q: buscado } : {}),
+          ...(estado ? { estado } : {}),
+          ...(archivado ? { archivado } : {}),
+          ...(domicilio ? { domicilio } : {}),
+          ...(cotizado ? { cotizado } : {}),
+          ...(municipioFilter ? { municipio: municipioFilter } : {}),
+          ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
+          ...(desde ? { desde } : {}),
+          ...(hasta ? { hasta } : {}),
+          pagina,
+        },
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      return res.data as { orders: OrderRow[]; total: number; pagina: number; paginas: number; porPagina: number }
     },
     enabled: !!token,
+    // Se mantiene la página anterior mientras llega la nueva: si no, cada cambio deja la
+    // tabla en blanco un instante y parece que se vació.
+    placeholderData: (previo) => previo,
   })
+
+  const orders = data?.orders ?? []
+  const total = data?.total ?? 0
+  const paginas = data?.paginas ?? 1
+
+  /** Con qué se puede filtrar. Sale de la base entera, no de la página que se ve. */
+  const { data: facetas } = useQuery({
+    queryKey: ['orders-facetas'],
+    queryFn: async () => {
+      const res = await axios.get('/api/orders/facetas', { headers: { Authorization: `Bearer ${token}` } })
+      return res.data as { municipios: { valor: string; pedidos: number }[]; vendedores: { valor: string; pedidos: number }[] }
+    },
+    enabled: !!token,
+    staleTime: 10 * 60 * 1000,
+  })
+
+  const municipios = facetas?.municipios ?? []
+  const vendedores = facetas?.vendedores ?? []
 
   // Estado de entrega del pedido (para el badge y el filtro):
   //  - Entregado: ya se entregó (deliveredAt) o su ruta está completada.
@@ -100,20 +173,21 @@ export default function OrdersPage() {
     return { key: 'pendiente', label: 'Pendiente', cls: 'bg-gray-100 text-gray-600' }
   }
 
-  // Municipios distintos (no vacíos) presentes en los pedidos, ordenados.
-  const municipios = Array.from(
-    new Set(
-      orders
-        .map((o) => (o.municipio || '').trim())
-        .filter((m) => m !== '')
-    )
-  ).sort((a, b) => a.localeCompare(b))
-
-  // Vendedores presentes, para el filtro. Una ruta se suele armar con los clientes de un
-  // vendedor: son los que caen cerca unos de otros.
-  const vendedores = Array.from(
-    new Set(orders.map((o) => (o.vendedor || '').trim()).filter((v) => v !== ''))
-  ).sort((a, b) => a.localeCompare(b))
+  /**
+   * El estado EN PEDIDO, que no es el de reparto.
+   *
+   * Son dos cosas distintas y hay que poder ver las dos: un pedido puede estar
+   * «completada» en PEDIDO —el cliente ya lo tiene— y «Pendiente» aquí, porque delivery
+   * todavía no lo ha metido en ninguna ruta. Confundirlos es armar rutas de lo ya
+   * entregado, o no armarlas de lo que falta.
+   */
+  const estadoPedido = (o: OrderRow) => {
+    if (o.estado === 'completada') return { label: 'Completada', cls: 'bg-emerald-100 text-emerald-700' }
+    if (o.fechaComprometida && new Date(o.fechaComprometida) < new Date()) {
+      return { label: 'Expirada', cls: 'bg-red-100 text-red-700' }
+    }
+    return { label: 'En proceso', cls: 'bg-amber-100 text-amber-700' }
+  }
 
   /**
    * La fecha del pedido, con respaldo.
@@ -124,34 +198,24 @@ export default function OrdersPage() {
    */
   const fechaDe = (o: OrderRow) => o.orderDate || o.createdAt
 
-  const enRango = (o: OrderRow) => {
-    if (!desde && !hasta) return true
-
-    const f = new Date(fechaDe(o)).getTime()
-
-    if (desde && f < new Date(`${desde}T00:00:00`).getTime()) return false
-    // El 'hasta' incluye el día entero: quien escribe el 24 quiere los del 24, no los
-    // del 24 a las 00:00.
-    if (hasta && f > new Date(`${hasta}T23:59:59.999`).getTime()) return false
-    return true
-  }
-
-  const q = search.trim().toLowerCase()
+  /**
+   * Lo que queda por filtrar aquí: el estado de REPARTO.
+   *
+   * Es de delivery, no del catálogo de PEDIDO, y se calcula de la ruta. El resto —texto,
+   * estado, archivado, domicilio, municipio, vendedor, fechas— lo hace la base.
+   */
   const filtered = orders
     .filter((o) => !sucursalId || o.branch?.id === sucursalId)
-    .filter((o) =>
-      !q
-      || o.customerName.toLowerCase().includes(q)
-      || (o.operationNumber || '').toLowerCase().includes(q)
-      || (o.route?.routeCode || '').toLowerCase().includes(q)
-      || (o.route?.vehicle?.name || '').toLowerCase().includes(q)
-      || (o.endAddress || o.address || '').toLowerCase().includes(q)
-    )
     .filter((o) => statusFilter === 'todos' || deliveryStatus(o).key === statusFilter)
-    .filter((o) => municipioFilter === 'todos' || o.municipio === municipioFilter)
-    .filter((o) => vendedorFilter === 'todos' || o.vendedor === vendedorFilter)
-    .filter(enRango)
 
+  /**
+   * El orden se aplica a ESTA página, y se dice en el desplegable.
+   *
+   * La lista viene de la base ordenada por fecha de pedido. Reordenar por precio o por
+   * peso aquí ordena las cincuenta filas que se están viendo, no los cincuenta mil — y
+   * pedirle a la base que ordene por eso significaría paginar de otra forma. Se deja
+   * porque para mirar una página es útil, pero el desplegable no promete otra cosa.
+   */
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
       case 'precio_desc': return (b.price ?? 0) - (a.price ?? 0)
@@ -163,7 +227,15 @@ export default function OrdersPage() {
     }
   })
 
-  const paged = usePagedList(sorted, 25)
+  /** ¿Hay algún filtro puesto? Sirve para saber si un cero es «no hay» o «no cuadra». */
+  const hayFiltro = Boolean(
+    buscado || estado || archivado || domicilio || cotizado || municipioFilter || vendedorFilter || desde || hasta,
+  )
+
+  const limpiarFiltros = () => {
+    setSearch(''); setEstado(''); setArchivado(''); setDomicilio(''); setCotizado('')
+    setMunicipioFilter(''); setVendedorFilter(''); setDesde(''); setHasta('')
+  }
 
   const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString() : '—'
   const itemLabel = (it: OrderItem) => it.name || it.description || '—'
@@ -178,27 +250,87 @@ export default function OrdersPage() {
             <p className="text-sm text-gray-500">{t('ord.subtitle')}</p>
           </div>
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm text-gray-500">{t('ord.totalOrders', { n: sorted.length })}</span>
+            <span className="text-sm text-gray-500">
+              {total.toLocaleString()} pedidos
+              {isFetching && <Icon icon="mdi:loading" className="ml-1.5 inline animate-spin text-gray-400" />}
+            </span>
+
+            {/* El estado EN PEDIDO. Lo filtra la base, sobre los 50.000, no sobre la
+                página que se está viendo. */}
+            <select
+              value={estado}
+              onChange={(e) => setEstado(e.target.value)}
+              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Estado del pedido en PEDIDO"
+            >
+              <option value="">Cualquier estado</option>
+              <option value="en_proceso">En proceso</option>
+              <option value="completada">Completada</option>
+              <option value="expirada">Expirada</option>
+            </select>
+
+            {/* Archivar en PEDIDO es esconder de su lista, no borrar. Aquí se ven todos
+                por defecto: la mayor parte del histórico está archivada. */}
+            <select
+              value={archivado}
+              onChange={(e) => setArchivado(e.target.value)}
+              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Archivados en PEDIDO"
+            >
+              <option value="">Archivados y activos</option>
+              <option value="0">Sólo activos</option>
+              <option value="1">Sólo archivados</option>
+            </select>
+
+            <select
+              value={domicilio}
+              onChange={(e) => setDomicilio(e.target.value)}
+              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Si el pedido lleva domicilio"
+            >
+              <option value="">Con y sin domicilio</option>
+              <option value="1">Sólo con domicilio</option>
+              <option value="0">Sólo sin domicilio</option>
+            </select>
+
+            {/* El costo lo pone el repartidor desde la APK. Sin él, el pedido no se puede
+                meter en una ruta: no se sabe lo que cuesta llevarlo. */}
+            <select
+              value={cotizado}
+              onChange={(e) => setCotizado(e.target.value)}
+              className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Si la APK ya le puso costo de domicilio"
+            >
+              <option value="">Cotizados y sin cotizar</option>
+              <option value="1">Ya cotizados por la APK</option>
+              <option value="0">Sin cotizar</option>
+            </select>
+
+            {/* El estado de REPARTO es de delivery, no de PEDIDO: se calcula de la ruta y
+                se filtra sobre la página. Son dos cosas distintas a propósito. */}
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              title="Estado de reparto en delivery (se aplica sobre esta página)"
             >
-              <option value="todos">Todos los estados</option>
-              <option value="pendiente">Pendiente</option>
+              <option value="todos">Cualquier reparto</option>
+              <option value="pendiente">Sin ruta</option>
               <option value="reparto">En reparto</option>
               <option value="entregado">Entregado</option>
             </select>
+
             <select
               value={municipioFilter}
               onChange={(e) => setMunicipioFilter(e.target.value)}
               className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
-              <option value="todos">Todos los municipios</option>
+              <option value="">Todos los municipios</option>
               {municipios.map((m) => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m.valor} value={m.valor}>{m.valor} ({m.pedidos})</option>
               ))}
             </select>
+
             {vendedores.length > 0 && (
               <select
                 value={vendedorFilter}
@@ -206,12 +338,13 @@ export default function OrdersPage() {
                 className="py-2 px-3 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 title="Vendedor del pedido"
               >
-                <option value="todos">Todos los vendedores</option>
+                <option value="">Todos los vendedores</option>
                 {vendedores.map((v) => (
-                  <option key={v} value={v}>{v}</option>
+                  <option key={v.valor} value={v.valor}>{v.valor} ({v.pedidos})</option>
                 ))}
               </select>
             )}
+
             {/* Por FECHA DEL PEDIDO, no por cuándo lo copió el espejo. */}
             <div className="flex items-center gap-1.5 py-1 px-2.5 border rounded-xl text-sm">
               <Icon icon="mdi:calendar-range" className="text-gray-400" />
@@ -243,6 +376,7 @@ export default function OrdersPage() {
                 </button>
               )}
             </div>
+
             <select
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
@@ -274,14 +408,16 @@ export default function OrdersPage() {
           ) : filtered.length === 0 ? (
             <div className="p-10 text-center text-gray-500 space-y-2">
               <p>{t('ord.empty')}</p>
-              {/* Un cero mudo se lee como "está roto". Aquí casi siempre es que se pidió
-                  un día que el espejo no trae: sólo copia los últimos días. */}
-              {(desde || hasta) && (
-                <p className="text-xs text-gray-400 max-w-md mx-auto">
-                  Delivery guarda sólo los pedidos recientes de PEDIDO (los últimos días),
-                  y de ésos, los que llevan domicilio con el costo ya puesto. Un rango más
-                  antiguo no está aquí aunque exista en PEDIDO.
-                </p>
+              {/* Un cero mudo se lee como "está roto". Casi siempre es que los filtros no
+                  dejan pasar nada, y decirlo ahorra buscar el fallo donde no está. */}
+              {hayFiltro && (
+                <button
+                  type="button"
+                  onClick={limpiarFiltros}
+                  className="text-xs text-blue-600 hover:underline"
+                >
+                  Ningún pedido cuadra con estos filtros — quitarlos todos
+                </button>
               )}
             </div>
           ) : (
@@ -289,6 +425,7 @@ export default function OrdersPage() {
               <thead>
                 <tr className="border-b text-left text-gray-600">
                   <th className="px-4 py-3 font-semibold">Fecha</th>
+                  <th className="px-4 py-3 font-semibold">Pedido</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colClient')}</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colRoute')}</th>
                   <th className="px-4 py-3 font-semibold">{t('ord.colVehicle')}</th>
@@ -301,7 +438,7 @@ export default function OrdersPage() {
                 </tr>
               </thead>
               <tbody>
-                {paged.pageItems.map((o) => (
+                {sorted.map((o) => (
                   <tr
                     key={o.id}
                     className="border-b hover:bg-blue-50/40 align-middle cursor-pointer"
@@ -312,6 +449,22 @@ export default function OrdersPage() {
                       {/* Sin `orderDate` la fecha es la de copiado, no la del pedido: se
                           avisa en vez de enseñarla como si fuera la buena. */}
                       {!o.orderDate && <span className="ml-1 text-gray-300" title="Pedido copiado antes de que se guardara su fecha: ésta es la del espejo.">≈</span>}
+                    </td>
+                    <td className="px-4 py-3">
+                      {(() => { const e = estadoPedido(o); return (
+                        <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-full ${e.cls}`}>{e.label}</span>
+                      )})()}
+                      {/* Archivado en PEDIDO: sigue estando y se puede rutear, pero
+                          allí ya está fuera de la lista. Verlo evita armar una ruta
+                          creyendo que es de esta semana. */}
+                      {o.archivado && (
+                        <span className="ml-1 text-gray-300" title="Archivado en PEDIDO">
+                          <Icon icon="mdi:archive-outline" className="inline text-xs" />
+                        </span>
+                      )}
+                      {o.requiereDomicilio === false && (
+                        <span className="block text-[10px] text-gray-400 mt-0.5">sin domicilio</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 font-medium">
                       {o.customerName}
@@ -365,14 +518,16 @@ export default function OrdersPage() {
           )}
           {!isLoading && filtered.length > 0 && (
             <Pagination
-              page={paged.page}
-              totalPages={paged.totalPages}
-              total={paged.total}
-              from={paged.from}
-              to={paged.to}
-              pageSize={paged.pageSize}
-              onPage={paged.setPage}
-              onPageSize={paged.setPageSize}
+              page={pagina}
+              totalPages={paginas}
+              total={total}
+              from={(pagina - 1) * (data?.porPagina ?? 50) + 1}
+              to={Math.min(pagina * (data?.porPagina ?? 50), total)}
+              pageSize={data?.porPagina ?? 50}
+              onPage={setPagina}
+              /* El tamaño de página lo pone el servidor: cambiarlo aquí no cambiaría lo
+                 que llega. Se deja fijo en vez de ofrecer un control que no hace nada. */
+              onPageSize={() => {}}
             />
           )}
         </div>

@@ -244,8 +244,8 @@ export default function RoutesPage() {
       const d = res.data
 
       return Array.isArray(d)
-        ? { orders: d as AvailableOrder[], truncated: false }
-        : (d as { orders: AvailableOrder[]; truncated: boolean })
+        ? { orders: d as AvailableOrder[], truncated: false, total: d.length }
+        : (d as { orders: AvailableOrder[]; truncated: boolean; total: number })
     },
     enabled: !!token,
   })
