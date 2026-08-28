@@ -192,6 +192,15 @@ export async function GET(req: NextRequest) {
     where: scopeWhere(scope),
     orderBy: { createdAt: 'desc' },
     include: {
+      /**
+       * De qué sucursal es la ruta.
+       *
+       * No venía, así que el Super Admin —que las ve todas— tenía las de las ocho
+       * sucursales en una sola lista sin nada que las distinguiera: dos rutas del mismo
+       * día con el mismo aspecto podían ser de Holguín y de La Habana. La pantalla las
+       * agrupa por aquí.
+       */
+      branch: { select: { id: true, name: true, externalId: true } },
       vehicle: { select: { id: true, name: true, type: true, plate: true, capacity: true } },
       orders: {
         orderBy: { stopOrder: 'asc' },

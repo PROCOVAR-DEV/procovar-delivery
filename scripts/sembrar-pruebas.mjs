@@ -225,6 +225,30 @@ async function main() {
 
   for (const p of pedidos) await prisma.order.create({ data: p })
 
+  /**
+   * Una ruta en CADA sucursal.
+   *
+   * El Super Admin las ve las dos, y era justo lo que se veía revuelto: dos rutas con el
+   * mismo aspecto y nada que dijera de dónde son.
+   */
+  const camionHab = await prisma.vehicle.findFirst({ where: { branchId: habana.id } })
+  const camionCmg = await prisma.vehicle.findFirst({ where: { branchId: camaguey.id } })
+
+  await prisma.route.create({
+    data: {
+      name: 'Reparto Habana', routeCode: 'RT-HAB-001', status: 'planned',
+      originAddress: 'Almacén Habana', originLat: habana.lat, originLng: habana.lng,
+      branchId: habana.id, userId: admin.id, vehicleId: camionHab?.id ?? null,
+    },
+  })
+  await prisma.route.create({
+    data: {
+      name: 'Reparto Camagüey', routeCode: 'RT-CMG-001', status: 'planned',
+      originAddress: 'Almacén Camagüey', originLat: camaguey.lat, originLng: camaguey.lng,
+      branchId: camaguey.id, userId: jefeCmg.id, vehicleId: camionCmg?.id ?? null,
+    },
+  })
+
   console.log(JSON.stringify({
     adminId: admin.id,
     adminEmail: admin.email,

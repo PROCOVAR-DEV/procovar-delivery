@@ -62,6 +62,8 @@ interface Route {
   orders: RouteOrder[]
   vehicleId?: string | null
   vehicle?: { id: string; name: string; type: string; plate: string | null; capacity: number } | null
+  /** La sucursal de la ruta. Sin esto, el Super Admin las ve todas revueltas. */
+  branch?: { id: string; name: string; externalId?: string | null } | null
   createdAt?: string
 }
 
@@ -478,6 +480,7 @@ export default function RoutesPage() {
       || (r.name || '').toLowerCase().includes(q)
       || (r.originAddress || '').toLowerCase().includes(q)
       || (r.vehicle?.name || '').toLowerCase().includes(q)
+      || (r.branch?.name || '').toLowerCase().includes(q)
     const created = r.createdAt ? new Date(r.createdAt) : null
     const matchFrom = !dateFrom || (created != null && created >= new Date(dateFrom))
     const matchTo = !dateTo || (created != null && created <= new Date(dateTo + 'T23:59:59.999'))
@@ -485,6 +488,35 @@ export default function RoutesPage() {
   })
 
   const pagedRoutes = usePagedList(visibleRoutes, 20)
+
+  /**
+   * Las rutas de la página, AGRUPADAS POR SUCURSAL.
+   *
+   * Quien ve una sola sucursal no necesita ningún encabezado: todas son de la suya y
+   * repetir su nombre veinte veces es ruido. Pero el Super Admin las ve todas, y en una
+   * lista plana dos rutas del mismo día con el mismo aspecto pueden ser de Holguín y de
+   * La Habana. Sin nada que las separe, la única forma de saberlo es abrirlas una a una.
+   *
+   * Se agrupa sólo cuando hay más de una sucursal a la vista, así que la pantalla de
+   * quien lleva una sucursal no cambia.
+   */
+  const grupos = (() => {
+    const porSucursal = new Map<string, { nombre: string; rutas: Route[] }>()
+
+    for (const r of pagedRoutes.pageItems as Route[]) {
+      const id = r.branch?.id ?? 'sin-sucursal'
+      const nombre = r.branch
+        ? (r.branch.externalId ? `${r.branch.name} (${r.branch.externalId})` : r.branch.name)
+        : 'Sin sucursal'
+
+      if (!porSucursal.has(id)) porSucursal.set(id, { nombre, rutas: [] })
+      porSucursal.get(id)!.rutas.push(r)
+    }
+
+    return [...porSucursal.values()].sort((a, b) => a.nombre.localeCompare(b.nombre))
+  })()
+
+  const agrupar = grupos.length > 1
 
   const mapStops: Array<{
     id: string
@@ -641,7 +673,18 @@ export default function RoutesPage() {
                 {historyTab === 'active' ? t('routes.noActive') : historyTab === 'history' ? t('routes.noCompleted') : t('routes.noInProgress')}
               </div>
             ) : (
-              pagedRoutes.pageItems.map((route) => (
+              grupos.map((grupo) => (
+                <div key={grupo.nombre} className="space-y-3">
+                  {/* El encabezado sólo aparece si hay más de una sucursal a la vista. */}
+                  {agrupar && (
+                    <div className="flex items-center gap-2 pt-1 sticky top-0 z-10 bg-gray-50/95 backdrop-blur py-1.5">
+                      <Icon icon="mdi:store-outline" className="text-ink-soft/60 text-base shrink-0" />
+                      <h6 className="text-xs font-bold uppercase tracking-wider text-gray-500 truncate">{grupo.nombre}</h6>
+                      <span className="text-[11px] text-gray-400 shrink-0">{grupo.rutas.length}</span>
+                      <span className="h-px flex-1 bg-gray-200" />
+                    </div>
+                  )}
+                  {grupo.rutas.map((route) => (
                 <div
                   key={route.id}
                   className={`bg-white rounded-2xl shadow-md p-4 cursor-pointer border-2 transition-colors ${
@@ -669,6 +712,13 @@ export default function RoutesPage() {
                       <p className="text-xs text-gray-500 mt-0.5">
                         {t('routes.stopsKm', { n: route.orders.length, km: route.totalDistance.toFixed(1) })}
                       </p>
+                      {/* Si la lista va agrupada, el encabezado ya dice la sucursal:
+                          repetirla en cada tarjeta sería decir dos veces lo mismo. */}
+                      {!agrupar && route.branch && (
+                        <p className="text-xs text-gray-500 mt-0.5 truncate">
+                          <Icon icon="mdi:store-outline" className="inline align-text-bottom mr-1" />{route.branch.name}
+                        </p>
+                      )}
                       {route.vehicle && (
                         <p className="text-xs text-gray-500 mt-0.5 truncate">
                           <Icon icon="mdi:truck-outline" className="inline align-text-bottom mr-1" />{route.vehicle.name}{route.vehicle.plate ? ` (${route.vehicle.plate})` : ''}
@@ -707,6 +757,8 @@ export default function RoutesPage() {
                     )}
                   </div>
                 </div>
+                  ))}
+                </div>
               ))
             )}
             {visibleRoutes.length > 0 && (
@@ -739,6 +791,11 @@ export default function RoutesPage() {
                       )}
                       <h3 className="font-bold text-gray-800 truncate">
                         {selectedRoute.name || selectedRoute.routeCode || t('routes.title')}
+                        {selectedRoute.branch && (
+                          <span className="ml-2 align-middle text-xs font-medium text-ink-soft/70 bg-ink/[0.04] px-2 py-0.5 rounded-lg">
+                            {selectedRoute.branch.name}
+                          </span>
+                        )}
                       </h3>
                     </div>
                     <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">

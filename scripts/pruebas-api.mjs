@@ -527,4 +527,44 @@ test('no se arma una ruta que no cabe en el camión', async () => {
   await prisma.vehicle.delete({ where: { id: chico.id } })
 })
 
+test('cada ruta dice de qué sucursal es', async () => {
+  const r = await pedir('/api/routes')
+
+  assert.equal(r.status, 200)
+  assert.ok(r.json.length > 0, 'la siembra tiene rutas')
+
+  // Sin esto, el Super Admin ve las rutas de las ocho sucursales en una sola lista y no
+  // hay forma de distinguirlas más que abriéndolas una a una.
+  for (const ruta of r.json) {
+    assert.ok(ruta.branch?.id, `la ruta ${ruta.routeCode} no dice de qué sucursal es`)
+    assert.ok(ruta.branch?.name)
+  }
+
+  // Y el Super Admin las ve de MÁS de una sucursal: es el caso que había que separar.
+  const sucursales = new Set(r.json.map((x) => x.branch?.id))
+
+  assert.ok(sucursales.size > 1, 'el Super Admin debería ver rutas de varias sucursales')
+})
+
+test('quien lleva una sucursal sólo ve las rutas de la suya', async () => {
+  const r = await pedir('/api/routes', { token: TOKEN_JEFE })
+
+  assert.equal(r.status, 200)
+  assert.ok(r.json.length > 0)
+  for (const ruta of r.json) {
+    assert.equal(ruta.branch?.id, camaguey.id, `se coló una ruta de ${ruta.branch?.name}`)
+  }
+})
+
+test('el selector de sucursal acota las rutas del Super Admin', async () => {
+  // Es el header que pone el selector de la barra de arriba.
+  const soloHabana = await pedir('/api/routes', { cabeceras: { 'x-sucursal-id': habana.id } })
+
+  assert.equal(soloHabana.status, 200)
+  assert.ok(soloHabana.json.length > 0)
+  for (const ruta of soloHabana.json) {
+    assert.equal(ruta.branch?.id, habana.id)
+  }
+})
+
 test.after(() => prisma.$disconnect())

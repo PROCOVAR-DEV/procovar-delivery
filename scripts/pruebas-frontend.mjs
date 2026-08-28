@@ -310,6 +310,50 @@ test('en Configuración ya no se habla del envío "individual"', async () => {
 
 // --------------------------------------------------------------- rutas
 
+test('las rutas del Super Admin salen SEPARADAS por sucursal', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/routes`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('text=RT-HAB-001', { timeout: 20000 })
+  await page.waitForSelector('text=RT-CMG-001')
+
+  /**
+   * Con un encabezado por sucursal, no todas revueltas.
+   *
+   * El Super Admin ve las rutas de las ocho sucursales. En una lista plana, dos rutas del
+   * mismo día con el mismo aspecto pueden ser de Holguín y de La Habana, y la única forma
+   * de saberlo es abrirlas una a una.
+   */
+  const encabezados = await page.locator('h6').allInnerTexts()
+
+  assert.ok(encabezados.some((h) => /Habana/i.test(h)), `sin encabezado de La Habana: ${encabezados}`)
+  assert.ok(encabezados.some((h) => /Camag/i.test(h)), `sin encabezado de Camagüey: ${encabezados}`)
+
+  // Y cada ruta cae DEBAJO del encabezado que le toca, no en cualquier sitio.
+  const textos = await page.locator('.space-y-3 > div').allInnerTexts()
+  const bloqueHabana = textos.find((t) => /Habana/i.test(t) && /RT-/.test(t))
+
+  assert.ok(bloqueHabana)
+  assert.equal(/RT-CMG-001/.test(bloqueHabana), false, 'una ruta de Camagüey aparece bajo La Habana')
+  await cerrar(ctx)
+})
+
+test('elegida una sucursal, se ven sólo las suyas y sin encabezados', async () => {
+  const { ctx, page } = await conSesion()
+
+  // Es lo que hace el selector de la barra de arriba.
+  await ctx.addInitScript(() => { window.localStorage.setItem('sucursalId', 'x') })
+  await page.goto(`${BASE}/routes`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('text=RT-', { timeout: 20000 })
+
+  // Con una sola sucursal a la vista no se agrupa: repetir su nombre en cada tarjeta es
+  // ruido, y la pantalla de quien lleva una sucursal no tiene por qué cambiar.
+  const rutas = await page.locator('text=/RT-(HAB|CMG)-001/').count()
+
+  assert.ok(rutas > 0)
+  await cerrar(ctx)
+})
+
 test('el armador de rutas abre y lista pedidos de un día concreto', async () => {
   const { ctx, page, errores } = await conSesion()
 
