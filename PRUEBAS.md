@@ -89,6 +89,17 @@ npx next start -p 3399
 
 No comprueba la firma: eso se comprueba en Accesos de verdad, y aquí sólo estorbaría.
 
+## El catálogo de Ventra
+
+`/api/products/sync` habla con **Ventra**, que sólo se llega por la VPN. En local eso
+falla, y la prueba comprueba justo eso: que conteste **502 diciendo por qué** en vez de un
+500 pelado, y sobre todo que **no vacíe** el catálogo que ya hay — uno vacío no se
+distingue de «no hay productos».
+
+El emparejamiento sucursal ↔ base de Ventra (`lib/emparejarVentra.ts`) se prueba aparte,
+sin red, con los nombres reales que engañan: `granma` es BAYAMO, `sspiritus` es Sancti
+Spíritus, `tunas` es Las Tunas.
+
 ## 4. El espejo entero — a mano, cuando se toca la integración
 
 Las tres capas de arriba prueban cada lado por su cuenta. Esto prueba la costura: que lo

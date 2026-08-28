@@ -25,6 +25,7 @@ import axios from 'axios'
 import { Icon } from '@iconify/react'
 import Navbar from '@/components/Navbar'
 import Selector from '@/components/Selector'
+import Drawer from '@/components/Drawer'
 import LocationInput from '@/components/LocationInput'
 import { useAppStore } from '@/store/useAppStore'
 
@@ -65,6 +66,8 @@ export default function WarehousesPage() {
   const [aviso, setAviso] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [guardado, setGuardado] = useState(false)
+  /** El editor vive en un cajón: se abre al elegir un almacén o al crear uno. */
+  const [editorAbierto, setEditorAbierto] = useState(false)
 
   const { data, isLoading, error: fallo } = useQuery<{ sucursales: Sucursal[] }>({
     // La sucursal de arriba entra en la clave: al cambiarla se vuelve a pedir sola.
@@ -158,6 +161,7 @@ export default function WarehousesPage() {
 
   const abrir = (i: number) => {
     setCual(i)
+    setEditorAbierto(true)
     setBorrador(i === NUEVO ? vacio(almacenes.length === 0) : { ...almacenes[i] })
     setAviso(null)
     setError(null)
@@ -235,6 +239,15 @@ export default function WarehousesPage() {
                 onCambio={(v) => abrir(Number(v))}
               />
 
+              <button
+                type="button"
+                onClick={() => abrir(NUEVO)}
+                className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                <Icon icon="mdi:plus" />
+                Nuevo almacén
+              </button>
+
               {almacenes.length === 0 && (
                 <span className="text-xs text-amber-700">
                   Esta sucursal no tiene ninguno: sus domicilios no se pueden cotizar.
@@ -242,8 +255,67 @@ export default function WarehousesPage() {
               )}
             </div>
 
+            {/* La lista, para ver de un vistazo cuál falta por ubicar. */}
+            {almacenes.length > 0 && (
+              <ul className="divide-y divide-line border-t border-line">
+                {almacenes.map((a, i) => (
+                  <li key={a.id ?? i}>
+                    <button
+                      type="button"
+                      onClick={() => abrir(i)}
+                      className="flex w-full items-center gap-2 py-3 text-left hover:bg-ink/[0.02]"
+                    >
+                      <Icon
+                        icon={a.principal ? 'mdi:star' : 'mdi:warehouse'}
+                        className={a.principal ? 'text-primary' : 'text-ink-soft/60'}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium text-ink">{a.nombre || '(sin nombre)'}</span>
+                        <span className="block truncate text-xs text-ink-soft/70">{a.direccion || 'sin dirección'}</span>
+                      </span>
+                      {a.latitud == null && <span className="text-[11px] text-amber-700">sin punto</span>}
+                      {!a.activo && <span className="text-[11px] text-ink-soft/60">inactivo</span>}
+                      <Icon icon="mdi:chevron-right" className="text-ink-soft/50" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {/*
+              El formulario, en CAJÓN.
+
+              Estaba debajo del desplegable, con su mapa: al elegir otro almacén la página
+              saltaba y había que volver a buscar dónde estaba uno. Y crear era «elegir
+              «+ añadir» y desplazarse», que no se parece a crear nada.
+            */}
+            <Drawer
+              abierto={borrador != null && editorAbierto}
+              alCerrar={() => setEditorAbierto(false)}
+              titulo={cual === NUEVO ? 'Nuevo almacén' : (borrador?.nombre || 'Almacén')}
+              subtitulo={sucursal.nombre}
+              ancho="lg"
+              pie={
+                <>
+                  <button
+                    onClick={() => setEditorAbierto(false)}
+                    className="px-4 py-2 rounded-xl border border-line text-sm text-ink-soft hover:bg-ink/5"
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!borrador?.nombre.trim() || guardar.isPending}
+                    onClick={() => borrador && guardar.mutate(listaCon(borrador))}
+                    className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium disabled:opacity-50"
+                  >
+                    {guardar.isPending ? 'Guardando…' : 'Guardar'}
+                  </button>
+                </>
+              }
+            >
             {borrador && (
-              <div className="space-y-3 border-t border-line pt-4">
+              <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     value={borrador.nombre}
@@ -302,15 +374,6 @@ export default function WarehousesPage() {
                 )}
 
                 <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    disabled={!borrador.nombre.trim() || guardar.isPending}
-                    onClick={() => guardar.mutate(listaCon(borrador))}
-                    className="px-4 py-2 rounded-xl bg-primary text-white text-sm font-medium disabled:opacity-50"
-                  >
-                    {guardar.isPending ? 'Guardando…' : 'Guardar'}
-                  </button>
-
                   {!borrador.nombre.trim() && <span className="text-xs text-red-600">Le falta el nombre.</span>}
                   {aviso && <span className="text-xs text-amber-700">{aviso}</span>}
                   {error && <span className="text-xs text-red-600">{error}</span>}
@@ -318,6 +381,7 @@ export default function WarehousesPage() {
                 </div>
               </div>
             )}
+            </Drawer>
           </div>
         )}
       </div>

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
-import { resolveScope, scopeWhere } from '@/lib/scope'
+import { resolveScope, scopeWhere, sucursalDeLaPersona } from '@/lib/scope'
 import { leerFiltros, whereDeFiltros } from '@/lib/filtrosPedido'
 
 export const dynamic = 'force-dynamic'
@@ -123,11 +124,146 @@ export async function GET(req: NextRequest) {
  * Se contesta 410 y no 404 a propósito: 404 dice "no existe" y quien lo vea buscará el
  * error en la URL. Esto sí existió, y lo que hay que saber es que se quitó.
  */
-export async function POST() {
-  return NextResponse.json(
-    {
-      error: 'El alta manual de pedidos se retiró. Los pedidos entran desde PEDIDO (espejo) y el costo del domicilio lo pone Entrega.',
+/**
+ * POST /api/orders — un pedido A MANO.
+ *
+ * Casi todos entran solos desde PEDIDO. Éste es para lo que no pasa por ahí: un cliente
+ * que llama, una entrega que se arma en el momento. Hace falta, y quitarlo dejó a la
+ * gente sin forma de meter esos.
+ *
+ * Lo que NO hace: ponerle precio de domicilio. Eso lo pone el repartidor desde Entrega,
+ * igual que en los que vienen de PEDIDO — un pedido manual nace «sin cotizar», y así se
+ * ve. Sí calcula el PESO, que sale del catálogo de Ventra y es lo que decide en qué
+ * camión cabe.
+ */
+export async function POST(req: NextRequest) {
+  const user = getUserFromRequest(req)
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = (await req.json().catch(() => null)) as {
+    customerId?: string
+    customerName?: string
+    address?: string
+    phone?: string
+    lat?: number
+    lng?: number
+    branchId?: string
+    municipio?: string
+    notes?: string
+    items?: Array<{ productId?: string; sku?: string; name?: string; packs?: number; quantity?: number }>
+  } | null
+
+  if (!body) return NextResponse.json({ error: 'Cuerpo inválido' }, { status: 400 })
+
+  /**
+   * La sucursal: la suya si tiene, la de la barra si no.
+   *
+   * Un pedido tiene que nacer EN una sucursal: de ella salen el almacén desde el que se
+   * mide, los vehículos y la ruta. Sin ella el pedido existe pero no se puede repartir.
+   */
+  const suya = await sucursalDeLaPersona(user)
+  const scope = await resolveScope(req, user)
+
+  /**
+   * Quien lleva UNA sucursal no puede crear en otra, y se le dice.
+   *
+   * La versión anterior se limitaba a usar la suya, ignorando en silencio la que pedía:
+   * el pedido se creaba, pero en otro sitio del que creía quien lo estaba metiendo, y no
+   * aparecía donde iba a buscarlo.
+   */
+  if (suya && body.branchId && body.branchId !== suya) {
+    return NextResponse.json({ error: 'Sin acceso a esa sucursal' }, { status: 403 })
+  }
+
+  const branchId = suya ?? body.branchId ?? scope.branchId
+
+  if (!branchId) {
+    return NextResponse.json({ error: 'Falta la sucursal: elegí una arriba o mandá branchId' }, { status: 400 })
+  }
+
+  const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { id: true, externalId: true, creatorId: true } })
+
+  if (!branch) return NextResponse.json({ error: 'Esa sucursal no existe' }, { status: 400 })
+
+  // El cliente: uno del espejo (con su geo ya puesta) o los datos a mano.
+  const cliente = body.customerId
+    ? await prisma.customer.findUnique({ where: { id: body.customerId } })
+    : null
+
+  const nombre = (cliente?.name ?? body.customerName ?? '').trim()
+  const lat = cliente?.lat ?? (Number.isFinite(Number(body.lat)) ? Number(body.lat) : null)
+  const lng = cliente?.lng ?? (Number.isFinite(Number(body.lng)) ? Number(body.lng) : null)
+
+  if (!nombre) return NextResponse.json({ error: 'Falta el cliente' }, { status: 400 })
+  if (lat == null || lng == null) {
+    // Sin coordenadas no hay ruta ni domicilio: el pedido entraría para no poder usarse.
+    return NextResponse.json({ error: 'Falta la ubicación del cliente (lat/lng)' }, { status: 400 })
+  }
+
+  /**
+   * El peso, del catálogo de Ventra.
+   *
+   * `weight` de cada producto es el de UNA unidad de venta (el pack/caja), así que se
+   * multiplica por los packs — no por las unidades sueltas, que daría una cifra
+   * disparatada. Un producto sin peso en Ventra suma 0 y se dice cuántos son.
+   */
+  const entradas = Array.isArray(body.items) ? body.items : []
+  const ids = entradas.map((i) => i.productId).filter(Boolean) as string[]
+  const productos = ids.length
+    ? await prisma.product.findMany({ where: { id: { in: ids } } })
+    : []
+  const porId = new Map(productos.map((p) => [p.id, p]))
+
+  let peso = 0
+  let sinPeso = 0
+
+  const items = entradas.map((i) => {
+    const p = i.productId ? porId.get(i.productId) : undefined
+    const packs = Number(i.packs) > 0 ? Number(i.packs) : 1
+    const unitario = p?.weight ?? 0
+    const linea = Number((unitario * packs).toFixed(3))
+
+    if (!unitario) sinPeso++
+    peso += linea
+
+    return {
+      productId: p?.id ?? null,
+      sku: p?.sku ?? i.sku ?? null,
+      name: p?.name ?? i.name ?? 'Producto',
+      packs,
+      quantity: Number(i.quantity) > 0 ? Number(i.quantity) : packs,
+      unitWeightKg: unitario || null,
+      weightKg: linea || null,
+    }
+  })
+
+  const order = await prisma.order.create({
+    data: {
+      source: 'manual',
+      customerName: nombre,
+      customerPhone: (cliente?.phone ?? body.phone ?? null) || null,
+      address: (cliente?.address ?? body.address ?? nombre) || nombre,
+      endAddress: cliente?.address ?? body.address ?? null,
+      endLat: lat,
+      endLng: lng,
+      lat,
+      lng,
+      municipio: cliente?.municipio ?? body.municipio ?? null,
+      weight: Number(peso.toFixed(3)),
+      items: items as unknown as Prisma.InputJsonValue,
+      notes: body.notes?.trim() || null,
+      // Nace SIN precio de domicilio: lo pone el repartidor desde Entrega.
+      pedidoCosto: null,
+      requiereDomicilio: true,
+      orderDate: new Date(),
+      branchId: branch.id,
+      userId: branch.creatorId,
+      sucursalCodigo: branch.externalId,
     },
-    { status: 410 },
-  )
+  })
+
+  return NextResponse.json({
+    order,
+    aviso: sinPeso ? `${sinPeso} producto(s) sin peso en Ventra: el peso total se queda corto.` : null,
+  })
 }

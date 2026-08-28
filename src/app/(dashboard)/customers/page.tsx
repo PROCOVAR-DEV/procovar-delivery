@@ -8,6 +8,7 @@ import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
+import Drawer from '@/components/Drawer'
 
 interface Customer {
   id: string
@@ -105,15 +106,30 @@ export default function CustomersPage() {
             </p>
           </div>
           <button
-            onClick={() => setShowForm((s) => !s)}
+            onClick={() => setShowForm(true)}
             className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary/90 flex items-center gap-1"
           >
-            <Icon icon={showForm ? 'mdi:close' : 'mdi:account-plus-outline'} />
-            {showForm ? 'Cancelar' : 'Nuevo cliente manual'}
+            <Icon icon="mdi:account-plus-outline" />
+            Nuevo cliente manual
           </button>
         </div>
 
-        {showForm && <ManualCustomerForm onDone={() => setShowForm(false)} />}
+        {/*
+          El alta, en CAJÓN.
+
+          Se abría empujando la lista hacia abajo: el mapa ocupa media pantalla, así que al
+          pulsar «nuevo» desaparecía de la vista lo que se estaba mirando y había que
+          desplazarse para volver. Un cajón deja la lista donde estaba.
+        */}
+        <Drawer
+          abierto={showForm}
+          alCerrar={() => setShowForm(false)}
+          titulo="Nuevo cliente"
+          subtitulo="Local de delivery: los de PEDIDO llegan solos"
+          ancho="lg"
+        >
+          <ManualCustomerForm onDone={() => setShowForm(false)} />
+        </Drawer>
 
         {/* Los mismos filtros que en Pedidos, con lo que un cliente tiene. Los aplica la
             base: son siete mil, y filtrar en la pantalla obliga a traérselos todos. */}
@@ -287,8 +303,7 @@ function ManualCustomerForm({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <div className="bg-gray-50 border border-line rounded-xl p-4 space-y-3">
-      <p className="text-sm font-semibold text-ink">Nuevo cliente manual (local de delivery)</p>
+    <div className="space-y-3">
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre *"
           className="px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/40" />

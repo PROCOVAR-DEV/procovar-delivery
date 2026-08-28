@@ -10,7 +10,11 @@ import { Icon } from '@iconify/react'
 export interface Product {
   id: string
   name: string
+  /** El peso de UNA unidad de venta (el formato/caja), tal como lo da Ventra. */
   weight: number
+  sku?: string | null
+  price?: number | null
+  stock?: number | null
   packaging?: string | null
   unitsPerPackage?: number | null
   category?: string | null
@@ -18,16 +22,20 @@ export interface Product {
 }
 
 /** Searchable product combobox. Calls onPick with the chosen product. */
-export default function ProductPicker({ onPick }: { onPick: (p: Product) => void }) {
+export default function ProductPicker({ onPick, sucursal }: { onPick: (p: Product) => void; sucursal?: string }) {
   const { token } = useAppStore()
   const t = useT()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
 
   const { data: products = [] } = useQuery({
-    queryKey: ['products'],
+    // La sucursal entra en la clave: el catálogo es SUYO —en Ventra el precio y las
+    // existencias varían por sucursal— y al cambiarla hay que volver a pedirlo.
+    queryKey: ['products', sucursal ?? ''],
     queryFn: async () => {
-      const res = await axios.get('/api/products', { headers: { Authorization: `Bearer ${token}` } })
+      const res = await axios.get(sucursal ? `/api/products?sucursal=${encodeURIComponent(sucursal)}` : '/api/products', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
       return res.data as Product[]
     },
     enabled: !!token,

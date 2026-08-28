@@ -487,30 +487,25 @@ test('los almacenes se eligen en un desplegable, y sólo los de las sucursales d
   await cerrar(ctx)
 })
 
-test('se añade un almacén y al volver a entrar sigue ahí', async () => {
+test('se añade un almacén desde el cajón y al volver a entrar sigue ahí', async () => {
   const { ctx, page } = await conSesion()
 
   await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
   await page.waitForSelector('button[title="Almacén"]')
   await elegir(page, 'Sucursal', 'Camagüey')
-  await elegir(page, 'Almacén', '+ Añadir un almacén')
 
-  await page.fill('input[placeholder="Nombre del almacén"]', 'Nave del puerto')
-  await page.click('button:has-text("Guardar")')
+  await page.click('button:has-text("Nuevo almacén")')
+  await page.waitForSelector('[role="dialog"] input[placeholder="Nombre del almacén"]')
+  await page.fill('[role="dialog"] input[placeholder="Nombre del almacén"]', 'Nave del puerto')
+  await page.click('[role="dialog"] button:has-text("Guardar")')
   await page.waitForSelector('text=Guardado en Accesos', { timeout: 20000 })
 
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.waitForSelector('button[title="Almacén"]')
   await elegir(page, 'Sucursal', 'Camagüey')
 
-  /**
-   * Entra directo en el primero de esa sucursal, que es el que se acaba de guardar.
-   *
-   * Se lee el VALOR del campo, no el atributo `value` del HTML: React sólo pone el
-   * atributo al montar y después cambia la propiedad, así que un selector
-   * `input[value="…"]` no encuentra nada aunque en pantalla se lea perfectamente.
-   */
-  assert.equal(await page.locator('input[placeholder="Nombre del almacén"]').inputValue(), 'Nave del puerto')
+  // Y sale en la LISTA de la sucursal, que es donde se mira de un vistazo cuál falta.
+  await page.waitForSelector('text=Nave del puerto', { timeout: 20000 })
   await cerrar(ctx)
 })
 
@@ -521,11 +516,19 @@ test('el que ya tiene punto se puede corregir: el mapa abre DONDE está', async 
   await page.waitForSelector('button[title="Almacén"]')
   await elegir(page, 'Sucursal', 'La Habana')
 
-  // El de La Habana viene con 23.12, -82.38 puestos: tienen que salir escritos y con el
-  // mapa encima para poder moverlo. Abrir el mapa en otra parte obliga a buscar el punto
-  // a mano antes de poder tocarlo, que es lo que se reportó.
+  // Se entra al que ya existe desde la lista.
+  // Desde la LISTA, no desde el desplegable: el mismo texto está en los dos sitios.
+  await page.click('li button:has-text("Almacén central")')
+  await page.waitForSelector('[role="dialog"]')
+
+  /**
+   * El punto sale escrito y con el mapa encima para poder moverlo. El mapa abría en la
+   * sucursal de quien mira —y un administrador no tiene ninguna—, así que para corregir
+   * un punto había que buscarlo a mano por el mapa antes de poder tocarlo.
+   */
   await page.waitForSelector('text=/23\\.12/', { timeout: 20000 })
-  assert.ok(await page.locator('.leaflet-container').count() > 0, 'no hay mapa para corregir el punto')
+  // El mapa se carga aparte (import dinámico), así que se espera a que aparezca.
+  await page.waitForSelector('[role="dialog"] .leaflet-container', { timeout: 20000 })
   await cerrar(ctx)
 })
 
@@ -536,11 +539,13 @@ test('un almacén sin coordenadas se guarda, pero avisado', async () => {
   await page.waitForSelector('button[title="Almacén"]')
   await elegir(page, 'Sucursal', 'Camagüey')
 
-  const texto = await page.locator('body').innerText()
+  // El de la prueba de arriba se guardó sin punto: la lista lo marca…
+  assert.match(await page.locator('body').innerText(), /sin punto/)
 
-  // El de la prueba anterior se guardó sin punto: desde ahí no se puede medir el
-  // domicilio, y eso tiene que decirlo la pantalla en vez de dejarlo en silencio.
-  assert.match(texto, /no se puede medir el domicilio/)
+  // …y dentro se dice por qué importa.
+  await page.click('li button:has-text("Nave del puerto")')
+  await page.waitForSelector('[role="dialog"]')
+  assert.match(await page.locator('[role="dialog"]').innerText(), /no se puede medir el domicilio/)
   await cerrar(ctx)
 })
 
@@ -594,10 +599,67 @@ test('el asistente de rutas es un cajón a pantalla completa y va paso a paso', 
   // Con la sucursal sin elegir, los pasos de después NO se pintan: eran tres cajas
   // grises que no se podían pulsar y no decían qué hacer.
   assert.equal(/Pedidos de cliente/.test(texto), false, 'el paso 4 sale antes de tiempo')
+  assert.equal(/Punto de partida/.test(texto), false, 'el paso 2 sale antes de tiempo')
 
   // Y el botón de generar vive en el pie, siempre a la vista: estaba al final del todo,
   // detrás de la lista entera de pedidos.
   assert.ok(await page.locator('[role="dialog"] button:has-text("Generar")').count() > 0)
+  await cerrar(ctx)
+})
+
+test('se puede meter un pedido A MANO, en cajón, con su peso del catálogo', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+  await page.click('button:has-text("Nuevo pedido")')
+  await page.waitForSelector('[role="dialog"]')
+
+  const caja = await page.locator('[role="dialog"]').boundingBox()
+
+  assert.ok(caja.height >= page.viewportSize().height - 2, 'no es un cajón: no ocupa el alto')
+
+  // El cliente sale del espejo, ya con su ubicación: sin ella no se puede repartir.
+  await page.fill('[role="dialog"] input[placeholder*="Buscar cliente" i]', 'Cliente')
+  await page.waitForTimeout(400)
+  await page.locator('[role="dialog"] button', { hasText: /Cliente/ }).first().click()
+
+  // Y el producto, del catálogo de Ventra de ESA sucursal, con su peso.
+  await page.fill('[role="dialog"] input[placeholder*="Buscar producto" i]', 'Cerveza')
+  await page.waitForTimeout(400)
+  await page.locator('[role="dialog"] button', { hasText: /Cerveza/ }).first().click()
+
+  const texto = await page.locator('[role="dialog"]').innerText()
+
+  assert.match(texto, /kg/, 'no sale el peso del producto elegido')
+  // Y se dice que nace sin costo: ése lo pone el repartidor desde Entrega.
+  assert.match(texto, /sin costo de domicilio/i)
+  await cerrar(ctx)
+})
+
+test('el alta de un cliente abre en cajón, no empujando la lista', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/customers`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+  await page.click('button:has-text("Nuevo cliente manual")')
+  await page.waitForSelector('[role="dialog"]')
+
+  const caja = await page.locator('[role="dialog"]').boundingBox()
+
+  assert.ok(caja.height >= page.viewportSize().height - 2)
+  await cerrar(ctx)
+})
+
+test('el alta de un almacén también abre en cajón', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/warehouses`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('button:has-text("Nuevo almacén")')
+  await page.click('button:has-text("Nuevo almacén")')
+  await page.waitForSelector('[role="dialog"]')
+
+  assert.equal(await page.locator('[role="dialog"] input[placeholder="Nombre del almacén"]').count(), 1)
   await cerrar(ctx)
 })
 

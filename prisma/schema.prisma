@@ -25,6 +25,17 @@ model User {
   products     Product[]
 }
 
+/// El catálogo, espejo de Ventra POR SUCURSAL (llega vía PEDIDO, ver sync-queue.mjs).
+///
+/// Tenía una nota que decía "SIN sucursal, a propósito: son los mismos para toda la
+/// empresa". Es verdad para el peso y falso para lo demás: en Ventra el PRECIO y las
+/// EXISTENCIAS varían por sucursal —su propia documentación lo dice—, así que un catálogo
+/// único acaba ofreciendo en Camagüey un producto que sólo hay en La Habana, y al precio
+/// de La Habana.
+///
+/// Se llena solo. No hay alta manual ni importación a mano: PEDIDO sondea Ventra cada
+/// doce horas y aquí se copia lo que él ya tiene, que es el mismo dato con el que se pesa
+/// y se cotiza. Dos catálogos escritos por separado discrepan sin que nadie lo vea.
 model Product {
   id              String   @id @default(cuid())
   name            String
@@ -32,11 +43,25 @@ model Product {
   packaging       String?
   unitsPerPackage Float?
   category        String?
+  /// El código de Ventra. Es por lo que se reconoce una fila entre pasadas.
+  sku             String?
+  /// La sucursal a la que pertenece ESTA fila (código: HAB, CMG…). Null = de antes.
+  sucursalCodigo  String?
+  /// Precio y existencias EN ESA sucursal, tal como los da Ventra.
+  price           Float?
+  stock           Float?
+  unit            String?
+  /// Cuándo lo trajo Ventra. Dice si lo que se está mirando es de hace diez minutos o
+  /// de hace tres días porque la VPN lleva caída desde el lunes.
+  traidoAt        DateTime?
   userId          String
   user            User     @relation(fields: [userId], references: [id])
-  // SIN sucursal, a propósito: los productos vienen del almacén de datos y son
-  // los mismos para toda la empresa. No son de ninguna en particular.
   createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+
+  @@unique([sucursalCodigo, sku])
+  @@index([sucursalCodigo])
+  @@index([name])
 }
 
 // Espejo (mirror) de los clientes GEOLOCALIZADOS de PEDIDO. MISMO patrón que Order:
@@ -276,6 +301,12 @@ model Settings {
   /// lo que se mueva sigue llegando por `since` en cada ciclo, y el barrido da la vuelta
   /// al año una y otra vez, así que un día saltado se recoge en la pasada siguiente.
   syncBarridoDia Int @default(0)
+  /// Cuándo se trajo por última vez el catálogo de Ventra.
+  ///
+  /// El catálogo cambia poco —precios un par de veces al día como mucho— y Ventra se
+  /// llega por VPN: preguntarle en cada ciclo del espejo (cada minuto) sería cargar un
+  /// enlace delicado por gusto. Con la marca aquí, el espejo sabe si ya toca.
+  catalogoTraidoAt DateTime?
   baseFee   Float  @default(5.0)
   costPerKm Float  @default(1.5)
   costPerKg Float  @default(0.5)

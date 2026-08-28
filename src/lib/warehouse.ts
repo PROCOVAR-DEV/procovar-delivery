@@ -96,6 +96,101 @@ export const warehouse = {
 }
 
 /**
+ * Una fila del catálogo, YA POR SUCURSAL.
+ *
+ * `productWeights()` de arriba pide `/products/weights` sin `database`, y así sólo llegan
+ * los pesos. La documentación de Ventra lo dice con todas las letras: el precio y las
+ * existencias VARÍAN POR SUCURSAL y hay que pasar `database` para tenerlos. Sin eso, el
+ * precio que llega no es de ninguna sucursal en concreto, y guardarlo como si lo fuera es
+ * peor que no tenerlo.
+ */
+export interface FilaCatalogoVentra {
+  sku: string | null
+  name: string | null
+  category: string | null
+  unit: string | null
+  weightKg: number | null
+  stock: number | null
+  price: number | null
+  isActive: boolean | null
+}
+
+export interface BaseVentra {
+  /** El slug que se manda en `?database=`. Ej: "camaguey", "granma". */
+  database: string
+  /** Cómo llama Ventra a esa sucursal. Ej: "CAMAGUEY", "BAYAMO". */
+  branchName: string
+  connected: boolean
+}
+
+/** El primer campo que exista de una lista de nombres posibles. */
+function numero(fila: Record<string, unknown>, ...nombres: string[]): number | null {
+  for (const n of nombres) {
+    const v = fila[n]
+
+    if (v == null || v === '') continue
+    const x = Number(v)
+
+    if (!Number.isNaN(x)) return x
+  }
+  return null
+}
+
+function texto(fila: Record<string, unknown>, ...nombres: string[]): string | null {
+  for (const n of nombres) {
+    const v = fila[n]
+
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+  return null
+}
+
+function filas(d: unknown): Record<string, unknown>[] {
+  return (Array.isArray(d)
+    ? d
+    : ((d as Record<string, unknown>)?.items as unknown[])
+      || ((d as Record<string, unknown>)?.data as unknown[])
+      || []) as Record<string, unknown>[]
+}
+
+/**
+ * Las bases (sucursales) que Ventra tiene configuradas.
+ *
+ * Hay que PREGUNTÁRSELAS, no deducirlas de nuestros nombres. Sus slugs no se parecen a lo
+ * que uno supondría —`granma` es BAYAMO, `sspiritus` es Sancti Spíritus, `tunas` es Las
+ * Tunas—, y adivinar falla en cuatro de diez: una sucursal entera se queda sin catálogo
+ * sin que salte nada.
+ */
+export async function ventraDatabases(): Promise<BaseVentra[]> {
+  return filas(await whFetch('/axis/databases'))
+    .map((f) => ({
+      database: texto(f, 'database') || '',
+      branchName: texto(f, 'branchName', 'name') || '',
+      connected: (f.connected as boolean) ?? true,
+    }))
+    .filter((b) => b.database)
+}
+
+/** El catálogo de UNA sucursal: peso, existencias y precio. */
+export async function ventraCatalogo(database: string): Promise<FilaCatalogoVentra[]> {
+  const d = await whFetch(`/products/weights?database=${encodeURIComponent(database)}`)
+
+  return filas(d).map((f) => ({
+    sku: texto(f, 'sku', 'productCode', 'code'),
+    name: texto(f, 'name', 'productName', 'descripcion'),
+    category: texto(f, 'category', 'categoria'),
+    unit: texto(f, 'unit', 'unidad'),
+    weightKg: numero(f, 'weightKg', 'weight', 'pesoKg'),
+    // Los nombres reales son `existencias` y `precioUsd`; los demás quedan de red por si
+    // un día renombran la columna. Perder todos los precios en silencio por un nombre
+    // cambiado es el fallo que no se ve.
+    stock: numero(f, 'existencias', 'stock', 'quantity', 'onHand'),
+    price: numero(f, 'precioUsd', 'price', 'unitPrice', 'salePrice', 'precio'),
+    isActive: (f.isActive as boolean) ?? null,
+  }))
+}
+
+/**
  * Igual que warehouse.productWeights() pero CACHEADO en Redis (TTL): evita re-bajar por
  * VPN el catálogo entero en cada lote de cotización, que era el patrón caro y repetido.
  * Sin Redis, baja directo (comportamiento actual). Se invalida al importar pesos.

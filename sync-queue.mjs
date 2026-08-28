@@ -475,8 +475,51 @@ async function guardarLote(orders, de) {
   return guardados;
 }
 
+/**
+ * El CATÁLOGO de Ventra, cada doce horas.
+ *
+ * Lo trae delivery directamente de Ventra —no pasa por PEDIDO— porque es el dato del
+ * almacén y PEDIDO no tiene por qué reenviarlo. Va aquí, en el espejo, y no en un botón:
+ * un catálogo que hay que acordarse de importar se queda viejo el primer día que nadie
+ * se acuerda, y entonces un pedido manual sale con un peso y un precio que ya no existen.
+ *
+ * Doce horas es lo mismo que hace PEDIDO: los precios se mueven un par de veces al día
+ * como mucho, y Ventra se llega por VPN — un enlace que conviene no cargar por gusto.
+ */
+async function syncCatalogo() {
+  /**
+   * Si toca o no lo decide el propio endpoint.
+   *
+   * Aquí no se lleva la cuenta a propósito: el botón de «traer ahora» de la pantalla y
+   * este sondeo comparten así la misma regla, en vez de tener dos que se puedan
+   * contradecir. Contesta `{ saltado: true }` cuando la última foto es reciente.
+   */
+  const res = await fetch(`${DELIVERY_URL}/api/products/sync`, {
+    method: 'POST',
+    headers: { 'x-api-key': KEY, 'Content-Type': 'application/json' },
+  });
+
+  if (!res.ok) throw new Error(`catálogo ${res.status}: ${(await res.text().catch(() => '')).slice(0, 160)}`);
+
+  const r = await res.json();
+
+  return r?.saltado ? null : r;
+}
+
 async function cycle() {
   if (!KEY) throw new Error('Falta SERVICE_API_KEY.');
+
+  // El catálogo, si toca. Aislado: que Ventra no conteste no puede parar los pedidos.
+  try {
+    const r = await syncCatalogo();
+
+    if (r) {
+      log(`catálogo de Ventra: ${r.escritos} productos${r.conError ? `, ${r.conError} sucursal(es) con fallo` : ''}`);
+      for (const s of r.sucursales || []) if (s.error) log(`  ${s.sucursal}: ${s.error}`);
+    }
+  } catch (e) {
+    log('el catálogo de Ventra falló:', e.message);
+  }
 
   // Sincroniza el mirror de clientes SIEMPRE (independiente de la fórmula/cotización).
   // Aislado en su try: si falla, no rompe el procesamiento de domicilios.

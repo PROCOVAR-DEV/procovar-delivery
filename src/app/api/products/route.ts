@@ -1,105 +1,108 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
-import { esSuperAdmin } from '@/lib/es-super-admin'
-import { resolveScope, scopeWhere } from '@/lib/scope'
+import { resolveScope, scopeWhere, sucursalDeLaPersona } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
 
-interface ProductInput {
-  name: string
-  weight?: number
-  packaging?: string | null
-  unitsPerPackage?: number | null
-  category?: string | null
-}
+/**
+ * El CATÁLOGO, por sucursal y traído solo.
+ *
+ * Antes era global y se daba de alta a mano —había una pantalla para teclear productos—.
+ * Dos problemas: en Ventra el precio y las existencias VARÍAN por sucursal, así que un
+ * catálogo único ofrece en Camagüey lo que sólo hay en La Habana y al precio de allá; y
+ * un catálogo tecleado se separa del de verdad en cuanto alguien no actualiza.
+ *
+ * Ahora lo llena el espejo: PEDIDO sondea Ventra cada doce horas y aquí se copia lo que
+ * él tiene, que es el MISMO dato con el que se pesa y se cotiza. Sin alta manual.
+ */
 
 export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const q = new URL(req.url).searchParams.get('q')?.trim().toLowerCase() || ''
+  const params = new URL(req.url).searchParams
+  const q = params.get('q')?.trim().toLowerCase() || ''
 
-  // El catálogo es GLOBAL: los productos vienen del almacén de datos y son los
-  // mismos para toda la empresa. No se filtran por sucursal porque no son de
-  // ninguna.
+  /**
+   * Los de la sucursal que se está mirando.
+   *
+   * Se acepta un `sucursal` explícito (el código) porque el alta manual de un pedido se
+   * hace PARA una sucursal concreta, que puede no ser la de la barra de arriba cuando
+   * arriba dice «todas». Sin nada, manda el alcance de siempre.
+   */
+  const pedida = params.get('sucursal')?.trim().toUpperCase() || ''
+  const suya = await sucursalDeLaPersona(user)
+  const scope = await resolveScope(req, user)
+  const branchId = suya ?? scope.branchId
+
+  let codigo = pedida
+
+  if (!codigo && branchId) {
+    const b = await prisma.branch.findUnique({ where: { id: branchId }, select: { externalId: true } })
+
+    codigo = b?.externalId ?? ''
+  }
+
   const products = await prisma.product.findMany({
+    where: {
+      ...(codigo ? { sucursalCodigo: codigo } : {}),
+      ...(q
+        ? {
+            OR: [
+              { name: { contains: q, mode: 'insensitive' } },
+              { category: { contains: q, mode: 'insensitive' } },
+              { sku: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    },
     orderBy: { name: 'asc' },
+    take: 500,
   })
 
-  // Tally how many units of each product have been transported across all orders,
-  // so the UI can surface the most-used products first.
-  // Esto son PEDIDOS, no productos: se cuentan los de la sucursal de quien
-  // mira, para que "lo más transportado" signifique algo en su sucursal.
+  /**
+   * Lo más transportado primero.
+   *
+   * Se cuenta sobre los pedidos de la sucursal de quien mira: «lo más movido» tiene que
+   * significar algo aquí, no en la empresa entera.
+   */
   const orders = await prisma.order.findMany({
-    where: scopeWhere(await resolveScope(req, user)),
+    where: scopeWhere(scope),
     select: { items: true },
+    take: 2000,
+    orderBy: { createdAt: 'desc' },
   })
   const usage: Record<string, number> = {}
+
   for (const o of orders) {
-    const items = (Array.isArray(o.items) ? o.items : []) as Array<{ productId?: string; quantity?: number }>
+    const items = (Array.isArray(o.items) ? o.items : []) as Array<{ productId?: string; sku?: string; quantity?: number }>
+
     for (const it of items) {
-      if (it?.productId) usage[it.productId] = (usage[it.productId] || 0) + (Number(it.quantity) || 0)
+      const clave = it?.productId || it?.sku
+
+      if (clave) usage[clave] = (usage[clave] || 0) + (Number(it.quantity) || 0)
     }
   }
 
-  const withUsage = products.map((p) => ({ ...p, usageCount: usage[p.id] || 0 }))
-
-  const filtered = q
-    ? withUsage.filter((p) =>
-        p.name.toLowerCase().includes(q)
-        || (p.category || '').toLowerCase().includes(q)
-        || (p.packaging || '').toLowerCase().includes(q))
-    : withUsage
-
-  return NextResponse.json(filtered)
+  return NextResponse.json(
+    products.map((p) => ({ ...p, usageCount: usage[p.id] || usage[p.sku ?? ''] || 0 })),
+  )
 }
 
-export async function POST(req: NextRequest) {
-  const user = getUserFromRequest(req)
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  // El catálogo viene del almacén de datos y es el mismo para toda la empresa:
-  // lo LEE todo el mundo y lo importa SOLO el Super Admin. Un Administrador
-  // manda en su sucursal, no en el catálogo de las ocho — y la importación
-  // masiva mete cientos de filas de una vez.
-  if (!esSuperAdmin(user)) {
-    return NextResponse.json({ error: 'Solo el Super Admin puede importar productos' }, { status: 403 })
-  }
-
-  const body = await req.json()
-
-  // Bulk import: { bulk: [{...}] }
-  if (Array.isArray(body?.bulk)) {
-    const rows = (body.bulk as ProductInput[])
-      .filter((p) => p.name && p.name.trim() !== '')
-      .map((p) => ({
-        name: p.name.trim(),
-        weight: Number(p.weight) || 0,
-        packaging: p.packaging?.toString().trim() || null,
-        unitsPerPackage: p.unitsPerPackage != null && p.unitsPerPackage !== ('' as unknown) ? Number(p.unitsPerPackage) : null,
-        category: p.category?.toString().trim() || null,
-        userId: user.id as string,
-      }))
-    if (rows.length === 0) return NextResponse.json({ error: 'No hay productos válidos' }, { status: 400 })
-    await prisma.product.createMany({ data: rows })
-    return NextResponse.json({ created: rows.length }, { status: 201 })
-  }
-
-  // Single create
-  const { name, weight, packaging, unitsPerPackage, category } = body as ProductInput
-  if (!name || name.trim() === '') {
-    return NextResponse.json({ error: 'El nombre es requerido' }, { status: 400 })
-  }
-  const product = await prisma.product.create({
-    data: {
-      name: name.trim(),
-      weight: Number(weight) || 0,
-      packaging: packaging?.toString().trim() || null,
-      unitsPerPackage: unitsPerPackage != null ? Number(unitsPerPackage) : null,
-      category: category?.toString().trim() || null,
-      userId: user.id as string,
+/**
+ * El alta manual se retiró.
+ *
+ * El catálogo llega de Ventra por el espejo. Un producto tecleado aquí no existe en
+ * Ventra: no tiene precio ni existencias de verdad, y en la siguiente pasada convive con
+ * el bueno como si fueran dos cosas distintas.
+ */
+export async function POST() {
+  return NextResponse.json(
+    {
+      error:
+        'El catálogo se trae solo de Ventra (a través de PEDIDO). No hay alta manual de productos.',
     },
-  })
-  return NextResponse.json(product, { status: 201 })
+    { status: 410 },
+  )
 }

@@ -180,7 +180,17 @@ test('se puede filtrar por municipio y por vendedor, con lo que existe de verdad
 })
 
 test('la búsqueda mira folio, cliente, dirección, municipio y vendedor', async () => {
-  const uno = (await listaPedidos('porPagina=1')).json.orders[0]
+  /**
+   * Uno que TENGA folio.
+   *
+   * Se cogía el primero de la lista sin más, y desde que se pueden meter pedidos a mano
+   * —que no traen folio de PEDIDO— el primero podía ser uno de ésos: la prueba fallaba
+   * diciendo que la búsqueda por folio está rota cuando lo que pasaba es que ese pedido
+   * no tiene folio.
+   */
+  const uno = (await listaPedidos('porPagina=50')).json.orders.find((o) => o.operationNumber)
+
+  assert.ok(uno, 'la siembra tiene pedidos con folio')
 
   const porFolio = await listaPedidos(`q=${encodeURIComponent(uno.operationNumber)}`)
   assert.ok(porFolio.json.orders.some((o) => o.id === uno.id), 'no se encuentra por su folio')
@@ -263,16 +273,6 @@ test('el alcance por sucursal no deja ver los pedidos de otra', async () => {
   for (const o of suyos.json.orders) {
     assert.equal(o.branch?.id, camaguey.id, 'se coló un pedido de otra sucursal')
   }
-})
-
-test('el alta manual de pedidos está retirada, y lo dice', async () => {
-  const r = await pedir('/api/orders', {
-    metodo: 'POST',
-    cuerpo: { customerName: 'A mano', address: 'Calle falsa' },
-  })
-
-  assert.equal(r.status, 410)
-  assert.match(r.json.error, /Entrega|PEDIDO/)
 })
 
 test('el cotizador individual está retirado: queda UNA fórmula', async () => {
@@ -818,6 +818,105 @@ test('un código que no es de ninguna sucursal de aquí tampoco pasa', async () 
   })
 
   assert.equal(r.status, 403)
+})
+
+/* ─────────────── El catálogo de Ventra y el pedido a mano ─────────────── */
+
+test('el catálogo se pide por sucursal, y sólo salen los de ésa', async () => {
+  // Se siembran dos productos, uno de cada sucursal.
+  await prisma.product.upsert({
+    where: { sucursalCodigo_sku: { sucursalCodigo: 'HAB', sku: 'X-HAB' } },
+    update: { name: 'Cerveza de La Habana', weight: 9.64, price: 12, userId: admin.id },
+    create: { sucursalCodigo: 'HAB', sku: 'X-HAB', name: 'Cerveza de La Habana', weight: 9.64, price: 12, userId: admin.id },
+  })
+  await prisma.product.upsert({
+    where: { sucursalCodigo_sku: { sucursalCodigo: 'CMG', sku: 'X-CMG' } },
+    update: { name: 'Malta de Camagüey', weight: 8.1, price: 9, userId: admin.id },
+    create: { sucursalCodigo: 'CMG', sku: 'X-CMG', name: 'Malta de Camagüey', weight: 8.1, price: 9, userId: admin.id },
+  })
+
+  const r = await pedir('/api/products?sucursal=HAB')
+
+  assert.equal(r.status, 200)
+  assert.ok(r.json.some((p) => p.sku === 'X-HAB'))
+  // El de Camagüey NO puede salir: en Ventra el precio y las existencias son por
+  // sucursal, y ofrecer aquí lo que sólo hay allá es prometer algo que no está.
+  assert.equal(r.json.some((p) => p.sku === 'X-CMG'), false)
+})
+
+test('el alta manual de productos sigue cerrada: el catálogo lo trae Ventra', async () => {
+  const r = await pedir('/api/products', { metodo: 'POST', cuerpo: { name: 'Inventado' } })
+
+  assert.equal(r.status, 410)
+})
+
+test('un pedido a mano nace con su peso y SIN costo de domicilio', async () => {
+  const cliente = await prisma.customer.findFirst()
+  const producto = await prisma.product.findFirst({ where: { sucursalCodigo: 'HAB' } })
+
+  assert.ok(cliente && producto, 'la siembra tiene cliente con geo y catálogo')
+
+  const r = await pedir('/api/orders', {
+    metodo: 'POST',
+    cabeceras: { 'x-sucursal-id': habana.id },
+    cuerpo: {
+      customerId: cliente.id,
+      branchId: habana.id,
+      items: [{ productId: producto.id, packs: 3 }],
+    },
+  })
+
+  assert.equal(r.status, 200, r.texto.slice(0, 200))
+  // El peso es por unidad de venta × formatos: 9.64 × 3. Multiplicar por las unidades
+  // sueltas daría una cifra disparatada, y es el fallo que no se ve.
+  assert.equal(r.json.order.weight, Number((producto.weight * 3).toFixed(3)))
+  // Y sin precio de domicilio: ése lo pone el repartidor desde Entrega.
+  assert.equal(r.json.order.pedidoCosto, null)
+  assert.equal(r.json.order.source, 'manual')
+
+  await prisma.order.delete({ where: { id: r.json.order.id } })
+})
+
+test('un pedido a mano sin cliente o sin ubicación no entra', async () => {
+  const sinCliente = await pedir('/api/orders', {
+    metodo: 'POST',
+    cuerpo: { branchId: habana.id, items: [] },
+  })
+
+  assert.equal(sinCliente.status, 400)
+
+  const sinGeo = await pedir('/api/orders', {
+    metodo: 'POST',
+    cuerpo: { branchId: habana.id, customerName: 'Alguien', items: [] },
+  })
+
+  // Sin coordenadas el pedido entraría para no poder repartirse nunca.
+  assert.equal(sinGeo.status, 400)
+  assert.match(sinGeo.json.error, /ubicaci/i)
+})
+
+test('quien lleva una sucursal no puede crear un pedido en otra', async () => {
+  const ajena = jefe.branchId === habana.id ? camaguey : habana
+  const cliente = await prisma.customer.findFirst()
+
+  const r = await pedir('/api/orders', {
+    token: TOKEN_JEFE,
+    metodo: 'POST',
+    cuerpo: { customerId: cliente.id, branchId: ajena.id, items: [] },
+  })
+
+  assert.equal(r.status, 403)
+})
+
+test('sin Ventra delante, traer el catálogo lo DICE y no vacía lo que hay', async () => {
+  const antes = await prisma.product.count()
+  const r = await pedir('/api/products/sync?forzar=1', { metodo: 'POST' })
+
+  // En local no hay VPN: tiene que contestar 502 con motivo, no 500 pelado. Y sobre todo
+  // no puede borrar el catálogo: un catálogo vacío no se distingue de «no hay productos».
+  assert.ok([200, 502].includes(r.status), `status inesperado ${r.status}`)
+  if (r.status === 502) assert.match(r.json.error, /Ventra/)
+  assert.equal(await prisma.product.count(), antes)
 })
 
 test.after(() => prisma.$disconnect())

@@ -275,9 +275,37 @@ export default function RoutesPage() {
    * Se sacan de la propia lista y no de un catálogo: así el desplegable sólo ofrece
    * vendedores que de verdad tienen algo que repartir hoy, en vez de los ochenta y dos.
    */
+  /**
+   * Las OPCIONES salen de la lista SIN filtrar por vendedor ni municipio.
+   *
+   * Salían de lo que ya estaba filtrado, así que en cuanto se elegía un vendedor el
+   * desplegable se quedaba con ése solo y no había forma de cambiar a otro sin limpiar
+   * primero. Lo mismo con el municipio. Ahora se piden aparte —misma sucursal y mismo
+   * día, que es lo que de verdad acota— y se refrescan solas cuando cambia cualquiera de
+   * los otros filtros.
+   */
+  const { data: paraFiltros } = useQuery({
+    queryKey: ['orders-available-opciones', sucursalRuta, diaPedidos, filtroEstado, filtroCotizado],
+    queryFn: async () => {
+      const res = await axios.get('/api/orders/available', {
+        params: {
+          ...(sucursalRuta ? { branchId: sucursalRuta } : {}),
+          ...(diaPedidos ? { fecha: diaPedidos } : {}),
+          ...(filtroEstado ? { estado: filtroEstado } : {}),
+          ...(filtroCotizado ? { cotizado: filtroCotizado } : {}),
+        },
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const d = res.data
+
+      return (Array.isArray(d) ? d : d.orders) as AvailableOrder[]
+    },
+    enabled: !!token,
+  })
+
   const vendedoresEnLista = useMemo(
-    () => [...new Set((availableOrders as AvailableOrder[]).map((o) => o.vendedor).filter(Boolean))].sort() as string[],
-    [availableOrders],
+    () => [...new Set((paraFiltros ?? []).map((o) => o.vendedor).filter(Boolean))].sort() as string[],
+    [paraFiltros],
   )
 
   /**
@@ -448,9 +476,11 @@ export default function RoutesPage() {
   const selectedVehicle = (vehicles as Vehicle[]).find((v) => v.id === selectedVehicleId)
 
   // Municipios distintos (no vacíos) de los pedidos disponibles, ordenados.
+  // Igual que los vendedores: de la lista sin filtrar por estos dos, para que elegir uno
+  // no borre los demás del desplegable.
   const availMunicipios = Array.from(
     new Set(
-      (availableOrders as AvailableOrder[])
+      (paraFiltros ?? [])
         .map((o) => (o.municipio || '').trim())
         .filter((m) => m !== '')
     )
@@ -1095,7 +1125,7 @@ export default function RoutesPage() {
                 pulsarse: cuatro cajas grises que no dicen qué hacer. Ahora sale el que
                 toca, y los ya hechos se quedan arriba plegados para poder volver.
               */}
-              {sucursalRuta && (
+              {sucursalRuta && expandedStep >= 2 && (
               <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
@@ -1199,7 +1229,7 @@ export default function RoutesPage() {
               )}
 
               {/* Step 3 — vehicle (required) + name */}
-              {depotSet && (
+              {depotSet && expandedStep >= 3 && (
               <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
@@ -1275,7 +1305,7 @@ export default function RoutesPage() {
               )}
 
               {/* Step 4 — client orders */}
-              {depotSet && selectedVehicleId && (
+              {depotSet && selectedVehicleId && expandedStep >= 4 && (
               <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"

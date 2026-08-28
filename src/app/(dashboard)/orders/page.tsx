@@ -14,6 +14,7 @@ import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
 import Drawer from '@/components/Drawer'
+import NuevoPedido from '@/components/NuevoPedido'
 
 interface OrderItem {
   name?: string
@@ -67,6 +68,7 @@ interface OrderRow {
 
 export default function OrdersPage() {
   const { token, sucursalId } = useAppStore()
+  const [nuevo, setNuevo] = useState(false)
   const { format } = useCurrency()
   const t = useT()
   const [search, setSearch] = useState('')
@@ -250,9 +252,26 @@ export default function OrdersPage() {
       <Navbar title={t('ord.title')} />
       <div className="p-3 sm:p-6 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-700">{t('ord.title')}</h3>
-            <p className="text-sm text-gray-500">{t('ord.subtitle')}</p>
+          <div className="flex items-center gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-700">{t('ord.title')}</h3>
+              <p className="text-sm text-gray-500">{t('ord.subtitle')}</p>
+            </div>
+            {/*
+              El alta MANUAL.
+
+              Casi todos entran solos desde PEDIDO, pero no todos: un cliente que llama,
+              una entrega que se arma en el momento. Quitarlo dejó a la gente sin forma de
+              meter ésos.
+            */}
+            <button
+              type="button"
+              onClick={() => setNuevo(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              <Icon icon="mdi:plus" />
+              Nuevo pedido
+            </button>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {/*
@@ -581,6 +600,8 @@ export default function OrdersPage() {
         Era un cuadro centrado de ancho de tarjeta, y aquí dentro hay un mapa, la lista de
         productos y el domicilio: todo salía apretado y con su propia barra de desplazamiento.
       */}
+      <NuevoPedido abierto={nuevo} alCerrar={() => setNuevo(false)} />
+
       {mounted && (
         <Drawer
           abierto={detail != null}
