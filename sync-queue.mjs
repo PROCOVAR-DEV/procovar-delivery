@@ -154,30 +154,46 @@ const delEspejo = () => ({
 });
 
 /**
- * Hasta dónde llega el espejo, por los dos extremos.
+ * La MARCA DE AGUA: lo más nuevo que ya tenemos, según PEDIDO.
  *
- *   `marca`      — lo más nuevo que ya tenemos según PEDIDO. Es el `since` de la próxima
- *                  petición: lo que se movió desde entonces.
- *   `masViejo`   — la fecha del pedido más antiguo que tenemos. Dice cuánto histórico
- *                  falta por recuperar.
+ * Es el `since` de la próxima petición —lo que se movió desde entonces— y es lo que hace
+ * que un ciclo cueste nada. Sale de los propios datos y no de un contador: un contador se
+ * adelanta si una tanda falla a medias, y entonces el espejo se salta pedidos para
+ * siempre sin dar ningún error.
  *
- * Los dos salen de los propios datos y no de un contador aparte. Un contador se adelanta
- * si una tanda falla a medias, y entonces el espejo se salta pedidos para siempre sin dar
- * ningún error. Y sobre todo: `marca` sola no vale para saber si el histórico está
- * completo. En cuanto se guarda UN pedido de hoy, `marca` deja de ser nula — así que un
- * recorrido cortado a la mitad parecería terminado y el año anterior no se traería nunca.
+ * Para el barrido del histórico sí hay un contador, y ahí sí vale: ver `posicionDelBarrido`.
  */
 async function hastaDondeLlega() {
-  const [nuevo, viejo] = await Promise.all([
-    prisma.order.aggregate({ where: delEspejo(), _max: { pedidoUpdatedAt: true } }),
-    prisma.order.aggregate({ where: { ...delEspejo(), orderDate: { not: null } }, _min: { orderDate: true } }),
-  ]);
+  const nuevo = await prisma.order.aggregate({ where: delEspejo(), _max: { pedidoUpdatedAt: true } });
 
-  return { marca: nuevo._max.pedidoUpdatedAt ?? null, masViejo: viejo._min.orderDate ?? null };
+  return { marca: nuevo._max.pedidoUpdatedAt ?? null };
 }
 
-/** Cuántos días hace de esa fecha. */
-const diasDesde = (d) => Math.floor((Date.now() - d.getTime()) / 86400000);
+/**
+ * Por dónde va el barrido del histórico, y avanzarlo.
+ *
+ * Esto lo deducía de los datos —«empieza por el pedido más antiguo que tengo»— y estaba
+ * mal: el espejo YA tenía pedidos de hace un año sueltos, de cuando se traía todo. Así
+ * que el barrido arrancaba a 357 días y se saltaba entero el año de en medio, que es
+ * justo lo que faltaba por recuperar. Se ve en el registro de la primera pasada: repasó
+ * los últimos días y saltó directo a 2025-09-03.
+ *
+ * Guardar la posición sí vale. Que un contador se pueda adelantar aquí no rompe nada: lo
+ * que se mueva sigue llegando por `since` en cada ciclo, y el barrido da la vuelta al año
+ * una y otra vez, así que un día saltado se recoge en la pasada siguiente.
+ */
+async function posicionDelBarrido() {
+  const s = await prisma.settings.findFirst({ select: { id: true, syncBarridoDia: true } });
+
+  return s ? { id: s.id, dia: s.syncBarridoDia ?? 0 } : null;
+}
+
+async function avanzarBarrido(id, dia) {
+  // Al llegar al final se vuelve a empezar: el histórico se repasa en bucle, así que
+  // cualquier hueco —un tramo que falló, un día que PEDIDO tocó sin avisar— se acaba
+  // tapando solo sin que nadie tenga que darse cuenta.
+  await prisma.settings.update({ where: { id }, data: { syncBarridoDia: dia >= HISTORICO_DIAS ? 0 : dia } });
+}
 
 /** Los parámetros que comparten todas las peticiones. */
 function parametrosBase() {
@@ -463,7 +479,7 @@ async function cycle() {
     return;
   }
 
-  const { marca, masViejo } = await hastaDondeLlega();
+  const { marca } = await hastaDondeLlega();
   let total = 0;
 
   /**
@@ -489,26 +505,20 @@ async function cycle() {
    * ciclo, y si el proceso se reinicia a mitad la próxima vuelta sigue por donde iba —lo
    * dice el pedido más antiguo que hay guardado, no un contador que se puede adelantar—.
    */
-  const yaCubiertos = masViejo ? diasDesde(masViejo) : REPASO_DIAS;
+  const barrido = await posicionDelBarrido();
 
-  if (yaCubiertos < HISTORICO_DIAS) {
-    const hasta = Math.min(yaCubiertos + HISTORICO_POR_CICLO, HISTORICO_DIAS);
+  if (barrido) {
+    const desde = Math.max(barrido.dia, REPASO_DIAS);
+    const hasta = Math.min(desde + HISTORICO_POR_CICLO, HISTORICO_DIAS);
     let delHistorico = 0;
 
-    await porTramos(hasta, yaCubiertos, async (orders, de) => {
+    await porTramos(hasta, desde, async (orders, de) => {
       delHistorico += await guardarLote(orders, de);
     });
     total += delHistorico;
+    await avanzarBarrido(barrido.id, hasta);
 
-    /**
-     * Se avisa sólo cuando el histórico avanza de verdad.
-     *
-     * Cuando ya no queda nada más atrás, este barrido vuelve a mirar la misma ventana en
-     * cada ciclo y no encuentra nada — que es lo correcto, y cuesta diez peticiones
-     * vacías—. Pero anunciarlo cada cinco minutos como si estuviera trabajando hace que
-     * el registro parezca un proceso atascado.
-     */
-    if (delHistorico) log(`histórico: recuperados ${delHistorico} pedidos de entre ${yaCubiertos} y ${hasta} días atrás`);
+    log(`histórico: barridos los días ${desde}-${hasta} hacia atrás (${delHistorico} pedidos)`);
   }
 
   if (!total) log(`sin cambios${marca ? ` desde ${marca.toISOString()}` : ''}`);

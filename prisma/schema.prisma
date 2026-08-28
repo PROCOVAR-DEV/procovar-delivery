@@ -263,6 +263,19 @@ model Route {
 
 model Settings {
   id        String @id @default(cuid())
+  /// Por dónde va el barrido del histórico, en DÍAS HACIA ATRÁS.
+  ///
+  /// El espejo repasa el año entero un trozo por ciclo y vuelve a empezar al llegar al
+  /// final. Hace falta GUARDAR la posición porque de los datos no se puede deducir: el
+  /// espejo tiene pedidos viejos sueltos —de cuando se traía todo—, así que "el más
+  /// antiguo que tengo" no significa "tengo todo hasta ahí". Deducirlo así arrancaba el
+  /// barrido a 357 días y se saltaba entero el año de en medio, que era justo lo que
+  /// faltaba por recuperar.
+  ///
+  /// Que se pueda adelantar no rompe nada, y por eso aquí sí es aceptable un contador:
+  /// lo que se mueva sigue llegando por `since` en cada ciclo, y el barrido da la vuelta
+  /// al año una y otra vez, así que un día saltado se recoge en la pasada siguiente.
+  syncBarridoDia Int @default(0)
   baseFee   Float  @default(5.0)
   costPerKm Float  @default(1.5)
   costPerKg Float  @default(0.5)

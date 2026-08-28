@@ -1,0 +1,11 @@
+-- Por dónde va el barrido del histórico, en días hacia atrás.
+--
+-- El primer intento lo deducía de los datos: «empieza por el pedido más antiguo que
+-- tengo y sigue hacia atrás». No vale. El espejo ya tenía pedidos de hace un año sueltos
+-- —de cuando se traía todo—, así que el barrido arrancaba a 357 días y se saltaba entero
+-- el año de en medio, que es justo lo que faltaba por recuperar.
+--
+-- Guardar la posición sí vale, y es aceptable que se pueda adelantar: lo que se mueva
+-- sigue llegando por `since` en cada ciclo, y el barrido da la vuelta al año una y otra
+-- vez, así que un día saltado se recoge en la pasada siguiente.
+ALTER TABLE "Settings" ADD COLUMN "syncBarridoDia" INTEGER NOT NULL DEFAULT 0;
