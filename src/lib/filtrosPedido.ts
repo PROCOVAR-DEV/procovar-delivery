@@ -35,6 +35,14 @@ export interface FiltrosPedido {
    * estaban vivían en otra página que nunca se llegaba a mirar.
    */
   reparto: string
+  /**
+   * Cómo quedó frente a la FACTURA de Ventra:
+   * `igual` | `cambiado` | `sin_factura`, o `cuadra` (igual + sin cotejar todavía).
+   *
+   * Lo que se reparte es lo facturado: un pedido que cambió y no se ha corregido no
+   * puede salir en el camión, porque va a llevar otra cosa de la que se cobró.
+   */
+  factura: string
   /** Rango por la FECHA DEL PEDIDO, `YYYY-MM-DD`. */
   desde: string
   hasta: string
@@ -53,6 +61,7 @@ export function leerFiltros(params: URLSearchParams): FiltrosPedido {
     vendedor: t('vendedor'),
     branchId: t('branchId'),
     reparto: t('reparto'),
+    factura: t('factura'),
     desde: t('desde'),
     hasta: t('hasta'),
   }
@@ -188,6 +197,19 @@ export function whereDeFiltros(f: FiltrosPedido): Prisma.OrderWhereInput {
     condiciones.push({
       OR: [{ deliveredAt: { not: null } }, { route: { is: { status: 'completed' } } }],
     })
+  }
+
+  /**
+   * Y el cotejo con la facturación.
+   *
+   * `cuadra` es el que se usa para armar rutas: lo que coincide con la factura MÁS lo que
+   * todavía no se ha cotejado (no hay facturación de ese día traída). Lo que se sabe que
+   * cambió se deja fuera: repartirlo es llevar algo distinto de lo que se cobró.
+   */
+  if (f.factura === 'cuadra') {
+    condiciones.push({ OR: [{ facturaEstado: 'igual' }, { facturaEstado: null }] })
+  } else if (f.factura) {
+    condiciones.push({ facturaEstado: f.factura })
   }
 
   const fecha = porFecha(f)

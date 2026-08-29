@@ -49,6 +49,9 @@ interface OrderRow {
   requiereDomicilio?: boolean | null
   /** Lo que la APK cobró de domicilio EN PEDIDO. No es `price`, que es el de delivery. */
   pedidoCosto?: number | null
+  /** Cómo quedó contra la factura de Ventra: `igual` | `cambiado` | `sin_factura`. */
+  facturaEstado?: string | null
+  facturaNumero?: string | null
   items?: OrderItem[]
   /** La fecha del pedido EN PEDIDO. `createdAt` es cuándo lo copió el espejo. */
   orderDate?: string | null
@@ -82,6 +85,8 @@ export default function OrdersPage() {
   const [archivado, setArchivado] = useState('')
   const [domicilio, setDomicilio] = useState('')
   const [cotizado, setCotizado] = useState('')
+  /** Cómo quedó frente a la factura de Ventra. Ver `lib/cotejarFactura`. */
+  const [factura, setFactura] = useState('')
   // Rango de fechas del PEDIDO (no de cuándo lo copió el espejo).
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
@@ -115,7 +120,7 @@ export default function OrdersPage() {
   // ahora tiene 2 páginas enseña un vacío que parece un fallo.
   useEffect(() => {
     setPagina(1)
-  }, [buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, statusFilter, desde, hasta])
+  }, [buscado, estado, archivado, domicilio, cotizado, factura, municipioFilter, vendedorFilter, statusFilter, desde, hasta])
 
   /**
    * Los pedidos, filtrados y paginados POR EL SERVIDOR.
@@ -124,7 +129,7 @@ export default function OrdersPage() {
    * que la dejaba colgada. Aquí sólo viaja la página que se está mirando.
    */
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, statusFilter, desde, hasta, pagina }],
+    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, factura, municipioFilter, vendedorFilter, statusFilter, desde, hasta, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/orders', {
         params: {
@@ -133,6 +138,7 @@ export default function OrdersPage() {
           ...(archivado ? { archivado } : {}),
           ...(domicilio ? { domicilio } : {}),
           ...(cotizado ? { cotizado } : {}),
+          ...(factura ? { factura } : {}),
           ...(municipioFilter ? { municipio: municipioFilter } : {}),
           ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
           ...(statusFilter !== 'todos' ? { reparto: statusFilter } : {}),
@@ -285,11 +291,11 @@ export default function OrdersPage() {
 
   /** ¿Hay algún filtro puesto? Sirve para saber si un cero es «no hay» o «no cuadra». */
   const hayFiltro = Boolean(
-    buscado || estado || archivado || domicilio || cotizado || municipioFilter || vendedorFilter || desde || hasta,
+    buscado || estado || archivado || domicilio || cotizado || factura || municipioFilter || vendedorFilter || desde || hasta,
   )
 
   const limpiarFiltros = () => {
-    setSearch(''); setEstado(''); setArchivado(''); setDomicilio(''); setCotizado('')
+    setSearch(''); setEstado(''); setArchivado(''); setDomicilio(''); setCotizado(''); setFactura('')
     setMunicipioFilter(''); setVendedorFilter(''); setDesde(''); setHasta('')
   }
 
@@ -406,6 +412,27 @@ export default function OrdersPage() {
               opciones={[
                 { valor: '1', etiqueta: 'Ya cotizados por Entrega' },
                 { valor: '0', etiqueta: 'Sin cotizar' },
+              ]}
+            />
+
+            {/*
+              Contra la FACTURACIÓN de Ventra.
+
+              El cliente cambia lo que pidió antes de que se le facture, y lo que se
+              reparte es lo facturado: es lo que va en el camión y lo que se cobra. «Cuadra
+              con la factura» es con lo que se arman las rutas.
+            */}
+            <Selector
+              titulo="Cómo quedó frente a la factura de Ventra"
+              icono="mdi:file-check-outline"
+              valor={factura}
+              todos="Cuadre con la factura: todos"
+              onCambio={setFactura}
+              opciones={[
+                { valor: 'cuadra', etiqueta: 'Sólo los que cuadran' },
+                { valor: 'igual', etiqueta: 'Igual que la factura' },
+                { valor: 'cambiado', etiqueta: 'Cambió en la factura' },
+                { valor: 'sin_factura', etiqueta: 'Sin facturar todavía' },
               ]}
             />
 
@@ -817,6 +844,33 @@ export default function OrdersPage() {
                     />
                   </div>
                   <p className="text-[11px] text-gray-400 mt-1">Del almacén ({detail.branch.name}) al cliente.</p>
+                </div>
+              )}
+
+              {/*
+                CONTRA LA FACTURA de Ventra.
+                
+                El cliente cambia lo que pidió antes de que se le facture. Si no se dice
+                aquí, se arma la ruta con el pedido viejo y el camión sale con otra cosa
+                de la que se cobró — y eso se ve al final del día, cuando ya pasó.
+              */}
+              {detail.facturaEstado && (
+                <div className={`rounded-xl px-4 py-3 text-sm ${
+                  detail.facturaEstado === 'igual'
+                    ? 'bg-green-50 text-green-800'
+                    : detail.facturaEstado === 'cambiado'
+                      ? 'bg-amber-50 text-amber-800'
+                      : 'bg-gray-50 text-gray-600'
+                }`}>
+                  {detail.facturaEstado === 'igual' && (
+                    <>Cuadra con la factura {detail.facturaNumero ?? ''} de Ventra: se puede repartir tal cual.</>
+                  )}
+                  {detail.facturaEstado === 'cambiado' && (
+                    <>Se facturó algo distinto de lo pedido (factura {detail.facturaNumero ?? '—'}). Lo que va en el camión es lo facturado.</>
+                  )}
+                  {detail.facturaEstado === 'sin_factura' && (
+                    <>Todavía no aparece facturado en Ventra.</>
+                  )}
                 </div>
               )}
 

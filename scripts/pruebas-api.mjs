@@ -1126,6 +1126,46 @@ test('se puede buscar por PRODUCTO, no sólo por cliente', async () => {
   assert.ok(r.json.total > 0, `buscar «${nombre}» no encontró ningún pedido`)
 })
 
+test('los pedidos se filtran por cómo quedaron contra la FACTURA', async () => {
+  const cliente = await prisma.customer.findFirst()
+  const pedido = await prisma.order.findFirst({ where: { branchId: habana.id, source: 'pedido' } })
+
+  await prisma.order.update({ where: { id: pedido.id }, data: { facturaEstado: 'cambiado', facturaNumero: '999' } })
+
+  const cambiados = await listaPedidos('factura=cambiado&porPagina=50')
+
+  assert.ok(cambiados.json.orders.some((o) => o.id === pedido.id))
+  for (const o of cambiados.json.orders) assert.equal(o.facturaEstado, 'cambiado')
+
+  /**
+   * «Cuadra» es lo que se puede repartir: lo que coincide con la factura MÁS lo que
+   * todavía no se ha cotejado. Lo que se sabe que cambió se queda fuera — repartirlo es
+   * llevar algo distinto de lo que se cobró.
+   */
+  const cuadran = await listaPedidos('factura=cuadra&porPagina=50')
+
+  assert.equal(cuadran.json.orders.some((o) => o.id === pedido.id), false, 'un pedido cambiado no puede salir como que cuadra')
+  for (const o of cuadran.json.orders) {
+    assert.ok(o.facturaEstado == null || o.facturaEstado === 'igual', `${o.customerName} salió con estado ${o.facturaEstado}`)
+  }
+
+  await prisma.order.update({ where: { id: pedido.id }, data: { facturaEstado: null, facturaNumero: null } })
+  assert.ok(cliente)
+})
+
+test('sin Ventra delante, el cotejo lo DICE y no marca nada', async () => {
+  const antes = await prisma.order.count({ where: { facturaEstado: { not: null } } })
+  const r = await pedir('/api/facturacion/sync', { metodo: 'POST' })
+
+  assert.ok([200, 502].includes(r.status), `status inesperado ${r.status}`)
+  if (r.status === 502) {
+    assert.match(r.json.error, /Ventra/)
+    // Y sobre todo: no puede dejar los pedidos «sin cotejar» porque se cayó la red. Un
+    // pedido que pasa de «igual» a nada se leería como que su factura cambió.
+    assert.equal(await prisma.order.count({ where: { facturaEstado: { not: null } } }), antes)
+  }
+})
+
 /**
  * Las pruebas recogen lo suyo.
  *

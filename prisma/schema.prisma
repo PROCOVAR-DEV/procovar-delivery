@@ -234,6 +234,15 @@ model Order {
   /// no se puede buscar «malta» sin leerse los cincuenta mil pedidos. Es la pregunta del
   /// despacho —«¿qué pedidos llevan malta?»— y hasta ahora había que abrirlos uno a uno.
   productosTexto  String?
+  /// Cómo quedó este pedido frente a la FACTURA de Ventra:
+  ///   `igual`       — lo facturado coincide con lo pedido: se puede repartir tal cual.
+  ///   `cambiado`    — se facturó otra cosa (más, menos, distinto).
+  ///   `sin_factura` — todavía no se ha facturado.
+  /// Vacío = no se ha cotejado (no hay facturación traída de ese día).
+  facturaEstado   String?
+  /// El número de factura con el que cuadró, para poder ir a buscarla.
+  facturaNumero   String?
+  facturaAt       DateTime?
   vendedor        String?
   sucursalCodigo  String?
   // Id/folio del pedido en PEDIDO. Usado para idempotencia (re-cotizar no duplica).
@@ -304,6 +313,35 @@ model Route {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   optimized       Boolean  @default(false)
+}
+
+/// Una línea de FACTURA de Ventra: lo que de verdad se vendió.
+///
+/// El pedido y la factura no siempre coinciden —el cliente cambia lo que pidió antes de
+/// que se le facture— y la ruta hay que armarla con lo facturado, no con lo pedido: es lo
+/// que va en el camión y es lo que se cobra.
+///
+/// Es un espejo: se trae de Ventra y no se escribe nunca hacia allá.
+model VentaFacturada {
+  id            String   @id @default(cuid())
+  /// El id de la línea en Ventra. Por él se reconoce entre pasadas.
+  ventraId      String   @unique
+  /// El código de la sucursal (HAB, CMG…).
+  sucursalCodigo String
+  fecha         DateTime
+  /// El número de operación: es LA FACTURA. Varias líneas comparten número.
+  operNumber    String
+  clienteCodigo String?
+  clienteNombre String
+  productoCodigo String?
+  productoNombre String
+  cantidad      Float
+  precioUsd     Float?
+  traidoAt      DateTime @default(now())
+
+  @@index([sucursalCodigo, fecha])
+  @@index([clienteNombre])
+  @@index([operNumber])
 }
 
 model Settings {

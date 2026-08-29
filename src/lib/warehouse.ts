@@ -171,6 +171,49 @@ export async function ventraDatabases(): Promise<BaseVentra[]> {
     .filter((b) => b.database)
 }
 
+/**
+ * Una línea de FACTURA de Ventra: lo que de verdad se vendió.
+ *
+ * `operNumber` es el número de la factura —varias líneas lo comparten— y `quantity` va en
+ * unidades de venta, igual que el precio y el peso del catálogo.
+ */
+export interface LineaVentaVentra {
+  id: string
+  fecha: string
+  operNumber: string
+  clienteCodigo: string | null
+  clienteNombre: string
+  productoCodigo: string | null
+  productoNombre: string
+  cantidad: number
+  precioUsd: number | null
+}
+
+/**
+ * Las ventas facturadas de una sucursal, entre dos fechas.
+ *
+ * `database` es obligatorio: sin él Ventra devuelve el consolidado de todas y no hay forma
+ * de saber de qué sucursal es cada factura.
+ */
+export async function ventraVentas(database: string, desde: string, hasta: string, tope = 5000): Promise<LineaVentaVentra[]> {
+  const d = await whFetch(
+    `/axis/sales?database=${encodeURIComponent(database)}&from=${desde}&to=${hasta}&limit=${tope}`,
+  )
+  const cuerpo = d as { rows?: unknown[] }
+
+  return filas(cuerpo?.rows ?? d).map((f) => ({
+    id: String(f.id ?? ''),
+    fecha: texto(f, 'date', 'fecha') ?? '',
+    operNumber: String(f.operNumber ?? f.numero ?? ''),
+    clienteCodigo: texto(f, 'customerCode', 'clienteCodigo'),
+    clienteNombre: texto(f, 'customerName', 'clienteNombre') ?? '',
+    productoCodigo: texto(f, 'productCode', 'productoCodigo'),
+    productoNombre: texto(f, 'productName', 'productoNombre') ?? '',
+    cantidad: numero(f, 'quantity', 'cantidad') ?? 0,
+    precioUsd: numero(f, 'priceOut', 'precioUsd'),
+  })).filter((l) => l.id && l.productoNombre)
+}
+
 /** El catálogo de UNA sucursal: peso, existencias y precio. */
 export async function ventraCatalogo(database: string): Promise<FilaCatalogoVentra[]> {
   const d = await whFetch(`/products/weights?database=${encodeURIComponent(database)}`)

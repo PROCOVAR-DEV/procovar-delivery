@@ -82,6 +82,8 @@ export async function GET(req: NextRequest) {
         fechaComprometida: true,
         requiereDomicilio: true,
         pedidoCosto: true,
+        facturaEstado: true,
+        facturaNumero: true,
         municipio: true,
         vendedor: true,
         sucursalCodigo: true,

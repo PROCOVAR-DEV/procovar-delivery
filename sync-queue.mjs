@@ -588,6 +588,31 @@ async function cycle() {
   }
 
   /**
+   * 1.a La FACTURACIÓN de Ventra, y el cotejo con los pedidos.
+   *
+   * Es lo que decide qué se puede repartir: el cliente cambia lo que pidió antes de que
+   * se le facture, y la ruta se arma con lo facturado. Va en cada vuelta porque la
+   * facturación del día se mueve todo el rato.
+   */
+  try {
+    const res = await fetch(`${DELIVERY_URL}/api/facturacion/sync`, {
+      method: 'POST',
+      headers: { 'x-api-key': KEY, 'Content-Type': 'application/json' },
+    });
+
+    if (res.ok) {
+      const r = await res.json();
+
+      if (r.lineas) log(`facturación de Ventra: ${r.lineas} líneas, ${r.cotejados} pedidos cotejados`);
+      for (const s of r.sucursales || []) if (s.error) log(`  ${s.sucursal}: ${s.error}`);
+    } else {
+      log(`la facturación no se pudo traer: ${res.status}`);
+    }
+  } catch (e) {
+    log('la facturación de Ventra falló:', e.message);
+  }
+
+  /**
    * 1.b Los recién cotizados. Es lo que se está mirando en pantalla.
    */
   try {

@@ -170,6 +170,15 @@ export default function RoutesPage() {
    */
   const [filtroEstado, setFiltroEstado] = useState('')
   const [filtroCotizado, setFiltroCotizado] = useState('')
+  /**
+   * Contra la FACTURA, y por defecto sólo los que cuadran.
+   *
+   * Lo que se reparte es lo facturado: el cliente cambia lo que pidió antes de que se le
+   * facture, y meter en el camión un pedido que cambió es llevar algo distinto de lo que
+   * se cobró. Se puede quitar el filtro —a veces hace falta ver los demás— pero no es lo
+   * que sale por defecto.
+   */
+  const [filtroFactura, setFiltroFactura] = useState('cuadra')
 
   // Existing available orders to pick for the route
   const [orderSearch, setOrderSearch] = useState('')
@@ -247,7 +256,7 @@ export default function RoutesPage() {
   const { data: disponibles, isLoading: loadingAvailable } = useQuery({
     // La sucursal y el día entran en la clave: si no, al cambiarlos se seguiría viendo
     // la lista anterior en cache y parecería que el filtro no hace nada.
-    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos, filtroVendedor, kmMax, costoMin, filtroEstado, filtroCotizado],
+    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos, filtroVendedor, kmMax, costoMin, filtroEstado, filtroCotizado, filtroFactura],
     queryFn: async () => {
       const res = await axios.get('/api/orders/available', {
         params: {
@@ -259,6 +268,7 @@ export default function RoutesPage() {
           ...(costoMin ? { costoMin } : {}),
           ...(filtroEstado ? { estado: filtroEstado } : {}),
           ...(filtroCotizado ? { cotizado: filtroCotizado } : {}),
+          ...(filtroFactura ? { factura: filtroFactura } : {}),
         },
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -298,7 +308,7 @@ export default function RoutesPage() {
    * los otros filtros.
    */
   const { data: paraFiltros } = useQuery({
-    queryKey: ['orders-available-opciones', sucursalRuta, diaPedidos, filtroEstado, filtroCotizado],
+    queryKey: ['orders-available-opciones', sucursalRuta, diaPedidos, filtroEstado, filtroCotizado, filtroFactura],
     queryFn: async () => {
       const res = await axios.get('/api/orders/available', {
         params: {
@@ -306,6 +316,7 @@ export default function RoutesPage() {
           ...(diaPedidos ? { fecha: diaPedidos } : {}),
           ...(filtroEstado ? { estado: filtroEstado } : {}),
           ...(filtroCotizado ? { cotizado: filtroCotizado } : {}),
+          ...(filtroFactura ? { factura: filtroFactura } : {}),
         },
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -1529,6 +1540,20 @@ export default function RoutesPage() {
                           placeholder="costo mín."
                           className="w-28 px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           aria-label="Costo mínimo del domicilio"
+                        />
+                        {/* Contra la FACTURA. Por defecto, sólo lo que cuadra: es lo que
+                            se puede repartir sin llevar algo distinto de lo cobrado. */}
+                        <Selector
+                          titulo="Cuadre con la factura de Ventra"
+                          icono="mdi:file-check-outline"
+                          valor={filtroFactura}
+                          todos="Cuadre: todos"
+                          onCambio={setFiltroFactura}
+                          opciones={[
+                            { valor: 'cuadra', etiqueta: 'Sólo los que cuadran' },
+                            { valor: 'cambiado', etiqueta: 'Cambió en la factura' },
+                            { valor: 'sin_factura', etiqueta: 'Sin facturar todavía' },
+                          ]}
                         />
                         <Selector
                           titulo="Estado del pedido en PEDIDO"
