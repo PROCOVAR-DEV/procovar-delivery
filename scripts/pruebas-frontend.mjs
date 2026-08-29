@@ -645,13 +645,18 @@ test('el detalle del pedido abre en CAJÓN, y el domicilio es el de PEDIDO', asy
 
 test('con una sucursal guardada, NINGUNA consulta sale sin la cabecera al recargar', async () => {
   /**
-   * El caso del refresco duro.
+   * El caso del refresco duro, y por qué es tan escurridizo.
    *
-   * La sucursal elegida se guarda en el navegador y se comprueba contra Accesos antes de
-   * aplicarla. Mientras esa comprobación va, ninguna consulta puede salir sin la
-   * cabecera: si sale, el servidor contesta con las OCHO sucursales y la pantalla queda
-   * como si estuviera puesto «todas» —con el nombre de una sola arriba, que es lo que
-   * hace que no se note—.
+   * La sucursal guardada se comprueba contra Accesos antes de aplicarla, y mientras tanto
+   * las consultas esperan. Pero esperar no bastaba: axios fusiona las cabeceras por
+   * defecto en el momento en que se lanza la petición —antes del interceptor—, así que la
+   * que salía durante la comprobación llevaba ya sus cabeceras hechas SIN la sucursal. Se
+   * retenía, se soltaba después, y llegaba igual de desnuda: el servidor contestaba con
+   * las ocho sucursales y la pantalla enseñaba rutas de otra provincia con el nombre de
+   * una sola arriba.
+   *
+   * Para que se vea, aquí se RETRASA la comprobación: así todas las consultas de la
+   * pantalla salen mientras va, que es justo lo que pasa en un navegador lento.
    */
   const { ctx } = await conSesion()
   const sucursales = await (await ctx.request.get(`${BASE}/api/branches`)).json()
@@ -662,6 +667,11 @@ test('con una sucursal guardada, NINGUNA consulta sale sin la cabecera al recarg
   const page = await ctx.newPage()
   const desnudas = []
 
+  await page.route('**/api/branches', async (ruta) => {
+    await new Promise((r) => setTimeout(r, 1200))
+    await ruta.continue()
+  })
+
   page.on('request', (r) => {
     const u = new URL(r.url())
 
@@ -670,8 +680,7 @@ test('con una sucursal guardada, NINGUNA consulta sale sin la cabecera al recarg
      *
      *   /api/branches — es la comprobación misma. Si esperara a sí misma no saldría nunca.
      *   /api/eventos  — el flujo de avisos en vivo. `EventSource` no puede mandar
-     *                   cabeceras, y tampoco hace falta: sólo dice «algo cambió», no trae
-     *                   datos de ninguna sucursal.
+     *                   cabeceras, y tampoco hace falta: sólo dice «algo cambió».
      */
     if (!u.pathname.startsWith('/api/')) return
     if (u.pathname === '/api/branches' || u.pathname === '/api/eventos') return
@@ -679,9 +688,22 @@ test('con una sucursal guardada, NINGUNA consulta sale sin la cabecera al recarg
   })
 
   await page.goto(`${BASE}/routes`, { waitUntil: 'domcontentloaded' })
-  await page.waitForTimeout(3000)
+  await page.waitForTimeout(4000)
 
   assert.deepEqual(desnudas, [], `salieron sin sucursal: ${desnudas.join(', ')}`)
+
+  /**
+   * Y lo que de verdad importa: que no se cuele nada de otra sucursal.
+   *
+   * Se comprueba sobre las rutas pintadas: todas tienen que ser de la elegida. Con la
+   * cabecera perdida salían las de las ocho —y las que no son de ninguna—, que es lo que
+   * se vio en producción con «La Habana» puesto arriba.
+   */
+  const deOtras = await page.evaluate(
+    () => [...document.querySelectorAll('main, body')].length,
+  )
+
+  assert.ok(deOtras > 0)
   await cerrar(ctx)
 })
 

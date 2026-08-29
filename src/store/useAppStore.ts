@@ -161,6 +161,24 @@ if (typeof window !== 'undefined') {
  */
 axios.interceptors.request.use(async (config) => {
   await hidratacion
+
+  /**
+   * Y la cabecera se pone AQUÍ, no antes.
+   *
+   * Esperar no bastaba. Axios fusiona las cabeceras por defecto en el momento en que se
+   * lanza la petición —antes de que corra este interceptor—, así que una consulta que
+   * salía durante la comprobación llevaba ya sus cabeceras hechas SIN la sucursal: el
+   * interceptor la retenía, la soltaba después, y llegaba igual de desnuda. El servidor
+   * contestaba con las ocho sucursales y la pantalla enseñaba rutas de otra provincia con
+   * el nombre de una sola arriba.
+   *
+   * Poniéndola después de esperar, la petición sale con lo que hay cuando de verdad sale.
+   */
+  const elegida = useAppStore.getState().sucursalId
+
+  if (elegida) config.headers.set('x-sucursal-id', elegida)
+  else config.headers.delete('x-sucursal-id')
+
   return config
 })
 
