@@ -108,10 +108,25 @@ export async function POST(req: NextRequest) {
       let sinFactura = 0
 
       for (const p of pedidos) {
-        const dia = soloFecha(p.orderDate ?? p.createdAt)
-        // La factura del MISMO día: la de otro día es de otro pedido del mismo cliente.
+        const cuando = p.orderDate ?? p.createdAt
+        const dia = soloFecha(cuando)
+        /**
+         * El mismo día o el SIGUIENTE.
+         *
+         * Se pide un día y se factura al otro, sobre todo lo de última hora. Mirando sólo
+         * el mismo día, esos pedidos salían como «sin facturar» y desaparecían del
+         * armador —que por defecto ofrece los que cuadran— aunque su factura existía.
+         *
+         * No se abre más: con una ventana ancha, dos pedidos del mismo cliente en días
+         * seguidos se cotejarían contra la factura del otro.
+         */
+        const siguiente = soloFecha(new Date(cuando.getTime() + 86400000))
         const suyas = ventas
-          .filter((v) => soloFecha(new Date(v.fecha)) === dia)
+          .filter((v) => {
+            const f = soloFecha(new Date(v.fecha))
+
+            return f === dia || f === siguiente
+          })
           .map<LineaFactura>((v) => ({
             operNumber: v.operNumber,
             clienteNombre: v.clienteNombre,

@@ -7,7 +7,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { cotejar, mismoProducto, clavesDeProducto } from '../src/lib/cotejarFactura.ts'
+import { cotejar, mismoProducto, mismoCliente, clavesDeProducto } from '../src/lib/cotejarFactura.ts'
 
 // Los nombres REALES: Ventra escribe el formato en mililitros y el pedido en litros.
 const FACTURA = [
@@ -80,4 +80,23 @@ test('dos facturas del mismo cliente el mismo día se cotejan JUNTAS', () => {
 
   assert.equal(r.estado, 'igual')
   assert.equal(r.numero, '1024160, 1024199')
+})
+
+test('el mismo cliente escrito de dos formas se reconoce', () => {
+  /**
+   * Los nombres REALES: Ventra le pega a veces la persona detrás del negocio. Exigir
+   * igualdad exacta dejaba fuera medio día de facturación, y esos pedidos desaparecían
+   * del armador —que por defecto sólo ofrece los que cuadran— sin decir por qué.
+   */
+  assert.ok(mismoCliente('5TA AVENIDA(ILIANA)', '5TA AVENIDA(ILIANA)   ILIANA CABEZA VENERO'))
+  assert.ok(mismoCliente('LA CHIQUI (C. MACEO)', 'la chiqui (c. maceo)'))
+  assert.ok(mismoCliente('24 HORAS (CALZADA DE SAN MIGUEL)', '24 HORAS (CALZADA DE SAN MIGUEL)'))
+})
+
+test('pero NO confunde dos negocios distintos', () => {
+  // Con una palabra en común, «CAFETERIA ODALIS» casaría con cualquier otra cafetería y
+  // el camión saldría con la mercancía de otro cliente.
+  assert.equal(mismoCliente('CAFETERIA ODALIS', 'CAFETERIA DALIZ'), false)
+  assert.equal(mismoCliente('MI REINA ROXANA', 'MI REINA'), false, 'el corto tiene que estar ENTERO en el largo')
+  assert.equal(mismoCliente('14 KILATES', 'A LO CUBANO'), false)
 })

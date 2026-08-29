@@ -95,12 +95,53 @@ export function mismoProducto(a: string, b: string): boolean {
  * @param facturas      TODAS las líneas facturadas de esa sucursal ese día.
  * @param cliente       el nombre del cliente del pedido.
  */
+/**
+ * ¿Es el MISMO cliente escrito de dos formas?
+ *
+ * Ventra le pega a veces el nombre de la persona: «5TA AVENIDA(ILIANA)» en el pedido y
+ * «5TA AVENIDA(ILIANA)   ILIANA CABEZA VENERO» en la factura. Exigir igualdad exacta
+ * dejaba fuera medio día de facturación, y esos pedidos desaparecían del armador de rutas
+ * —el filtro por defecto es «los que cuadran»— sin que nadie supiera por qué.
+ *
+ * Se acepta que uno EMPIECE por el otro, o que todas las palabras del más corto estén en
+ * el más largo. Nada más: con dos palabras sueltas en común, «CAFETERIA ODALIS» casaría
+ * con cualquier otra cafetería y el camión saldría con la mercancía de otro.
+ */
+export function mismoCliente(a: string, b: string): boolean {
+  const x = normalizar(a)
+  const y = normalizar(b)
+
+  if (!x || !y) return false
+  if (x === y) return true
+
+  const corto = x.length <= y.length ? x : y
+  const largo = corto === x ? y : x
+  const palabras = corto.split(' ').filter((p) => p.length > 2)
+
+  /**
+   * El corto tiene que ser lo bastante específico para arriesgarse.
+   *
+   * «5ta avenida iliana» sí: tres palabras, dieciocho letras, no hay dos negocios que se
+   * llamen así. «mi reina» no: es el principio de «mi reina roxana» y también podría ser
+   * otro cliente. Ante la duda no se empareja — dar por buena la factura de otro es
+   * mandar el camión con la mercancía equivocada, y eso no se arregla después.
+   */
+  const especifico = palabras.length >= 3 || corto.replace(/ /g, '').length >= 12
+
+  if (!especifico) return false
+  if (largo.startsWith(corto)) return true
+
+  const enElLargo = new Set(largo.split(' '))
+
+  return palabras.length >= 2 && palabras.every((p) => enElLargo.has(p))
+}
+
 export function cotejar(
   lineasPedido: LineaPedido[],
   facturas: LineaFactura[],
   cliente: string,
 ): Cotejo {
-  const suyas = facturas.filter((f) => normalizar(f.clienteNombre) === normalizar(cliente))
+  const suyas = facturas.filter((f) => mismoCliente(f.clienteNombre, cliente))
 
   if (suyas.length === 0) {
     return { estado: 'sin_factura', numero: null, lineas: [], diferencias: [] }
