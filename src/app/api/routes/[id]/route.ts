@@ -229,6 +229,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const horas = horasDelEstado(route, data.status)
 
+  /**
+   * Poner una ruta EN CURSO ocupa su camión; completarla lo libera.
+   *
+   * Es el único momento en que el camión está de verdad fuera. Antes se ocupaba al crear
+   * la ruta, y eso impedía planificar la siguiente con el mismo camión mientras estaba
+   * repartiendo, que es cuando se planifica.
+   */
+  if (data.status === 'in_progress' && route.vehicleId) {
+    await prisma.vehicle.update({ where: { id: route.vehicleId }, data: { status: 'in_use' } })
+  }
+
   // --- Simple field updates ---
   // Completing a route frees its vehicle.
   if (data.status === 'completed' && route.vehicleId) {

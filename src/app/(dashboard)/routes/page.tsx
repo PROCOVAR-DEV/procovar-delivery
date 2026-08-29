@@ -1343,7 +1343,15 @@ export default function RoutesPage() {
                 </button>
                 {expandedStep === 3 && (
                   <div className="p-3 border-t space-y-3">
-                    {(vehicles as Vehicle[]).filter((v) => v.status === 'available').length === 0 ? (
+                    {/*
+                      Se ofrecen TODOS los camiones, también el que está repartiendo.
+                      
+                      Se filtraban por «disponible», así que el que estaba en la calle no
+                      salía — y planificar la ruta de mañana se hace justamente mientras
+                      el camión está fuera. El que está ocupado se marca, y la ruta nace
+                      planificada: no lo toma hasta que se pone en curso.
+                    */}
+                    {(vehicles as Vehicle[]).length === 0 ? (
                       <div className="bg-amber-50 text-amber-700 px-3 py-2 rounded-xl text-sm">
                         {t('routes.noVehiclesAvail')}
                       </div>
@@ -1359,7 +1367,7 @@ export default function RoutesPage() {
                             opciones={vehicles.map((v) => ({
                               valor: v.id,
                               etiqueta: v.name,
-                              nota: `${v.capacity} kg`,
+                              nota: v.status === 'in_use' ? `${v.capacity} kg · en ruta` : `${v.capacity} kg`,
                             }))}
                           />
                           <input

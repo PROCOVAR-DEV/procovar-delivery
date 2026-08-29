@@ -991,4 +991,83 @@ test('un pedido a mano lleva su costo, con la fórmula de Entrega', async () => 
   await prisma.order.delete({ where: { id: r.json.order.id } })
 })
 
+test('el filtro de reparto lo hace la BASE, no la página que se está viendo', async () => {
+  /**
+   * Se aplicaba sobre la página: el conteo decía 358 y la tabla salía vacía porque los
+   * pedidos que estaban en una ruta vivían en otra página que nunca se llegaba a mirar.
+   */
+  const enRuta = await prisma.order.count({
+    where: { routeId: { not: null }, deliveredAt: null, route: { status: { not: 'completed' } } },
+  })
+
+  const r = await listaPedidos('reparto=reparto&porPagina=200')
+
+  assert.equal(r.status, 200)
+  // El conteo y las filas dicen lo mismo: es justo lo que no pasaba.
+  assert.equal(r.json.total, enRuta)
+  assert.equal(r.json.orders.length, Math.min(enRuta, 200))
+  for (const o of r.json.orders) assert.ok(o.routeId || o.route?.id, `${o.customerName} no está en ninguna ruta`)
+
+  const pendientes = await listaPedidos('reparto=pendiente&porPagina=5')
+
+  for (const o of pendientes.json.orders) {
+    assert.ok(!o.routeId && !o.route?.id, `${o.customerName} está en una ruta y salió como pendiente`)
+  }
+})
+
+test('planificar NO ocupa el camión: sólo lo ocupa ponerla en curso', async () => {
+  /**
+   * La ruta de mañana se arma mientras el camión está repartiendo. Ocupar el camión al
+   * CREAR la ruta dejaba fuera de la lista justo al que se quería usar.
+   */
+  const vehiculo = await prisma.vehicle.findFirst({ where: { branchId: habana.id } })
+
+  await prisma.vehicle.update({ where: { id: vehiculo.id }, data: { status: 'available' } })
+
+  const cliente = await prisma.customer.findFirst()
+  const creado = await pedir('/api/orders', {
+    metodo: 'POST',
+    cuerpo: { customerId: cliente.id, branchId: habana.id, items: [] },
+  })
+
+  const r = await pedir('/api/routes', {
+    metodo: 'POST',
+    cuerpo: {
+      vehicleId: vehiculo.id,
+      originAddress: 'Almacén', originLat: habana.lat, originLng: habana.lng,
+      branchId: habana.id,
+      orderIds: [creado.json.order.id],
+    },
+  })
+
+  assert.ok(r.status === 200 || r.status === 201, `no se creó: ${r.texto.slice(0, 150)}`)
+
+  const trasCrear = await prisma.vehicle.findUnique({ where: { id: vehiculo.id } })
+
+  assert.equal(trasCrear.status, 'available', 'crear la ruta ocupó el camión')
+
+  // Y al ponerla en curso, sí.
+  await pedir(`/api/routes/${r.json.id}`, { metodo: 'PATCH', cuerpo: { status: 'in_progress' } })
+
+  const enCurso = await prisma.vehicle.findUnique({ where: { id: vehiculo.id } })
+
+  assert.equal(enCurso.status, 'in_use')
+
+  // Y la hora de salida queda marcada: es la mitad de saber cuánto se demoró.
+  const ruta = await prisma.route.findUnique({ where: { id: r.json.id } })
+
+  assert.ok(ruta.startedAt, 'no se marcó la salida al despacharla')
+
+  await pedir(`/api/routes/${r.json.id}`, { metodo: 'PATCH', cuerpo: { status: 'completed' } })
+
+  const cerrada = await prisma.route.findUnique({ where: { id: r.json.id } })
+
+  assert.ok(cerrada.finishedAt, 'no se marcó el regreso al cerrarla')
+  assert.equal((await prisma.vehicle.findUnique({ where: { id: vehiculo.id } })).status, 'available')
+
+  await prisma.order.updateMany({ where: { routeId: r.json.id }, data: { routeId: null } })
+  await prisma.route.delete({ where: { id: r.json.id } })
+  await prisma.order.delete({ where: { id: creado.json.order.id } })
+})
+
 test.after(() => prisma.$disconnect())

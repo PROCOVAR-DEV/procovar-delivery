@@ -175,7 +175,14 @@ async function createRouteFromExistingOrders(
     where: { id: route.id },
     data: { totalDistance, totalWeight, totalPrice, optimized: true },
   })
-  if (vehicleId) await prisma.vehicle.update({ where: { id: vehicleId }, data: { status: 'in_use' } })
+  /**
+   * Crear una ruta NO ocupa el camión: se planifica, no se despacha.
+   *
+   * Lo marcaba «en uso» al crearla, así que el camión que está repartiendo ahora no se
+   * podía usar para armar la ruta de mañana — y armarla es justo lo que se hace mientras
+   * el camión está fuera. El camión se ocupa cuando la ruta se pone EN CURSO, y se
+   * libera al completarla.
+   */
 
   const full = await prisma.route.findUnique({
     where: { id: route.id },

@@ -643,6 +643,41 @@ test('el detalle del pedido abre en CAJÓN, y el domicilio es el de PEDIDO', asy
   await cerrar(ctx)
 })
 
+test('con una sucursal guardada, NINGUNA consulta sale sin la cabecera al recargar', async () => {
+  /**
+   * El caso del refresco duro.
+   *
+   * La sucursal elegida se guarda en el navegador y se comprueba contra Accesos antes de
+   * aplicarla. Mientras esa comprobación va, ninguna consulta puede salir sin la
+   * cabecera: si sale, el servidor contesta con las OCHO sucursales y la pantalla queda
+   * como si estuviera puesto «todas» —con el nombre de una sola arriba, que es lo que
+   * hace que no se note—.
+   */
+  const { ctx } = await conSesion()
+  const sucursales = await (await ctx.request.get(`${BASE}/api/branches`)).json()
+  const habana = sucursales.find((b) => b.externalId === 'HAB')
+
+  await ctx.addInitScript((id) => window.localStorage.setItem('sucursalId', id), habana.id)
+
+  const page = await ctx.newPage()
+  const desnudas = []
+
+  page.on('request', (r) => {
+    const u = new URL(r.url())
+
+    // `/api/branches` es la comprobación misma: ésa sí sale sin cabecera, y tiene que
+    // hacerlo — si esperara a sí misma no saldría nunca.
+    if (!u.pathname.startsWith('/api/') || u.pathname === '/api/branches') return
+    if (!r.headers()['x-sucursal-id']) desnudas.push(u.pathname)
+  })
+
+  await page.goto(`${BASE}/routes`, { waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(3000)
+
+  assert.deepEqual(desnudas, [], `salieron sin sucursal: ${desnudas.join(', ')}`)
+  await cerrar(ctx)
+})
+
 test('el asistente de rutas es un cajón a pantalla completa y va paso a paso', async () => {
   const { ctx, page } = await conSesion()
 
