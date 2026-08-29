@@ -106,12 +106,68 @@ export async function GET(req: NextRequest) {
   // son dos números distintos y confundirlos es cobrar uno por el otro.
   const filas = orders.map((o) => ({ ...o, price: o.deliveryPrice ?? null }))
 
+  /**
+   * El TOTAL POR PRODUCTO de lo filtrado. Es el pre-despacho.
+   *
+   * Filtrar por un día y una sucursal contesta «cuántos pedidos», pero al almacén hay que
+   * decirle CUÁNTO SACAR de cada cosa: 340 cajas de malta, 120 de cerveza. Eso se sacaba
+   * a mano abriendo pedido por pedido.
+   *
+   * Se cuenta sobre TODO lo filtrado, no sobre la página: media lista da media carga, y
+   * el camión sale corto sin que nadie lo note. Con tope, porque el catálogo entero son
+   * cincuenta mil pedidos y esto no puede tumbar la pantalla.
+   */
+  /**
+   * Y sólo si se pide.
+   *
+   * Sumar el pre-despacho es leerse TODOS los pedidos filtrados con sus líneas. Hacerlo
+   * en cada carga de la lista la volvía lenta —y la lista se carga en cada tecla del
+   * buscador—. Se pide aparte, cuando alguien abre el pre-despacho.
+   */
+  const TOPE_RESUMEN = 5000
+  const quiereResumen = params.get('resumen') === '1'
+  const paraResumen = quiereResumen && total <= TOPE_RESUMEN
+    ? await prisma.order.findMany({ where, select: { items: true, weight: true } })
+    : []
+
+  const porProducto = new Map<string, { producto: string; formatos: number; unidades: number; pesoKg: number }>()
+
+  for (const o of paraResumen) {
+    const items = (Array.isArray(o.items) ? o.items : []) as Array<{
+      name?: string
+      description?: string
+      packs?: number
+      quantity?: number
+      weightKg?: number
+    }>
+
+    for (const it of items) {
+      const nombre = (it?.name || it?.description || '').trim()
+
+      if (!nombre) continue
+      const acumulado = porProducto.get(nombre) ?? { producto: nombre, formatos: 0, unidades: 0, pesoKg: 0 }
+
+      acumulado.formatos += Number(it.packs) || 0
+      acumulado.unidades += Number(it.quantity) || 0
+      acumulado.pesoKg += Number(it.weightKg) || 0
+      porProducto.set(nombre, acumulado)
+    }
+  }
+
+  const resumen = [...porProducto.values()]
+    .map((p) => ({ ...p, pesoKg: Number(p.pesoKg.toFixed(2)) }))
+    .sort((a, b) => b.formatos - a.formatos)
+
   return NextResponse.json({
     orders: filas,
     total,
     pagina,
     porPagina,
     paginas: Math.max(1, Math.ceil(total / porPagina)),
+    // `null` cuando no se pidió o hay demasiados: las dos cosas son distintas de «no hay».
+    resumen: quiereResumen ? (total <= TOPE_RESUMEN ? resumen : null) : undefined,
+    resumenTope: TOPE_RESUMEN,
+    pesoTotal: Number(paraResumen.reduce((t, o) => t + (o.weight || 0), 0).toFixed(2)),
   })
 }
 
@@ -290,6 +346,8 @@ export async function POST(req: NextRequest) {
       municipio: cliente?.municipio ?? body.municipio ?? null,
       weight: Number(peso.toFixed(3)),
       items: items as unknown as Prisma.InputJsonValue,
+      // La copia en texto, para poder buscar por producto igual que en los importados.
+      productosTexto: items.map((i) => i.name).filter(Boolean).join(' · ') || null,
       notes: body.notes?.trim() || null,
       // El costo va en `pedidoCosto` como el de los demás: es el que se cobra, calculado
       // con la fórmula de Entrega. El repartidor puede corregirlo desde la APK.

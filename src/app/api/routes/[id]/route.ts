@@ -279,13 +279,18 @@ export async function DELETE(req: NextRequest, { params }: { params: Promise<{ i
     }
   }
 
-  // Los pedidos IMPORTADOS (source='pedido') solo se desvinculan: vuelven al pool para
-  // poder re-rutearlos. Los creados a mano en esta ruta (source distinto) sí se borran.
+  /**
+   * Borrar la ruta NO borra pedidos: todos vuelven a la lista para poder re-rutearlos.
+   *
+   * Los de PEDIDO se desvinculaban y los demás se BORRABAN, de cuando «los demás» eran
+   * paradas tecleadas dentro de la propia ruta. Ahora un pedido a mano es un pedido como
+   * cualquiera —con su cliente, su peso y su costo—, y deshacer una ruta no puede
+   * llevárselo por delante: se armó mal la ruta, no se canceló el pedido.
+   */
   await prisma.order.updateMany({
-    where: { routeId: id, source: 'pedido' },
+    where: { routeId: id },
     data: { routeId: null, stopOrder: null, segmentKm: null, tripLeg: 'outbound' },
   })
-  await prisma.order.deleteMany({ where: { routeId: id, NOT: { source: 'pedido' } } })
   await prisma.route.delete({ where: { id } })
   return NextResponse.json({ success: true })
 }

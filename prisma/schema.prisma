@@ -228,6 +228,12 @@ model Order {
   // pedido entero de cada fila y descartarlo. Con 50.000 pedidos eso no es un filtro:
   // es traerse la base a memoria en cada consulta.
   municipio       String?
+  /// Los NOMBRES de los productos del pedido, en un solo texto.
+  ///
+  /// Es una copia de lo que ya está en `items`, y existe por una razón: dentro de un JSON
+  /// no se puede buscar «malta» sin leerse los cincuenta mil pedidos. Es la pregunta del
+  /// despacho —«¿qué pedidos llevan malta?»— y hasta ahora había que abrirlos uno a uno.
+  productosTexto  String?
   vendedor        String?
   sucursalCodigo  String?
   // Id/folio del pedido en PEDIDO. Usado para idempotencia (re-cotizar no duplica).

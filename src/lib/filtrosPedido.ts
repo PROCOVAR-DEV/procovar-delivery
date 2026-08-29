@@ -101,6 +101,14 @@ export function whereDeFiltros(f: FiltrosPedido): Prisma.OrderWhereInput {
         { address: { contains: f.q, mode: 'insensitive' } },
         { municipio: { contains: f.q, mode: 'insensitive' } },
         { vendedor: { contains: f.q, mode: 'insensitive' } },
+        /**
+         * Y por PRODUCTO.
+         *
+         * Sobre `productosTexto`, que es la copia en texto de los nombres de las líneas.
+         * Dentro del JSON no se puede buscar sin leerse los cincuenta mil pedidos, y es
+         * la pregunta del despacho: «¿qué pedidos llevan malta?».
+         */
+        { productosTexto: { contains: f.q, mode: 'insensitive' } },
       ],
     })
   }

@@ -678,46 +678,60 @@ test('con una sucursal guardada, NINGUNA consulta sale sin la cabecera al recarg
   await cerrar(ctx)
 })
 
-test('el asistente de rutas es un cajón a pantalla completa y va paso a paso', async () => {
+test('el asistente abre donde hay algo que decidir, y va de uno en uno', async () => {
   const { ctx, page } = await conSesion()
 
   await page.goto(`${BASE}/routes`, { waitUntil: 'domcontentloaded' })
+  // Con una sucursal elegida arriba, que es como se trabaja: sus dos primeros pasos ya
+  // están contestados —la sucursal y su almacén— y el asistente no tiene que pedirlos.
+  await elegir(page, 'Sucursal que se está mirando', 'La Habana')
+  await page.waitForTimeout(1200)
   await page.click('button:has-text("Nueva Ruta")')
   await page.waitForSelector('[role="dialog"]')
+  await page.waitForTimeout(1200)
 
   const texto = await page.locator('[role="dialog"]').innerText()
 
-  // Con la sucursal sin elegir, los pasos de después NO se pintan: eran tres cajas
-  // grises que no se podían pulsar y no decían qué hacer.
-  assert.equal(/Pedidos de cliente/.test(texto), false, 'el paso 4 sale antes de tiempo')
-  assert.equal(/Punto de partida/.test(texto), false, 'el paso 2 sale antes de tiempo')
-
   /**
-   * Y al avanzar se ve UNO, no la pila.
-   *
-   * Quedaban los hechos plegados arriba y el siguiente debajo: con dos completados había
-   * cuatro cajas en pantalla para rellenar un campo. Dónde se está lo dice la barra.
+   * Los dos primeros pasos ya vienen contestados: la sucursal se elige arriba en la barra
+   * y la salida es el almacén de esa sucursal. Salían igual, en verde, para pulsar
+   * «Siguiente» dos veces sin cambiar nada.
    */
-  await elegir(page, 'Sucursal de la ruta', 'La Habana')
-  await page.click('[role="dialog"] button:has-text("Siguiente")')
-  await page.waitForTimeout(600)
+  assert.match(texto, /Vehículo/)
+  assert.equal(/serán los de esta sucursal/.test(texto), false, 'el paso 1 sale aunque ya esté contestado')
+  // Y sólo se pinta el que toca: el de pedidos no está hasta elegir vehículo.
+  assert.equal(/Pedidos disponibles/.test(texto), false, 'el paso 4 sale antes de tiempo')
 
-  // El texto del paso 1 (no el `title` del desplegable, que es un atributo).
-  const delUno = /serán los de esta sucursal/
-
-  const enElDos = await page.locator('[role="dialog"]').innerText()
-
-  assert.equal(delUno.test(enElDos), false, 'el paso 1 sigue puesto estando en el 2')
-  assert.match(enElDos, /Punto de partida/)
-
-  // Y se puede volver al anterior desde la barra, que es lo único que queda para corregir.
-  await page.click('[role="dialog"] li button:has-text("Sucursal")')
-  await page.waitForTimeout(400)
-  assert.match(await page.locator('[role="dialog"]').innerText(), delUno)
-
-  // Y el botón de generar vive en el pie, siempre a la vista: estaba al final del todo,
+  // El botón de generar vive en el pie, siempre a la vista: estaba al final del todo,
   // detrás de la lista entera de pedidos.
   assert.ok(await page.locator('[role="dialog"] button:has-text("Generar")').count() > 0)
+
+  // Se puede volver atrás desde la barra, que es lo único que queda para corregir.
+  await page.click('[role="dialog"] li button:has-text("Sucursal")')
+  await page.waitForTimeout(500)
+  assert.match(await page.locator('[role="dialog"]').innerText(), /serán los de esta sucursal/)
+  await cerrar(ctx)
+})
+
+test('el PRE-DESPACHO sale mientras se eligen los pedidos', async () => {
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/routes`, { waitUntil: 'domcontentloaded' })
+  await elegir(page, 'Sucursal que se está mirando', 'La Habana')
+  await page.waitForTimeout(1200)
+  await page.click('button:has-text("Nueva Ruta")')
+  await page.waitForSelector('[role="dialog"]')
+  await page.waitForTimeout(1200)
+
+  await elegir(page, 'Vehículo de la ruta', 'Camión 1')
+  await page.click('[role="dialog"] button:has-text("Continuar")')
+  await page.waitForTimeout(1000)
+
+  /**
+   * Es lo que hay que sacar del almacén y montar en el camión. Se veía sólo DESPUÉS de
+   * generar la ruta, así que había que generarla para saber si cabía, y deshacerla si no.
+   */
+  assert.match(await page.locator('[role="dialog"]').innerText(), /Pre-despacho/)
   await cerrar(ctx)
 })
 

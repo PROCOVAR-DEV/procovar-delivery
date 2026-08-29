@@ -17,6 +17,7 @@ import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
 import Drawer from '@/components/Drawer'
 import { duracionDeRuta, enlaceGoogleMaps, horasDeRuta, paradasFueraDelEnlace } from '@/lib/rutaCompartir'
+import { imprimirPreDespacho } from '@/lib/imprimirPreDespacho'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false })
 
@@ -82,20 +83,14 @@ interface Vehicle {
   status: string
 }
 
-interface SavedOrigin {
-  id: string
-  name: string
-  address: string
-  lat: number
-  lng: number
-}
-
 interface BranchOrigin {
   id: string
   name: string
   address?: string | null
   lat: number
   lng: number
+  /** El código (HAB, CMG…): es por donde se cruzan los almacenes de Accesos. */
+  externalId?: string | null
 }
 
 interface AvailableOrder {
@@ -148,9 +143,6 @@ export default function RoutesPage() {
 
   // Depot (punto de partida)
   const [depot, setDepot] = useState<LocationValue>(emptyLoc)
-  const [selectedOriginId, setSelectedOriginId] = useState('')
-  const [showSaveOrigin, setShowSaveOrigin] = useState(false)
-  const [newOriginName, setNewOriginName] = useState('')
 
   /**
    * A qué sucursal se le crea la ruta, y de qué día son los pedidos.
@@ -199,6 +191,8 @@ export default function RoutesPage() {
   const [showStopsModal, setShowStopsModal] = useState(false)
   // Route list filters (apply to both Active and History tabs)
   const [search, setSearch] = useState('')
+  /** Las rutas DE UN CAMIÓN: «¿qué lleva hoy el Vehículo HAB?». */
+  const [filtroVehiculo, setFiltroVehiculo] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
 
@@ -225,13 +219,17 @@ export default function RoutesPage() {
     enabled: !!token,
   })
 
-  const { data: savedOrigins = [] } = useQuery({
-    queryKey: ['origins', user?.branchId ?? 'all'],
-    queryFn: async () => {
-      const url = user?.branchId ? `/api/origins?branchId=${user.branchId}` : '/api/origins'
-      const res = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } })
-      return res.data as SavedOrigin[]
-    },
+  /**
+   * Los ALMACENES de cada sucursal. De ahí sale el camión.
+   *
+   * El punto de partida se elegía de una lista de «puntos guardados» propia de esta
+   * aplicación, que es otra copia del mismo dato: el almacén ya está en Accesos y se
+   * gestiona en la pantalla de Almacenes. Dos listas para lo mismo terminan en una ruta
+   * que se mide desde un punto y un domicilio que se cobra desde otro.
+   */
+  const { data: almacenes } = useQuery<{ sucursales: { codigo: string; nombre: string; almacenes: { id: string; nombre: string; direccion: string | null; latitud: number | null; longitud: number | null; principal: boolean }[] }[] }>({
+    queryKey: ['almacenes', sucursalId],
+    queryFn: async () => (await axios.get('/api/almacenes', { headers: { Authorization: `Bearer ${token}` } })).data,
     enabled: !!token,
   })
 
@@ -356,25 +354,38 @@ export default function RoutesPage() {
     setSucursalRuta('')
   }, [user?.branchId, sucursalId, branches])
 
-  // Al abrir el modal, si aún no hay depósito, se pone por defecto el punto de partida de
-  // la sucursal: primero un origen guardado; si no hay, la ubicación de la sucursal misma.
+  /** Los almacenes CON punto de la sucursal elegida, el principal primero. */
+  const almacenesDeLaRuta = useMemo(() => {
+    const codigo = (branches as BranchOrigin[]).find((b) => b.id === sucursalRuta)?.externalId
+
+    if (!codigo) return []
+
+    return (almacenes?.sucursales ?? [])
+      .find((s) => s.codigo === codigo)?.almacenes
+      .filter((a) => a.latitud != null && a.longitud != null)
+      .sort((a, b) => Number(b.principal) - Number(a.principal)) ?? []
+  }, [almacenes, branches, sucursalRuta])
+
+  /**
+   * El punto de partida ES el almacén de la sucursal.
+   *
+   * Se ponía «el primer punto guardado» y, si no había, la ubicación de la sucursal —que
+   * es la oficina, no el almacén—. El domicilio se cobra por la distancia DESDE EL
+   * ALMACÉN, así que medir la ruta desde otro sitio da unos kilómetros que no cuadran con
+   * lo cobrado. Con almacén principal puesto, este paso no hace falta ni preguntarlo.
+   */
   useEffect(() => {
     if (!showModal) return
-    if (depot.lat != null && depot.lng != null) return
-    const origins = savedOrigins as SavedOrigin[]
-    if (origins.length > 0) {
-      const first = origins[0]
-      setDepot({ address: first.address, lat: first.lat, lng: first.lng })
-      setSelectedOriginId(first.id)
-      return
-    }
-    // Fallback: ubicación de la sucursal (la del usuario, o la primera si es admin).
-    const b = (branches as BranchOrigin[]).find((x) => x.id === user?.branchId) ?? (branches as BranchOrigin[])[0]
-    if (b) {
-      setDepot({ address: b.address || b.name, lat: b.lat, lng: b.lng })
-    }
+    const principal = almacenesDeLaRuta[0]
+
+    if (!principal) return
+    setDepot({
+      address: principal.direccion || principal.nombre,
+      lat: principal.latitud as number,
+      lng: principal.longitud as number,
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showModal, savedOrigins, branches])
+  }, [showModal, almacenesDeLaRuta])
 
   const createRoute = useMutation({
     mutationFn: async (data: unknown) => {
@@ -390,30 +401,6 @@ export default function RoutesPage() {
     onError: (err: unknown) => {
       const msg = axios.isAxiosError(err) ? err.response?.data?.error : 'Error al crear la ruta'
       setApiError(msg || 'Error al crear la ruta')
-    },
-  })
-
-  const saveOriginMutation = useMutation({
-    mutationFn: async (data: { name: string; address: string; lat: number; lng: number; branchId?: string }) => {
-      const res = await axios.post('/api/origins', data, { headers: { Authorization: `Bearer ${token}` } })
-      return res.data as SavedOrigin
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['origins'] })
-      setSelectedOriginId(data.id)
-      setShowSaveOrigin(false)
-      setNewOriginName('')
-    },
-  })
-
-  const deleteOriginMutation = useMutation({
-    mutationFn: async (id: string) => {
-      await axios.delete(`/api/origins/${id}`, { headers: { Authorization: `Bearer ${token}` } })
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['origins'] })
-      setSelectedOriginId('')
-      setDepot(emptyLoc)
     },
   })
 
@@ -465,9 +452,6 @@ export default function RoutesPage() {
     setSelectedVehicleId('')
     setDeliveryDate('')
     setDepot(emptyLoc)
-    setSelectedOriginId('')
-    setShowSaveOrigin(false)
-    setNewOriginName('')
     setExpandedStep(1)
     setApiError('')
     setElegidos(new Map())
@@ -475,19 +459,20 @@ export default function RoutesPage() {
     setAvailMunicipio('todos')
   }
 
-  const handleSelectSavedOrigin = (originId: string) => {
-    setSelectedOriginId(originId)
-    if (!originId) {
-      setDepot(emptyLoc)
-      return
-    }
-    const found = (savedOrigins as SavedOrigin[]).find((o) => o.id === originId)
-    if (found) {
-      setDepot({ address: found.address, lat: found.lat, lng: found.lng })
-    }
-  }
-
   const depotSet = depot.lat != null && depot.lng != null
+
+  /**
+   * El asistente arranca donde de verdad hay algo que decidir.
+   *
+   * Los dos primeros pasos —sucursal y punto de partida— ya vienen contestados: la
+   * sucursal se elige arriba en la barra y la salida es el almacén de esa sucursal. Salían
+   * igual, en verde, para pulsar «Siguiente» dos veces sin cambiar nada.
+   */
+  useEffect(() => {
+    if (!showModal) return
+    if (sucursalRuta && depotSet && expandedStep < 3) setExpandedStep(3)
+  }, [showModal, sucursalRuta, depotSet]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const selectedVehicle = (vehicles as Vehicle[]).find((v) => v.id === selectedVehicleId)
 
   // Municipios distintos (no vacíos) de los pedidos disponibles, ordenados.
@@ -565,7 +550,9 @@ export default function RoutesPage() {
     const created = r.createdAt ? new Date(r.createdAt) : null
     const matchFrom = !dateFrom || (created != null && created >= new Date(dateFrom))
     const matchTo = !dateTo || (created != null && created <= new Date(dateTo + 'T23:59:59.999'))
-    return matchName && matchFrom && matchTo
+    const matchVehiculo = !filtroVehiculo || r.vehicle?.id === filtroVehiculo
+
+    return matchName && matchFrom && matchTo && matchVehiculo
   })
 
   const pagedRoutes = usePagedList(visibleRoutes, 20)
@@ -657,6 +644,32 @@ export default function RoutesPage() {
     return Object.entries(acc).map(([description, quantity]) => ({ description, quantity }))
   })()
 
+  /**
+   * El PRE-DESPACHO: cuánto hay que sacar del almacén para esta ruta.
+   *
+   * Sale de lo que se lleva elegido, mientras se elige. Es la pregunta del almacenero
+   * —«¿cuántas cajas de malta bajo?»— y hasta ahora había que sumarla a mano abriendo
+   * pedido por pedido, o esperar a generar la ruta para verla.
+   */
+  const preDespacho = useMemo(() => {
+    const acc = new Map<string, { producto: string; formatos: number; unidades: number; pesoKg: number }>()
+
+    for (const o of selectedOrders) {
+      for (const it of (o.items ?? []) as Array<{ name?: string; description?: string; packs?: number; quantity?: number; weightKg?: number }>) {
+        const nombre = (it.name || it.description || '').trim()
+
+        if (!nombre) continue
+        const a = acc.get(nombre) ?? { producto: nombre, formatos: 0, unidades: 0, pesoKg: 0 }
+
+        a.formatos += Number(it.packs) || 0
+        a.unidades += Number(it.quantity) || 0
+        a.pesoKg += Number(it.weightKg) || 0
+        acc.set(nombre, a)
+      }
+    }
+    return [...acc.values()].sort((a, b) => b.formatos - a.formatos)
+  }, [selectedOrders])
+
   const isOverCapacity = (route: Route) =>
     route.vehicle != null && route.totalWeight > route.vehicle.capacity
 
@@ -722,6 +735,22 @@ export default function RoutesPage() {
                   className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
+              {/* Por CAMIÓN: es la pregunta de todos los días —«¿qué lleva hoy el
+                  Vehículo HAB?»— y había que leerse la lista entera para saberlo. */}
+              <Selector
+                titulo="Rutas de un camión"
+                icono="mdi:truck-outline"
+                className="w-full justify-between"
+                valor={filtroVehiculo}
+                todos="Cualquier vehículo"
+                onCambio={setFiltroVehiculo}
+                opciones={(vehicles as Vehicle[]).map((v) => ({
+                  valor: v.id,
+                  etiqueta: v.name,
+                  nota: v.status === 'in_use' ? 'en ruta' : undefined,
+                }))}
+              />
+
               <div className="flex gap-2">
                 <input
                   type="date"
@@ -737,9 +766,9 @@ export default function RoutesPage() {
                   className="flex-1 px-2 py-1.5 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
                   title={t('common.to')}
                 />
-                {(search || dateFrom || dateTo) && (
+                {(search || dateFrom || dateTo || filtroVehiculo) && (
                   <button
-                    onClick={() => { setSearch(''); setDateFrom(''); setDateTo('') }}
+                    onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); setFiltroVehiculo('') }}
                     className="px-2 text-gray-400 hover:text-gray-600"
                     title={t('common.clear')}
                   >
@@ -1105,7 +1134,7 @@ export default function RoutesPage() {
           </>
         }
       >
-        <div className="mx-auto w-full max-w-3xl">
+        <div className="mx-auto w-full max-w-6xl">
 
             {/*
               Dónde estoy y cuánto falta.
@@ -1239,70 +1268,51 @@ export default function RoutesPage() {
                 </button>
                 {expandedStep === 2 && (
                   <div className="p-3 border-t space-y-2">
-                    {(savedOrigins as SavedOrigin[]).length > 0 && (
-                      <div className="mb-2">
-                        <Selector
-                          titulo="Punto de partida guardado"
-                          className="w-full justify-between"
-                          valor={selectedOriginId}
-                          todos="Elige un punto guardado…"
-                          onCambio={handleSelectSavedOrigin}
-                          opciones={savedOrigins.map((o) => ({ valor: o.id, etiqueta: o.name, nota: o.address }))}
-                        />
-                        {selectedOriginId && (
-                          <div className="flex justify-end mt-1">
-                            <button
-                              type="button"
-                              onClick={() => deleteOriginMutation.mutate(selectedOriginId)}
-                              className="text-xs text-red-400 hover:text-red-600"
-                            >
-                              {t('routes.deleteSaved')}
-                            </button>
-                          </div>
-                        )}
-                        <p className="text-xs text-gray-400 mt-1 mb-2">{t('routes.orEnterNew')}</p>
-                      </div>
-                    )}
+                    {/*
+                      El punto de partida ES un almacén de la sucursal.
+                      
+                      Había una lista de «puntos guardados» propia de esta aplicación:
+                      otra copia del mismo dato. El almacén vive en Accesos y se gestiona
+                      en la pantalla de Almacenes, y es desde donde se cobra el domicilio
+                      — medir la ruta desde otro sitio da unos kilómetros que no cuadran
+                      con lo que se cobró.
+                    */}
+                    {almacenesDeLaRuta.length === 0 ? (
+                      <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        Esta sucursal no tiene ningún almacén con ubicación. Se pone en
+                        <b> Almacenes</b>, y hasta entonces no hay desde dónde medir.
+                      </p>
+                    ) : (
+                      <>
+                        {almacenesDeLaRuta.length > 1 && (
+                          <Selector
+                            titulo="Almacén del que sale el camión"
+                            className="w-full justify-between"
+                            valor={depot.address}
+                            onCambio={(v) => {
+                              const a = almacenesDeLaRuta.find((x) => (x.direccion || x.nombre) === v)
 
-                    <LocationInput
-                      value={depot}
-                      onChange={(v) => { setDepot(v); setSelectedOriginId('') }}
-                      label=""
-                      markerColor="#16a34a"
-                      placeholder={t('routes.depotPlaceholder')}
-                    />
-
-                    {depotSet && !selectedOriginId && (
-                      <div className="mt-1">
-                        {!showSaveOrigin ? (
-                          <button type="button" onClick={() => setShowSaveOrigin(true)} className="text-xs text-blue-600 hover:underline">
-                            {t('routes.saveOrigin')}
-                          </button>
-                        ) : (
-                          <div className="flex gap-2 items-center">
-                            <input
-                              type="text"
-                              value={newOriginName}
-                              onChange={(e) => setNewOriginName(e.target.value)}
-                              className="flex-1 px-3 py-1.5 border rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
-                              placeholder={t('routes.originNamePh')}
-                            />
-                            <button
-                              type="button"
-                              disabled={!newOriginName.trim() || saveOriginMutation.isPending}
-                              onClick={() => {
-                                if (newOriginName.trim() && depot.lat != null && depot.lng != null) {
-                                  saveOriginMutation.mutate({ name: newOriginName.trim(), address: depot.address, lat: depot.lat, lng: depot.lng, branchId: user?.branchId ?? undefined })
-                                }
-                              }}
-                              className="px-3 py-1.5 bg-blue-600 text-white rounded-xl text-xs hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
-                            >
-                              {saveOriginMutation.isPending ? '...' : t('common.save')}
-                            </button>
-                            <button type="button" onClick={() => { setShowSaveOrigin(false); setNewOriginName('') }} className="text-gray-400 hover:text-gray-600"><Icon icon="mdi:close" /></button>
-                          </div>
+                              if (a) setDepot({ address: a.direccion || a.nombre, lat: a.latitud as number, lng: a.longitud as number })
+                            }}
+                            opciones={almacenesDeLaRuta.map((a) => ({
+                              valor: a.direccion || a.nombre,
+                              etiqueta: a.nombre,
+                              nota: a.principal ? 'principal' : undefined,
+                            }))}
+                          />
                         )}
-                      </div>
+
+                        <p className="text-xs text-gray-500">
+                          {depot.address || 'Sin almacén elegido'}
+                        </p>
+
+                        <div className="rounded-xl overflow-hidden border">
+                          <MapComponent
+                            height="220px"
+                            stops={depotSet ? [{ id: 'almacen', lat: depot.lat as number, lng: depot.lng as number, label: depot.address || 'Almacén', isOrigin: true }] : []}
+                          />
+                        </div>
+                      </>
                     )}
 
                     <div className="flex justify-end pt-1">
@@ -1424,7 +1434,13 @@ export default function RoutesPage() {
                   )}
                 </button>
                 {expandedStep === 4 && (
-                  <div className="p-3 border-t space-y-3">
+                  /*
+                    En DOS columnas: los pedidos a la izquierda y el pre-despacho a la
+                    derecha, fijo. Estaba todo en una sola columna estrecha —con el cajón
+                    a pantalla completa vacío a los lados— y para ver cuánto llevaba que
+                    sacar del almacén había que bajar hasta el final.
+                  */
+                  <div className="p-3 border-t grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
                     {/* Primary: pick from existing available orders */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
@@ -1698,18 +1714,91 @@ export default function RoutesPage() {
                     </div>
 
                     {/*
-                      Aquí se creaba una entrega A MANO: cliente, dirección, productos y
-                      peso tecleados en este formulario.
+                      EL PRE-DESPACHO, mientras se eligen los pedidos.
                       
-                      Se quita porque eso lo hace Entrega, que es donde está el
-                      repartidor. Tenerlo en los dos sitios significa que la misma entrega
-                      puede existir dos veces —una tecleada aquí y otra en el teléfono— y
-                      nada las relaciona: dos paradas, dos cobros, y ningún sistema sabe
-                      que son la misma.
+                      Es lo que hay que sacar del almacén y montar en el camión: empaques
+                      y unidades de cada producto. Se veía sólo después de generar la
+                      ruta, así que había que generarla para saber si cabía o si faltaba
+                      algo, y deshacerla si no.
                       
-                      Las rutas se arman con los pedidos que llegan de PEDIDO, que ya
-                      traen cliente, ubicación y peso sin que nadie los vuelva a escribir.
+                      Aquí no se crean entregas a mano: eso lo hace Entrega, que es donde
+                      está el repartidor. Tenerlo en dos sitios significa que la misma
+                      entrega existe dos veces y nada las relaciona.
                     */}
+                    <aside className="lg:sticky lg:top-0 lg:self-start">
+                      <div className="rounded-xl border bg-amber-50/60 p-3">
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <h5 className="text-sm font-semibold text-gray-800 flex items-center gap-1">
+                            <Icon icon="mdi:clipboard-list-outline" />Pre-despacho
+                          </h5>
+                          <button
+                            type="button"
+                            disabled={preDespacho.length === 0}
+                            onClick={() => imprimirPreDespacho({
+                              sucursal: branches.find((b) => b.id === sucursalRuta)?.name ?? '',
+                              vehiculo: selectedVehicle?.name ?? '',
+                              dia: diaPedidos,
+                              pedidos: selectedOrders.length,
+                              pesoKg: selectedWeight,
+                              lineas: preDespacho,
+                            })}
+                            className="flex items-center gap-1 text-xs text-primary hover:underline disabled:text-gray-400 disabled:no-underline"
+                          >
+                            <Icon icon="mdi:printer-outline" />Imprimir
+                          </button>
+                        </div>
+
+                        {preDespacho.length === 0 ? (
+                          <p className="text-xs text-gray-500">
+                            Según vayas eligiendo pedidos, aquí sale cuánto hay que sacar de cada
+                            producto.
+                          </p>
+                        ) : (
+                          <>
+                            <div className="max-h-[22rem] overflow-y-auto -mx-1 px-1">
+                              <table className="w-full text-xs">
+                                <thead className="text-gray-500">
+                                  <tr>
+                                    <th className="text-left font-medium pb-1">Producto</th>
+                                    <th className="text-right font-medium pb-1">Emp.</th>
+                                    <th className="text-right font-medium pb-1">Uds.</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {preDespacho.map((l) => (
+                                    <tr key={l.producto} className="border-t border-amber-200/60">
+                                      <td className="py-1 pr-2">{l.producto}</td>
+                                      <td className="py-1 text-right font-mono font-semibold">{l.formatos}</td>
+                                      <td className="py-1 text-right font-mono text-gray-600">{l.unidades}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            <div className="mt-2 border-t border-amber-200 pt-2 text-xs text-gray-700 space-y-0.5">
+                              <p className="flex justify-between">
+                                <span>Pedidos</span><b className="font-mono">{selectedOrders.length}</b>
+                              </p>
+                              <p className="flex justify-between">
+                                <span>Empaques</span>
+                                <b className="font-mono">{preDespacho.reduce((t, l) => t + l.formatos, 0)}</b>
+                              </p>
+                              <p className="flex justify-between">
+                                <span>Unidades</span>
+                                <b className="font-mono">{preDespacho.reduce((t, l) => t + l.unidades, 0)}</b>
+                              </p>
+                              <p className={`flex justify-between ${selectedOverCapacity ? 'text-amber-700 font-semibold' : ''}`}>
+                                <span>Peso</span>
+                                <b className="font-mono">
+                                  {selectedWeight.toFixed(1)}{selectedVehicle ? ` / ${selectedVehicle.capacity}` : ''} kg
+                                </b>
+                              </p>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </aside>
                   </div>
                 )}
               </div>

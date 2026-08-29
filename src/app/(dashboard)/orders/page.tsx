@@ -14,6 +14,7 @@ import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
 import Drawer from '@/components/Drawer'
+import { imprimirPreDespacho } from '@/lib/imprimirPreDespacho'
 import NuevoPedido from '@/components/NuevoPedido'
 
 interface OrderItem {
@@ -141,7 +142,16 @@ export default function OrdersPage() {
         },
         headers: { Authorization: `Bearer ${token}` },
       })
-      return res.data as { orders: OrderRow[]; total: number; pagina: number; paginas: number; porPagina: number }
+      return res.data as {
+        orders: OrderRow[]
+        total: number
+        pagina: number
+        paginas: number
+        porPagina: number
+        /** El pre-despacho de todo lo filtrado; `null` si son demasiados para sumarlos. */
+        resumen: { producto: string; formatos: number; unidades: number; pesoKg: number }[] | null
+        pesoTotal: number
+      }
     },
     enabled: !!token,
     // Se mantiene la página anterior mientras llega la nueva: si no, cada cambio deja la
@@ -152,6 +162,45 @@ export default function OrdersPage() {
   const orders = data?.orders ?? []
   const total = data?.total ?? 0
   const paginas = data?.paginas ?? 1
+  /**
+   * El PRE-DESPACHO, aparte y sólo cuando se abre.
+   *
+   * Sumarlo es leerse todos los pedidos filtrados con sus líneas; pedirlo junto con la
+   * lista la volvía lenta, y la lista se recarga con cada tecla del buscador.
+   */
+  const [verResumen, setVerResumen] = useState(false)
+  const { data: datosResumen, isFetching: cargandoResumen } = useQuery({
+    queryKey: ['orders-resumen', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, statusFilter, desde, hasta }],
+    queryFn: async () => {
+      const res = await axios.get('/api/orders', {
+        params: {
+          resumen: 1,
+          porPagina: 1,
+          ...(buscado ? { q: buscado } : {}),
+          ...(estado ? { estado } : {}),
+          ...(archivado ? { archivado } : {}),
+          ...(domicilio ? { domicilio } : {}),
+          ...(cotizado ? { cotizado } : {}),
+          ...(municipioFilter ? { municipio: municipioFilter } : {}),
+          ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
+          ...(statusFilter !== 'todos' ? { reparto: statusFilter } : {}),
+          ...(desde ? { desde } : {}),
+          ...(hasta ? { hasta } : {}),
+        },
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      return res.data as {
+        resumen: { producto: string; formatos: number; unidades: number; pesoKg: number }[] | null
+        pesoTotal: number
+        total: number
+      }
+    },
+    enabled: !!token && verResumen,
+  })
+
+  const resumen = datosResumen?.resumen ?? null
+  const pesoTotal: number = datosResumen?.pesoTotal ?? 0
 
   /** Con qué se puede filtrar. Sale de la base entera, no de la página que se ve. */
   const { data: facetas } = useQuery({
@@ -273,6 +322,14 @@ export default function OrdersPage() {
               Nuevo pedido
             </button>
           </div>
+          {/*
+            El conteo, en su PROPIA línea.
+            
+            Compartía fila con los filtros, y su texto cambia de largo al filtrar —«358
+            pedidos · desde el 27, del más nuevo al más viejo»—: al crecer, la fila se
+            reparte distinto y los desplegables se mueven debajo del ratón. Ése es el
+            salto que se veía al filtrar.
+          */}
           <div className="flex flex-wrap items-center gap-3">
             {/*
               El conteo DICE de qué días es y en qué orden viene.
@@ -281,7 +338,7 @@ export default function OrdersPage() {
               a más viejo— y eso se lee como que el filtro no se aplicó. Se aplicaba: son
               los del 27 EN ADELANTE. Decirlo aquí cuesta una línea y quita la duda.
             */}
-            <span className="text-sm text-gray-500">
+            <span className="w-full text-sm text-gray-500">
               {total.toLocaleString()} pedidos
               {(desde || hasta) && (
                 <span className="text-gray-400">
@@ -462,6 +519,80 @@ export default function OrdersPage() {
           desplegable. Ahora se mantiene lo que ya se está viendo, apagado, hasta que llega
           lo nuevo — y el indicador de arriba dice que se está trabajando.
         */}
+        {/*
+          EL PRE-DESPACHO de lo filtrado.
+
+          Filtrar por un día y una sucursal contesta «cuántos pedidos»; al almacén hay que
+          decirle CUÁNTO SACAR: empaques y unidades de cada producto. Se sacaba a mano
+          abriendo pedido por pedido.
+        */}
+        <details
+          className="bg-white rounded-2xl shadow-md p-4"
+          onToggle={(e) => setVerResumen((e.currentTarget as HTMLDetailsElement).open)}
+        >
+            <summary className="cursor-pointer text-sm font-semibold text-gray-700 flex items-center gap-2">
+              <Icon icon="mdi:clipboard-list-outline" className="text-primary" />
+              Pre-despacho de lo filtrado
+              {resumen && (
+                <span className="font-normal text-gray-500">
+                  · {resumen.length} producto(s) · {resumen.reduce((t, l) => t + l.formatos, 0)} empaques ·{' '}
+                  {pesoTotal.toFixed(1)} kg
+                </span>
+              )}
+              {cargandoResumen && <Icon icon="mdi:loading" className="animate-spin text-gray-400" />}
+              <button
+                type="button"
+                disabled={!resumen?.length}
+                onClick={(e) => {
+                  e.preventDefault()
+                  if (!resumen?.length) return
+                  imprimirPreDespacho({
+                    sucursal: sucursalId ? (orders[0]?.branch?.name ?? '') : 'Todas las sucursales',
+                    vehiculo: '',
+                    dia: desde && desde === hasta ? desde : undefined,
+                    pedidos: total,
+                    pesoKg: pesoTotal,
+                    lineas: resumen,
+                  })
+                }}
+                className="ml-auto flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <Icon icon="mdi:printer-outline" />Imprimir
+              </button>
+            </summary>
+
+            {!resumen && !cargandoResumen && (
+              <p className="mt-3 text-xs text-gray-500">
+                Son demasiados pedidos para sumarlos. Acotá por día o sucursal y sale.
+              </p>
+            )}
+
+            {resumen && (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase tracking-wide text-gray-500">
+                  <tr>
+                    <th className="text-left py-1">Producto</th>
+                    <th className="text-right py-1">Empaques</th>
+                    <th className="text-right py-1">Unidades</th>
+                    <th className="text-right py-1">kg</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {resumen.map((l) => (
+                    <tr key={l.producto} className="border-t">
+                      <td className="py-1.5 pr-3">{l.producto}</td>
+                      <td className="py-1.5 text-right font-mono font-semibold">{l.formatos}</td>
+                      <td className="py-1.5 text-right font-mono text-gray-600">{l.unidades}</td>
+                      <td className="py-1.5 text-right font-mono text-gray-600">{l.pesoKg ? l.pesoKg.toFixed(1) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            )}
+        </details>
+
         <div className={`bg-white rounded-2xl shadow-md overflow-x-auto transition-opacity ${isFetching && !isLoading ? 'opacity-60' : ''}`}>
           {isLoading ? (
             <div className="p-8 text-center text-gray-500 min-h-[24rem]">{t('common.loading')}</div>

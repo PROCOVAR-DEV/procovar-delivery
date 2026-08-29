@@ -33,6 +33,9 @@ async function main() {
   await prisma.customer.deleteMany()
   await prisma.vehicle.deleteMany()
   await prisma.savedOrigin.deleteMany()
+  // El catálogo cuelga del usuario dueño: si no se borra antes, borrar usuarios revienta
+  // por la clave ajena y la siembra se queda a medias sin decir por qué.
+  await prisma.product.deleteMany()
   await prisma.branch.deleteMany()
   await prisma.user.deleteMany()
   await prisma.settings.deleteMany()
@@ -181,6 +184,9 @@ async function main() {
             { name: 'CERVEZA PARRANDA 0.33L', quantity: 24, packs: 4, pesoKg: 3.2, pesoLineaKg: 12.8, weightKg: 12.8, unitWeightKg: 3.2, matched: true, weightSource: 'pedido' },
           ]
         : [{ name: 'PRODUCTO SIN PESO', quantity: 3, packs: 1, weightKg: 0, unitWeightKg: 0, matched: false, weightSource: 'none' }],
+      // La copia en texto de los nombres, que es por donde se busca «malta» sin tener que
+      // leerse el JSON de los cincuenta mil pedidos.
+      productosTexto: conPeso ? 'CERVEZA PARRANDA 0.33L' : 'PRODUCTO SIN PESO',
       meta: {
         folio: `PAP25-${1000 + i}`,
         cliente: { municipio: clientes[i].municipio },

@@ -212,6 +212,19 @@ export function buildOrderData(
     items: (Array.isArray(computed.items) && computed.items.length
       ? computed.items
       : (Array.isArray(input.items) ? input.items : [])) as unknown as Prisma.InputJsonValue,
+    /**
+     * Los nombres de los productos, en texto, para poder buscarlos.
+     *
+     * Es una copia de lo que va en `items`: dentro de un JSON no se puede buscar sin
+     * leerse el catálogo entero.
+     */
+    productosTexto: (Array.isArray(computed.items) && computed.items.length
+      ? computed.items
+      : (Array.isArray(input.items) ? input.items : []))
+      .map((i) => (i as { name?: string; description?: string }).name
+        ?? (i as { description?: string }).description ?? '')
+      .filter(Boolean)
+      .join(' · ') || null,
     notes: input.notes || null,
     // Un pedido SIN domicilio no lleva costo: se importa igual (hace falta para las rutas y
     // la capacidad del camión) pero con el precio en NULL, no en 0 ni con la base.

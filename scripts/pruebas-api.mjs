@@ -1070,4 +1070,79 @@ test('planificar NO ocupa el camión: sólo lo ocupa ponerla en curso', async ()
   await prisma.order.delete({ where: { id: creado.json.order.id } })
 })
 
-test.after(() => prisma.$disconnect())
+test('el PRE-DESPACHO se pide aparte y suma TODO lo filtrado', async () => {
+  /**
+   * Aparte a propósito: sumarlo es leerse todos los pedidos filtrados con sus líneas, y
+   * hacerlo en cada carga de la lista la volvía lenta —y la lista se recarga con cada
+   * tecla del buscador—.
+   */
+  const sinPedirlo = await listaPedidos('porPagina=5')
+
+  assert.equal(sinPedirlo.json.resumen, undefined, 'el resumen no puede venir sin pedirlo')
+
+  const r = await listaPedidos('porPagina=5&resumen=1')
+
+  assert.equal(r.status, 200)
+
+  if (r.json.resumen === null) {
+    // Con demasiados pedidos no se suma: se dice, en vez de dar media carga por buena.
+    assert.ok(r.json.total > r.json.resumenTope)
+    return
+  }
+
+  assert.ok(Array.isArray(r.json.resumen))
+  for (const l of r.json.resumen) {
+    assert.ok(l.producto, 'una línea sin producto')
+    // Empaques y unidades son cuentas DISTINTAS —cajas y botellas—: confundirlas
+    // multiplica la carga por sesenta.
+    assert.equal(typeof l.formatos, 'number')
+    assert.equal(typeof l.unidades, 'number')
+  }
+
+  // Y se cuenta sobre TODO lo filtrado, no sobre la página: media lista da media carga.
+  const unaPagina = r.json.orders.reduce(
+    (t, o) => t + (o.items ?? []).reduce((x, i) => x + (Number(i.packs) || 0), 0),
+    0,
+  )
+  const todo = r.json.resumen.reduce((t, l) => t + l.formatos, 0)
+
+  assert.ok(todo >= unaPagina, `el resumen (${todo}) no puede ser menor que una página (${unaPagina})`)
+})
+
+test('se puede buscar por PRODUCTO, no sólo por cliente', async () => {
+  const conItems = (await listaPedidos('porPagina=50')).json.orders.find((o) => (o.items ?? []).length)
+
+  if (!conItems) return
+
+  const nombre = (conItems.items[0].name || conItems.items[0].description || '').split(' ')[0]
+
+  if (!nombre) return
+
+  const r = await listaPedidos(`q=${encodeURIComponent(nombre)}&porPagina=10`)
+
+  assert.equal(r.status, 200)
+  // Es la pregunta del despacho: «¿qué pedidos llevan malta?». Antes había que abrirlos
+  // uno a uno para saberlo.
+  assert.ok(r.json.total > 0, `buscar «${nombre}» no encontró ningún pedido`)
+})
+
+/**
+ * Las pruebas recogen lo suyo.
+ *
+ * Cada pasada dejaba una «Ruta de prueba» puesta: llegaron a acumularse veintitrés, y
+ * empujaron fuera de la primera página a las rutas de la siembra — con lo que una prueba
+ * de navegador empezó a fallar diciendo que las rutas no salen separadas por sucursal.
+ * El fallo no estaba en el código: estaba en la basura que dejaban las pruebas.
+ */
+test.after(async () => {
+  const rutas = await prisma.route.findMany({ where: { name: 'Ruta de prueba' }, select: { id: true } })
+
+  if (rutas.length) {
+    const ids = rutas.map((r) => r.id)
+
+    await prisma.order.updateMany({ where: { routeId: { in: ids } }, data: { routeId: null, stopOrder: null } })
+    await prisma.route.deleteMany({ where: { id: { in: ids } } })
+  }
+  await prisma.order.deleteMany({ where: { source: 'manual', customerName: { startsWith: 'B0001' } } })
+  await prisma.$disconnect()
+})

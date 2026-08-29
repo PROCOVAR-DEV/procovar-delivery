@@ -33,7 +33,13 @@ interface Props {
   /** Lo que se lee al pasar el ratón; también sirve de nombre accesible. */
   titulo?: string
   className?: string
-  /** A partir de cuántas opciones aparece el buscador. */
+  /**
+   * A partir de cuántas opciones aparece el buscador.
+   *
+   * Cuatro. Estaba en siete y eso dejaba sin buscador listas de cinco o seis —vehículos,
+   * almacenes, sucursales— donde ya hay que leer para encontrar. Con menos de cuatro se
+   * ve todo de un vistazo y la caja sólo estorba.
+   */
   desdeCuantas?: number
   /**
    * Un icono DENTRO del botón.
@@ -53,7 +59,7 @@ export default function Selector({
   todos,
   titulo,
   className = '',
-  desdeCuantas = 7,
+  desdeCuantas = 4,
   icono,
 }: Props) {
   const [abierto, setAbierto] = useState(false)
