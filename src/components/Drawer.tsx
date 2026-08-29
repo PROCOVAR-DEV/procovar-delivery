@@ -34,6 +34,9 @@ interface Props {
   children: React.ReactNode
 }
 
+/** Cuántos cajones hay abiertos ahora mismo. Ver el bloqueo del desplazamiento abajo. */
+let abiertos = 0
+
 const ANCHOS: Record<NonNullable<Props['ancho']>, string> = {
   md: 'sm:max-w-md',
   lg: 'sm:max-w-2xl',
@@ -42,18 +45,32 @@ const ANCHOS: Record<NonNullable<Props['ancho']>, string> = {
 }
 
 export default function Drawer({ abierto, alCerrar, titulo, subtitulo, ancho = 'lg', pie, children }: Props) {
-  // Escape cierra, y mientras está abierto la página de detrás no se desplaza: si no, al
-  // llegar al final del cajón sigue la lista de abajo y se pierde el sitio donde se estaba.
+  /**
+   * Escape cierra, y mientras hay un cajón abierto la página de detrás no se desplaza.
+   *
+   * # Por qué se CUENTAN los cajones abiertos
+   *
+   * Antes cada cajón guardaba el `overflow` que encontró y lo devolvía al cerrarse. Con
+   * dos cajones montados a la vez —el detalle del pedido y el de nuevo pedido viven los
+   * dos en la misma pantalla— el segundo guardaba el `hidden` que había puesto el
+   * primero, y al cerrarse lo dejaba puesto PARA SIEMPRE: la página entera se quedaba sin
+   * poder bajar y no había forma de volver atrás salvo recargando.
+   *
+   * Con un contador, el bloqueo se quita cuando se cierra el último, y se quita del todo:
+   * se borra la propiedad en vez de restaurar un valor que puede ser el de otro.
+   */
   useEffect(() => {
     if (!abierto) return
 
     const tecla = (e: KeyboardEvent) => { if (e.key === 'Escape') alCerrar() }
-    const antes = document.body.style.overflow
 
+    abiertos += 1
     document.body.style.overflow = 'hidden'
     document.addEventListener('keydown', tecla)
+
     return () => {
-      document.body.style.overflow = antes
+      abiertos = Math.max(0, abiertos - 1)
+      if (abiertos === 0) document.body.style.removeProperty('overflow')
       document.removeEventListener('keydown', tecla)
     }
   }, [abierto, alCerrar])

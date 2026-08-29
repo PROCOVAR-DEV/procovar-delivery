@@ -62,7 +62,13 @@ export function htmlPreDespacho(d: PreDespacho): string {
   tfoot td { font-weight: 700; border-top: 2px solid #333 }
   .firma { margin-top: 34px; display: flex; gap: 40px; color: #444 }
   .firma div { flex: 1; border-top: 1px solid #999; padding-top: 4px; font-size: 11px }
-  @media print { body { margin: 12mm } }
+  .acciones { position: fixed; right: 16px; bottom: 16px; display: flex; gap: 8px }
+  .acciones button {
+    font: 500 13px system-ui, sans-serif; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid #bbb; background: #fff; cursor: pointer;
+  }
+  .acciones button:first-child { background: #0b3d5c; color: #fff; border-color: #0b3d5c }
+  @media print { body { margin: 12mm } .acciones { display: none } }
 </style></head>
 <body>
   <div class="cab">
@@ -85,9 +91,29 @@ export function htmlPreDespacho(d: PreDespacho): string {
   </table>
 
   <div class="firma"><div>Sacó del almacén</div><div>Recibió (chofer)</div></div>
+
+  <!--
+    El botón de imprimir va DENTRO de la vista previa y no se imprime.
+
+    Antes se abría el diálogo de impresión de golpe: no había forma de mirar la hoja
+    antes —comprobar que están todos los productos y que las cantidades cuadran— sin
+    cancelar el diálogo primero.
+  -->
+  <div class="acciones">
+    <button onclick="window.print()">Imprimir</button>
+    <button onclick="window.close()">Cerrar</button>
+  </div>
 </body></html>`
 }
 
+/**
+ * Abre la hoja en una ventana aparte, PARA MIRARLA.
+ *
+ * No lanza el diálogo de impresión: la hoja se revisa antes —que estén todos los
+ * productos, que las cantidades cuadren— y se imprime desde el botón de la propia vista.
+ * Lanzarlo de golpe obligaba a cancelar el diálogo para poder leer lo que se iba a
+ * imprimir.
+ */
 export function imprimirPreDespacho(d: PreDespacho): void {
   const v = window.open('', '_blank', 'width=900,height=700')
 
@@ -95,7 +121,4 @@ export function imprimirPreDespacho(d: PreDespacho): void {
   v.document.write(htmlPreDespacho(d))
   v.document.close()
   v.focus()
-  // Un respiro para que pinte antes de abrir el diálogo: sin él, algunos navegadores
-  // imprimen la hoja en blanco.
-  setTimeout(() => v.print(), 250)
 }

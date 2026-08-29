@@ -1769,7 +1769,7 @@ export default function RoutesPage() {
                             })}
                             className="flex items-center gap-1 text-xs text-primary hover:underline disabled:text-gray-400 disabled:no-underline"
                           >
-                            <Icon icon="mdi:printer-outline" />Imprimir
+                            <Icon icon="mdi:file-eye-outline" />Ver e imprimir
                           </button>
                         </div>
 

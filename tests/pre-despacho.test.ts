@@ -43,6 +43,16 @@ test('lleva de dónde sale, en qué va y de qué día es', () => {
   assert.match(html, /Sacó del almacén/)
 })
 
+test('la hoja se puede MIRAR antes de imprimir, y esos botones no se imprimen', () => {
+  const html = htmlPreDespacho(hoja)
+
+  // Se abre para revisarla —que estén todos los productos y cuadren las cantidades— y se
+  // imprime desde ahí. Antes saltaba el diálogo de impresión encima y había que
+  // cancelarlo para poder leer lo que se iba a imprimir.
+  assert.match(html, /window\.print\(\)/)
+  assert.match(html, /@media print[\s\S]*acciones \{ display: none \}/)
+})
+
 test('un producto con comillas o signos no rompe la hoja', () => {
   // Los nombres vienen de Ventra y llevan de todo. Si no se escapan, la hoja sale a
   // medias y nadie sabe qué falta.

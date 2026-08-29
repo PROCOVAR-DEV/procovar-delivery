@@ -815,6 +815,36 @@ test('si el cliente no está, se crea dentro del propio pedido', async () => {
   await cerrar(ctx)
 })
 
+test('tras cerrar un cajón, la página vuelve a poder bajar', async () => {
+  /**
+   * El cajón bloquea el desplazamiento de la página mientras está abierto —si no, al
+   * llegar a su final sigue la lista de detrás—. Cada uno guardaba el valor que encontraba
+   * y lo devolvía al cerrarse: con dos cajones en la misma pantalla, el segundo guardaba
+   * el «hidden» del primero y lo dejaba puesto PARA SIEMPRE. La lista de pedidos se
+   * quedaba sin poder bajar y sólo se arreglaba recargando.
+   */
+  const { ctx, page } = await conSesion()
+
+  await page.goto(`${BASE}/orders`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('table tbody tr')
+
+  // Se abre uno, se cierra; se abre el otro, se cierra.
+  await page.locator('table tbody tr').first().click()
+  await page.waitForSelector('[role="dialog"]')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+
+  await page.click('button:has-text("Nuevo pedido")')
+  await page.waitForSelector('[role="dialog"]')
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(400)
+
+  const bloqueado = await page.evaluate(() => getComputedStyle(document.body).overflowY)
+
+  assert.notEqual(bloqueado, 'hidden', 'la página se quedó sin poder desplazarse')
+  await cerrar(ctx)
+})
+
 test('el alta de un cliente abre en cajón, no empujando la lista', async () => {
   const { ctx, page } = await conSesion()
 

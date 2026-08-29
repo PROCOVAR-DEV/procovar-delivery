@@ -25,6 +25,15 @@ const AFECTA: Record<string, string[]> = {
   clientes: ['customers'],
 }
 
+/**
+ * Cada cuánto, como mucho, se hace caso a los avisos.
+ *
+ * El espejo importa por lotes y avisa por cada uno: sin freno, la pantalla se recargaba
+ * varias veces seguidas, los desplegables se cerraban solos y no se podía ni escribir en
+ * un filtro. Se juntan los avisos que llegan seguidos y se atiende uno.
+ */
+const FRENO_MS = 15000
+
 export default function AvisosEnVivo() {
   const queryClient = useQueryClient()
   const token = useAppStore((e) => e.token)
@@ -33,6 +42,23 @@ export default function AvisosEnVivo() {
     if (!token || typeof window === 'undefined') return
 
     const fuente = new EventSource('/api/eventos')
+    const pendientes = new Set<string>()
+    let temporizador: ReturnType<typeof setTimeout> | null = null
+
+    const atender = () => {
+      temporizador = null
+      const claves = new Set<string>()
+
+      for (const tipo of pendientes) for (const c of AFECTA[tipo] ?? []) claves.add(c)
+      pendientes.clear()
+
+      if (claves.size === 0) {
+        // Un aviso que no se sabe de qué es: se refresca lo que se está mirando y ya.
+        void queryClient.invalidateQueries({ type: 'active' })
+        return
+      }
+      for (const clave of claves) void queryClient.invalidateQueries({ queryKey: [clave] })
+    }
 
     fuente.addEventListener('cambio', (e) => {
       let tipo = ''
@@ -41,14 +67,9 @@ export default function AvisosEnVivo() {
         tipo = (JSON.parse((e as MessageEvent).data) as { tipo?: string }).tipo ?? ''
       } catch { /* un aviso ilegible no puede tumbar la pantalla */ }
 
-      const claves = AFECTA[tipo] ?? []
-
-      if (claves.length === 0) {
-        // Un aviso que no se sabe de qué es: se refresca lo que se está mirando y ya.
-        void queryClient.invalidateQueries({ type: 'active' })
-        return
-      }
-      for (const clave of claves) void queryClient.invalidateQueries({ queryKey: [clave] })
+      pendientes.add(tipo)
+      // Se juntan los que llegan seguidos: el espejo avisa por cada lote que importa.
+      if (!temporizador) temporizador = setTimeout(atender, FRENO_MS)
     })
 
     /**
@@ -60,7 +81,10 @@ export default function AvisosEnVivo() {
      */
     fuente.addEventListener('sin-vivo', () => fuente.close())
 
-    return () => fuente.close()
+    return () => {
+      if (temporizador) clearTimeout(temporizador)
+      fuente.close()
+    }
   }, [token, queryClient])
 
   return null

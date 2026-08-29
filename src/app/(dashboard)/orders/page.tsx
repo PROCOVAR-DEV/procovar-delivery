@@ -584,7 +584,7 @@ export default function OrdersPage() {
                 }}
                 className="ml-auto flex items-center gap-1 text-xs text-primary hover:underline"
               >
-                <Icon icon="mdi:printer-outline" />Imprimir
+                <Icon icon="mdi:file-eye-outline" />Ver e imprimir
               </button>
             </summary>
 
