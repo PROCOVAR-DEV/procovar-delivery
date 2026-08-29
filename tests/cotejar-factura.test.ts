@@ -93,10 +93,26 @@ test('el mismo cliente escrito de dos formas se reconoce', () => {
   assert.ok(mismoCliente('24 HORAS (CALZADA DE SAN MIGUEL)', '24 HORAS (CALZADA DE SAN MIGUEL)'))
 })
 
+test('los casos REALES de producción, que son los que engañan', () => {
+  // Salieron del cotejo de verdad: la factura le añade el dueño, un prefijo o una ese.
+  assert.ok(mismoCliente('BAVARIA', 'BAVARIA   JUAN CARLOS FEDERICK'), 'la factura lleva el dueño detrás')
+  assert.ok(mismoCliente('LOS ORLAN', 'LOS ORLANS'), 'una ese de diferencia')
+  assert.ok(mismoCliente('ABEDUL', 'Mipyme Abedul'), 'la factura lleva «Mipyme» delante')
+  assert.ok(mismoCliente('BAR EL 40', 'BAR EL 40 CAMILO'))
+})
+
 test('pero NO confunde dos negocios distintos', () => {
   // Con una palabra en común, «CAFETERIA ODALIS» casaría con cualquier otra cafetería y
   // el camión saldría con la mercancía de otro cliente.
   assert.equal(mismoCliente('CAFETERIA ODALIS', 'CAFETERIA DALIZ'), false)
-  assert.equal(mismoCliente('MI REINA ROXANA', 'MI REINA'), false, 'el corto tiene que estar ENTERO en el largo')
+  // «MI REINA» / «MI REINA ROXANA» SÍ se emparejan, y es lo correcto: es el mismo patrón
+  // que «BAVARIA» / «BAVARIA JUAN CARLOS FEDERICK» — el negocio y su dueño. Lo que no
+  // puede pasar es emparejar por una palabra genérica.
+  assert.ok(mismoCliente('MI REINA ROXANA', 'MI REINA'))
   assert.equal(mismoCliente('14 KILATES', 'A LO CUBANO'), false)
+  // «CAFETERIA» y «MERCADITO» no nombran a nadie: media lista empieza así.
+  assert.equal(mismoCliente('CAFETERIA LA RUBIA', 'CAFETERIA LA GRECO'), false)
+  assert.equal(mismoCliente('LA CELESTIAL', 'CAFETERIA LA ANTILLANA'), false)
+  // Y un cambio de letra tampoco: «VIDA A TU DIA» no es «VIDA A TU VIDA».
+  assert.equal(mismoCliente('VIDA A TU DIA', 'VIDA A TU VIDA'), false)
 })
