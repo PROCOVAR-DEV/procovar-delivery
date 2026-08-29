@@ -26,6 +26,15 @@ export interface FiltrosPedido {
   vendedor: string
   /** Id de la sucursal. Acota ADEMÁS del alcance, nunca en su lugar. */
   branchId: string
+  /**
+   * El estado de REPARTO, que es de delivery y no de PEDIDO:
+   * `pendiente` (sin ruta) | `reparto` (en una) | `entregado`.
+   *
+   * Se filtraba sobre la página que se estaba viendo, así que el conteo decía 358 y la
+   * tabla salía vacía: los de esa página no estaban en ninguna ruta, y los que sí lo
+   * estaban vivían en otra página que nunca se llegaba a mirar.
+   */
+  reparto: string
   /** Rango por la FECHA DEL PEDIDO, `YYYY-MM-DD`. */
   desde: string
   hasta: string
@@ -43,6 +52,7 @@ export function leerFiltros(params: URLSearchParams): FiltrosPedido {
     municipio: t('municipio'),
     vendedor: t('vendedor'),
     branchId: t('branchId'),
+    reparto: t('reparto'),
     desde: t('desde'),
     hasta: t('hasta'),
   }
@@ -146,6 +156,31 @@ export function whereDeFiltros(f: FiltrosPedido): Prisma.OrderWhereInput {
    * `AND` de los dos no deja pasar nada.
    */
   if (f.branchId) condiciones.push({ branchId: f.branchId })
+
+  /**
+   * El estado de REPARTO, en la base y no sobre la página.
+   *
+   *   pendiente  — no está en ninguna ruta todavía.
+   *   reparto    — está en una, y esa ruta no ha terminado.
+   *   entregado  — tiene fecha de entrega, o su ruta está completada.
+   *
+   * Filtrarlo sobre la página que se veía era lo que dejaba la tabla vacía con el conteo
+   * diciendo 358: los de esa página no estaban en ninguna ruta, y los que sí estaban
+   * vivían en otra que nunca se llegaba a mirar.
+   */
+  if (f.reparto === 'pendiente') condiciones.push({ routeId: null, deliveredAt: null })
+  if (f.reparto === 'reparto') {
+    condiciones.push({
+      routeId: { not: null },
+      deliveredAt: null,
+      route: { is: { status: { not: 'completed' } } },
+    })
+  }
+  if (f.reparto === 'entregado') {
+    condiciones.push({
+      OR: [{ deliveredAt: { not: null } }, { route: { is: { status: 'completed' } } }],
+    })
+  }
 
   const fecha = porFecha(f)
 

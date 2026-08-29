@@ -46,7 +46,15 @@ function arg(name, def = undefined) {
 }
 const ONCE = !!arg('once', false);
 const RECOMPUTE = !!arg('recompute', false); // recotiza TODOS (no solo pendientes) y reescribe el costo
-const POLL = arg('poll') ? parseInt(arg('poll'), 10) : 300000;   // 5 min
+/**
+ * Cada minuto, no cada cinco.
+ *
+ * El costo del domicilio lo pone el repartidor desde Entrega y hasta que el espejo no
+ * pasa, aquí sigue diciendo «sin cotizar». Cinco minutos mirando una pantalla que no
+ * cambia se leen como que está roto. El ciclo es barato —lo incremental casi siempre
+ * trae cero filas—, y lo caro (el barrido del histórico) tiene su propio freno abajo.
+ */
+const POLL = arg('poll') ? parseInt(arg('poll'), 10) : 60000;   // 1 min
 
 const PEDIDO_API_URL = process.env.PEDIDO_API_URL || 'http://localhost:8400';
 const DELIVERY_URL = process.env.DELIVERY_URL || 'http://localhost:3002';
@@ -510,6 +518,34 @@ async function syncCatalogo() {
   return r?.saltado ? null : r;
 }
 
+/**
+ * Los RECIÉN COTIZADOS, en cada vuelta.
+ *
+ * Es lo único que la gente mira esperando a que cambie: se cotiza en el teléfono y aquí
+ * tiene que aparecer. El incremental por `since` ya los traería, pero sólo cuando la
+ * marca de agua avanza; esto pregunta directamente por los que llevan costo y se movieron
+ * hace poco, que son cuatro filas y llegan en la vuelta siguiente.
+ */
+const VENTANA_COTIZADOS_MIN = Number(process.env.SYNC_COTIZADOS_MIN || 30);
+
+async function cotizadosRecientes() {
+  const q = parametrosBase();
+
+  q.set('soloDomicilio', '1');
+  q.set('conCosto', '1');
+  q.set('since', new Date(Date.now() - VENTANA_COTIZADOS_MIN * 60000).toISOString());
+  q.set('limit', '500');
+
+  const orders = await pedirOrders(q);
+
+  if (!orders.length) return 0;
+  return guardarLote(orders, 'recién cotizados');
+}
+
+/** El barrido del histórico es lo caro: no en cada vuelta. */
+const BARRIDO_CADA_MS = Number(process.env.SYNC_BARRIDO_CADA_MS || 10 * 60 * 1000);
+let ultimoBarrido = 0;
+
 async function cycle() {
   if (!KEY) throw new Error('Falta SERVICE_API_KEY.');
 
@@ -552,6 +588,17 @@ async function cycle() {
   }
 
   /**
+   * 1.b Los recién cotizados. Es lo que se está mirando en pantalla.
+   */
+  try {
+    const n = await cotizadosRecientes();
+
+    if (n) log(`${n} pedidos recién cotizados`);
+  } catch (e) {
+    log('no se pudieron traer los recién cotizados:', e.message);
+  }
+
+  /**
    * 2. Una repasada corta a los últimos días, siempre.
    *
    * Tapa el único agujero del sincronizado incremental: un pedido cambiado sin que PEDIDO
@@ -566,7 +613,17 @@ async function cycle() {
    * Un trozo por ciclo, no el año de una sentada: lo reciente ya está desde el primer
    * ciclo, y si el proceso se reinicia a mitad la próxima vuelta sigue por donde iba —lo
    * dice el pedido más antiguo que hay guardado, no un contador que se puede adelantar—.
+   *
+   * Y no en CADA vuelta: ahora el ciclo pasa cada minuto para que el costo del domicilio
+   * aparezca pronto, y pedirle a PEDIDO treinta días de histórico cada minuto es cargarlo
+   * por gusto — lo viejo no se mueve.
    */
+  if (Date.now() - ultimoBarrido < BARRIDO_CADA_MS) {
+    if (total) log(`${total} pedidos guardados`);
+    return;
+  }
+  ultimoBarrido = Date.now();
+
   const barrido = await posicionDelBarrido();
 
   if (barrido) {

@@ -288,6 +288,13 @@ model Route {
   // Sucursal de la ruta (para el scoping multi-sucursal).
   branchId        String?
   branch          Branch?  @relation("BranchRoutes", fields: [branchId], references: [id])
+  /// Cuándo salió y cuándo volvió. Con las dos se sabe CUÁNTO SE DEMORÓ.
+  ///
+  /// No se deduce de `createdAt` ni de `updatedAt`: la ruta se arma la noche anterior y
+  /// se toca al cambiarle cualquier cosa. La salida se marca al despacharla y el regreso
+  /// al cerrarla, sin que nadie tenga que apuntar una hora.
+  startedAt       DateTime?
+  finishedAt      DateTime?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   optimized       Boolean  @default(false)

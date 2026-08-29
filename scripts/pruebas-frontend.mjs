@@ -657,6 +657,29 @@ test('el asistente de rutas es un cajón a pantalla completa y va paso a paso', 
   assert.equal(/Pedidos de cliente/.test(texto), false, 'el paso 4 sale antes de tiempo')
   assert.equal(/Punto de partida/.test(texto), false, 'el paso 2 sale antes de tiempo')
 
+  /**
+   * Y al avanzar se ve UNO, no la pila.
+   *
+   * Quedaban los hechos plegados arriba y el siguiente debajo: con dos completados había
+   * cuatro cajas en pantalla para rellenar un campo. Dónde se está lo dice la barra.
+   */
+  await elegir(page, 'Sucursal de la ruta', 'La Habana')
+  await page.click('[role="dialog"] button:has-text("Siguiente")')
+  await page.waitForTimeout(600)
+
+  // El texto del paso 1 (no el `title` del desplegable, que es un atributo).
+  const delUno = /serán los de esta sucursal/
+
+  const enElDos = await page.locator('[role="dialog"]').innerText()
+
+  assert.equal(delUno.test(enElDos), false, 'el paso 1 sigue puesto estando en el 2')
+  assert.match(enElDos, /Punto de partida/)
+
+  // Y se puede volver al anterior desde la barra, que es lo único que queda para corregir.
+  await page.click('[role="dialog"] li button:has-text("Sucursal")')
+  await page.waitForTimeout(400)
+  assert.match(await page.locator('[role="dialog"]').innerText(), delUno)
+
   // Y el botón de generar vive en el pie, siempre a la vista: estaba al final del todo,
   // detrás de la lista entera de pedidos.
   assert.ok(await page.locator('[role="dialog"] button:has-text("Generar")').count() > 0)

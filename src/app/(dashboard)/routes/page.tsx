@@ -16,6 +16,7 @@ import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
 import Drawer from '@/components/Drawer'
+import { duracionDeRuta, enlaceGoogleMaps, horasDeRuta, paradasFueraDelEnlace } from '@/lib/rutaCompartir'
 
 const MapComponent = dynamic(() => import('@/components/MapComponent'), { ssr: false })
 
@@ -55,6 +56,9 @@ interface Route {
   routeCode?: string | null
   status: string
   totalDistance: number
+  /** Cuándo salió y cuándo volvió: con las dos se sabe cuánto se demoró. */
+  startedAt?: string | null
+  finishedAt?: string | null
   totalWeight: number
   totalPrice: number
   originAddress?: string | null
@@ -131,6 +135,7 @@ export default function RoutesPage() {
   const [selectedVehicleId, setSelectedVehicleId] = useState('')
   const [deliveryDate, setDeliveryDate] = useState('')
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
+  const [enlaceCopiado, setEnlaceCopiado] = useState(false)
   /**
    * Los errores salen como aviso emergente, no dentro del modal.
    *
@@ -177,7 +182,17 @@ export default function RoutesPage() {
   // Existing available orders to pick for the route
   const [orderSearch, setOrderSearch] = useState('')
   const [availMunicipio, setAvailMunicipio] = useState('todos')
-  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(new Set())
+  /**
+   * Los pedidos elegidos, CON su ficha — no sólo sus identificadores.
+   *
+   * Se guardaban sólo los ids y el peso se sacaba de la lista que se estaba viendo. Al
+   * cambiar de día o de filtro, los elegidos desaparecían de esa lista y con ellos su
+   * peso: el camión parecía vacío, dejaba seguir metiendo por encima de su capacidad, y
+   * al generar la ruta el servidor rechazaba unos pedidos que la pantalla ya no sabía
+   * que llevaba. Guardando la ficha, lo elegido pesa lo mismo se mire lo que se mire.
+   */
+  const [elegidos, setElegidos] = useState<Map<string, AvailableOrder>>(new Map())
+  const selectedOrderIds = useMemo(() => new Set(elegidos.keys()), [elegidos])
 
   // Accordion: which step of the create modal is expanded (1=depot, 2=vehicle, 3=orders)
   const [expandedStep, setExpandedStep] = useState(1)
@@ -455,7 +470,7 @@ export default function RoutesPage() {
     setNewOriginName('')
     setExpandedStep(1)
     setApiError('')
-    setSelectedOrderIds(new Set())
+    setElegidos(new Map())
     setOrderSearch('')
     setAvailMunicipio('todos')
   }
@@ -492,7 +507,7 @@ export default function RoutesPage() {
   )
 
   // Selected existing orders (primary flow)
-  const selectedOrders = (availableOrders as AvailableOrder[]).filter((o) => selectedOrderIds.has(o.id))
+  const selectedOrders = [...elegidos.values()]
   const selectedWeight = selectedOrders.reduce((s, o) => s + (o.weight || 0), 0)
   const selectedOverCapacity = selectedVehicle != null && selectedWeight > selectedVehicle.capacity
   const hasSelectedOrders = selectedOrderIds.size > 0
@@ -503,11 +518,12 @@ export default function RoutesPage() {
   const isFull = selectedVehicle != null && selectedWeight >= capacity
   const capacityBarColor = capacityPct >= 100 ? 'bg-red-500' : capacityPct >= 80 ? 'bg-amber-500' : 'bg-green-500'
 
-  const toggleOrder = (id: string) => {
-    setSelectedOrderIds((prev) => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
+  const toggleOrder = (pedido: AvailableOrder) => {
+    setElegidos((prev) => {
+      const next = new Map(prev)
+
+      if (next.has(pedido.id)) next.delete(pedido.id)
+      else next.set(pedido.id, pedido)
       return next
     })
   }
@@ -969,6 +985,64 @@ export default function RoutesPage() {
                     {aggregatedItems.length > 0 && (
                       <span className="flex items-center gap-1"><Icon icon="mdi:package-variant-closed" />{t('routes.totalLoad')}: {aggregatedItems.reduce((s, i) => s + i.quantity, 0)}</span>
                     )}
+
+                    {/*
+                      CUÁNTO SE DEMORÓ.
+                      
+                      Se marca sola: la salida al despacharla y el regreso al cerrarla. Es
+                      la pregunta del día siguiente —«¿cuánto tardó el camión?»— y hasta
+                      ahora no había forma de contestarla.
+                    */}
+                    {duracionDeRuta(selectedRoute) && (
+                      <span className="flex items-center gap-1" title={horasDeRuta(selectedRoute)}>
+                        <Icon icon="mdi:timer-outline" />{duracionDeRuta(selectedRoute)}
+                      </span>
+                    )}
+
+                    {/*
+                      La ruta EN GOOGLE MAPS, para mandársela al chofer.
+                      
+                      Va con el almacén de origen, las paradas en el orden en que se
+                      optimizaron y la vuelta al almacén. Se abre en el móvil con la
+                      navegación de siempre, que es lo que ya sabe usar.
+                    */}
+                    {enlaceGoogleMaps(selectedRoute) && (
+                      <span className="flex items-center gap-2">
+                        <a
+                          href={enlaceGoogleMaps(selectedRoute) as string}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="flex items-center gap-1 font-medium text-primary hover:underline"
+                        >
+                          <Icon icon="mdi:google-maps" />Abrir en Google Maps
+                        </a>
+                        {/*
+                          Copiar el enlace es lo que se usa de verdad: quien despacha se
+                          lo manda por WhatsApp al que reparte, y éste lo abre con la
+                          navegación que ya sabe usar.
+                        */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void navigator.clipboard.writeText(enlaceGoogleMaps(selectedRoute) as string)
+                            setEnlaceCopiado(true)
+                            setTimeout(() => setEnlaceCopiado(false), 2500)
+                          }}
+                          className="flex items-center gap-1 text-gray-500 hover:text-gray-700"
+                        >
+                          <Icon icon={enlaceCopiado ? 'mdi:check' : 'mdi:content-copy'} />
+                          {enlaceCopiado ? 'copiado' : 'copiar enlace'}
+                        </button>
+                        {/* Si la ruta tiene más paradas de las que admite Google, se DICE:
+                            un enlace que se come cinco paradas en silencio manda al chofer
+                            a dar media vuelta. */}
+                        {paradasFueraDelEnlace(selectedRoute) > 0 && (
+                          <span className="text-amber-600">
+                            (Google admite 25 paradas: {paradasFueraDelEnlace(selectedRoute)} quedan fuera del enlace)
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </div>
                   <div className="flex-1 min-h-0">
                     {mapStops.length > 0 ? (
@@ -1048,24 +1122,36 @@ export default function RoutesPage() {
                 { n: 4, nombre: 'Pedidos', hecho: selectedOrderIds.size > 0 },
               ].map((p) => (
                 <li key={p.n} className="flex-1">
-                  <div
-                    className={`h-1 rounded-full transition-colors ${
-                      p.hecho ? 'bg-green-600' : expandedStep === p.n ? 'bg-primary' : 'bg-gray-200'
-                    }`}
-                  />
-                  <span
-                    className={`mt-1 block text-[11px] truncate ${
-                      expandedStep === p.n ? 'font-semibold text-gray-800' : 'text-gray-400'
-                    }`}
+                  {/* Volver a un paso ya hecho: como sólo se pinta el actual, ésta es la
+                      forma de corregir el de antes sin cancelar y empezar de cero. */}
+                  <button
+                    type="button"
+                    disabled={!p.hecho && expandedStep !== p.n}
+                    onClick={() => setExpandedStep(p.n)}
+                    className="w-full text-left disabled:cursor-default"
+                    title={p.hecho ? `Volver a ${p.nombre}` : p.nombre}
                   >
-                    {p.nombre}
-                  </span>
+                    <div
+                      className={`h-1 rounded-full transition-colors ${
+                        p.hecho ? 'bg-green-600' : expandedStep === p.n ? 'bg-primary' : 'bg-gray-200'
+                      }`}
+                    />
+                    <span
+                      className={`mt-1 block text-[11px] truncate ${
+                        expandedStep === p.n ? 'font-semibold text-gray-800' : 'text-gray-400'
+                      }`}
+                    >
+                      {p.nombre}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ol>
 
             <div className="space-y-6">
 
+              {expandedStep === 1 && (
+              <>
               {/*
                 Paso 1: la sucursal.
                 
@@ -1117,15 +1203,22 @@ export default function RoutesPage() {
                   </div>
                 )}
               </div>
+              </>
+              )}
 
               {/*
-                Los pasos aparecen SEGÚN se llega a ellos.
+                UN paso a la vez.
+
+                Se pinta SÓLO el que toca. Estaban todos —los hechos plegados arriba y el
+                siguiente debajo—, así que con dos completados había cuatro cajas en
+                pantalla para rellenar un campo. Dónde se está y qué falta lo dice la barra
+                de arriba, y por ahí se vuelve a uno anterior.
 
                 Estaban los cuatro desde el principio, tres de ellos apagados y sin poder
                 pulsarse: cuatro cajas grises que no dicen qué hacer. Ahora sale el que
                 toca, y los ya hechos se quedan arriba plegados para poder volver.
               */}
-              {sucursalRuta && expandedStep >= 2 && (
+              {sucursalRuta && expandedStep === 2 && (
               <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
@@ -1229,7 +1322,7 @@ export default function RoutesPage() {
               )}
 
               {/* Step 3 — vehicle (required) + name */}
-              {depotSet && expandedStep >= 3 && (
+              {depotSet && expandedStep === 3 && (
               <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
@@ -1305,7 +1398,7 @@ export default function RoutesPage() {
               )}
 
               {/* Step 4 — client orders */}
-              {depotSet && selectedVehicleId && expandedStep >= 4 && (
+              {depotSet && selectedVehicleId && expandedStep === 4 && (
               <div className="border rounded-xl overflow-hidden">
                 <button
                   type="button"
@@ -1525,7 +1618,7 @@ export default function RoutesPage() {
                                   type="checkbox"
                                   checked={checked}
                                   disabled={blocked}
-                                  onChange={() => toggleOrder(o.id)}
+                                  onChange={() => toggleOrder(o)}
                                   className="w-4 h-4 accent-blue-600 shrink-0 disabled:cursor-not-allowed"
                                 />
                                 <div className="flex-1 min-w-0">
@@ -1564,7 +1657,28 @@ export default function RoutesPage() {
                       </div>
                       {hasSelectedOrders && (
                         <div className="flex items-center justify-between mt-2 text-xs">
-                          <span className="font-medium text-gray-600">{t('routes.selectedCount', { n: selectedOrderIds.size })}</span>
+                          <span className="font-medium text-gray-600">
+                            {t('routes.selectedCount', { n: selectedOrderIds.size })}
+                            {/*
+                              Los que ya no salen con el filtro puesto SIGUEN en la ruta.
+                              
+                              Al cambiar de día desaparecían de la lista y parecía que se
+                              habían soltado: no era así —seguían contando y pesando—, y
+                              esa diferencia entre lo que se ve y lo que se lleva es la
+                              que hacía que el camión se pasara de capacidad sin avisar.
+                            */}
+                            {(() => {
+                              const fuera = selectedOrders.filter(
+                                (e) => !(availableOrders as AvailableOrder[]).some((o) => o.id === e.id),
+                              ).length
+
+                              return fuera > 0 ? (
+                                <span className="ml-1 text-gray-400">
+                                  ({fuera} de otro día o filtro, siguen contando)
+                                </span>
+                              ) : null
+                            })()}
+                          </span>
                           <span className={selectedOverCapacity ? 'text-amber-600 font-medium' : 'text-gray-600'}>
                             {selectedWeight.toFixed(1)} / {selectedVehicle ? selectedVehicle.capacity : '—'} kg
                           </span>

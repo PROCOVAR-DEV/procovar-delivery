@@ -11,6 +11,27 @@ import {
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * Las horas de salida y regreso que corresponden a un cambio de estado.
+ *
+ * Se usan en los dos caminos que actualizan la ruta (el que recalcula paradas y el
+ * simple), y por eso vive aquí: tenerlo escrito dos veces es que un día uno de los dos
+ * deje de marcarlas y nadie se entere hasta que haga falta el dato.
+ */
+function horasDelEstado(
+  ruta: { startedAt: Date | null; finishedAt: Date | null },
+  estado: string | undefined,
+): { startedAt?: Date; finishedAt?: Date | null } {
+  if (estado === 'in_progress') {
+    return {
+      ...(ruta.startedAt ? {} : { startedAt: new Date() }),
+      ...(ruta.finishedAt ? { finishedAt: null } : {}),
+    }
+  }
+  if (estado === 'completed') return { finishedAt: new Date() }
+  return {}
+}
+
 interface OrderItem {
   productId?: string
   name?: string
@@ -200,10 +221,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         totalPrice,
         ...(data.name !== undefined && { name: data.name }),
         ...(data.status !== undefined && { status: data.status }),
+        ...horasDelEstado(route, data.status),
       }
     })
     return NextResponse.json(updated)
   }
+
+  const horas = horasDelEstado(route, data.status)
 
   // --- Simple field updates ---
   // Completing a route frees its vehicle.
@@ -219,6 +243,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     data: {
       ...(data.name !== undefined && { name: data.name }),
       ...(data.status !== undefined && { status: data.status }),
+      ...horas,
     }
   })
 

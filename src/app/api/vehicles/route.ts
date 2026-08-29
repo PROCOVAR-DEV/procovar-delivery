@@ -17,7 +17,9 @@ export async function GET(req: NextRequest) {
       _count: { select: { routes: true, orders: true, orderAssignments: true } },
       routes: {
         where: { status: { not: 'completed' } },
-        select: { id: true, name: true, status: true },
+        // El CÓDIGO también: una ruta puede no tener nombre —es opcional al crearla— y
+        // sin él la tarjeta del vehículo pintaba un hueco donde debía decir cuál lleva.
+        select: { id: true, name: true, routeCode: true, status: true },
         take: 1,
         orderBy: { createdAt: 'desc' },
       }

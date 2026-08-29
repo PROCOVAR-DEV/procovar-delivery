@@ -23,7 +23,7 @@ interface Vehicle {
   costoKmUsd: number | null
   usarParaDomicilio: boolean
   _count: { routes: number; orders: number }
-  routes?: { id: string; name: string; status: string }[]
+  routes?: { id: string; name: string | null; routeCode: string | null; status: string }[]
 }
 
 interface TipoVehiculo {
@@ -428,7 +428,11 @@ export default function VehiclesPage() {
                     <Icon icon="mdi:map-marker-path" className="text-blue-600 text-base shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs text-blue-500 font-medium">{t('veh.activeRoute')}</p>
-                      <p className="text-sm text-blue-800 font-semibold truncate">{vehicle.routes[0].name}</p>
+                      {/* El nombre es opcional; el código no. Sin esto, una ruta creada
+                          sin nombre dejaba la tarjeta diciendo nada. */}
+                      <p className="text-sm text-blue-800 font-semibold truncate">
+                        {vehicle.routes[0].name || vehicle.routes[0].routeCode || 'sin nombre'}
+                      </p>
                     </div>
                   </div>
                 )}

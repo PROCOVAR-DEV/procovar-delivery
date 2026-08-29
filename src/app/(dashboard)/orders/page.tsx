@@ -114,7 +114,7 @@ export default function OrdersPage() {
   // ahora tiene 2 páginas enseña un vacío que parece un fallo.
   useEffect(() => {
     setPagina(1)
-  }, [buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, desde, hasta])
+  }, [buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, statusFilter, desde, hasta])
 
   /**
    * Los pedidos, filtrados y paginados POR EL SERVIDOR.
@@ -123,7 +123,7 @@ export default function OrdersPage() {
    * que la dejaba colgada. Aquí sólo viaja la página que se está mirando.
    */
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, desde, hasta, pagina }],
+    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, statusFilter, desde, hasta, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/orders', {
         params: {
@@ -134,6 +134,7 @@ export default function OrdersPage() {
           ...(cotizado ? { cotizado } : {}),
           ...(municipioFilter ? { municipio: municipioFilter } : {}),
           ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
+          ...(statusFilter !== 'todos' ? { reparto: statusFilter } : {}),
           ...(desde ? { desde } : {}),
           ...(hasta ? { hasta } : {}),
           pagina,
@@ -208,12 +209,11 @@ export default function OrdersPage() {
   /**
    * Lo que queda por filtrar aquí: el estado de REPARTO.
    *
-   * Es de delivery, no del catálogo de PEDIDO, y se calcula de la ruta. El resto —texto,
-   * estado, archivado, domicilio, municipio, vendedor, fechas— lo hace la base.
+   * Ya no queda nada que filtrar aquí: TODO lo hace la base, incluido el estado de
+   * reparto. Filtrarlo sobre la página era lo que dejaba la tabla vacía con el conteo
+   * diciendo 358 — los que estaban en una ruta vivían en otra página.
    */
-  const filtered = orders
-    .filter((o) => !sucursalId || o.branch?.id === sucursalId)
-    .filter((o) => statusFilter === 'todos' || deliveryStatus(o).key === statusFilter)
+  const filtered = orders.filter((o) => !sucursalId || o.branch?.id === sucursalId)
 
   /**
    * El orden se aplica a ESTA página, y se dice en el desplegable.
@@ -355,7 +355,7 @@ export default function OrdersPage() {
             {/* El estado de REPARTO es de delivery, no de PEDIDO: se calcula de la ruta y
                 se filtra sobre la página. Son dos cosas distintas a propósito. */}
             <Selector
-              titulo="Estado de reparto en delivery (se aplica sobre esta página)"
+              titulo="Estado de reparto en delivery"
               valor={statusFilter === 'todos' ? '' : statusFilter}
               todos="Cualquier reparto"
               onCambio={(v) => setStatusFilter(v || 'todos')}
