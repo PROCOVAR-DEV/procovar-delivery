@@ -12,6 +12,8 @@ import { fetchWeightCatalog } from '@/lib/warehouse'
 import { tasaDeSucursal } from '@/lib/tasaCambio'
 import type { WeightCatalog } from '@/lib/productMatch'
 
+import { avisarCambio } from '@/lib/avisarCambio'
+
 export const dynamic = 'force-dynamic'
 
 /**
@@ -277,6 +279,9 @@ export async function POST(req: NextRequest) {
     persisted++
     results.push({ ...base, orderId: order.id, persisted: true })
   }
+
+  // Han entrado o cambiado pedidos: las pantallas abiertas se enteran ya.
+  if (persisted > 0) await avisarCambio('pedidos', { pedidos: persisted })
 
   return NextResponse.json({
     total: orders.length,

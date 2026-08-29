@@ -4,6 +4,8 @@ import { getUserFromRequest } from '@/lib/auth'
 import { ventraCatalogo, ventraDatabases } from '@/lib/warehouse'
 import { emparejarConVentra } from '@/lib/emparejarVentra'
 
+import { avisarCambio } from '@/lib/avisarCambio'
+
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
@@ -131,6 +133,8 @@ export async function POST(req: NextRequest) {
   if (escritos > 0) {
     await prisma.settings.update({ where: { id: ajustes.id }, data: { catalogoTraidoAt: new Date() } })
   }
+
+  if (escritos > 0) await avisarCambio('catalogo', { productos: escritos })
 
   return NextResponse.json({
     sucursales: resultado,

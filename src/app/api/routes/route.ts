@@ -9,6 +9,8 @@ import {
 } from '@/lib/pricing'
 import { resolveScope, scopeWhere } from '@/lib/scope'
 
+import { avisarCambio } from '@/lib/avisarCambio'
+
 export const dynamic = 'force-dynamic'
 
 interface OrderItem {
@@ -191,6 +193,9 @@ async function createRouteFromExistingOrders(
       orders: { orderBy: { stopOrder: 'asc' } },
     },
   })
+  // Una ruta nueva se lleva pedidos de la lista de disponibles: hay que enterarse.
+  await avisarCambio('rutas')
+
   return NextResponse.json(full, { status: 201 })
 }
 

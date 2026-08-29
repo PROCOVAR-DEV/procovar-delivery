@@ -5,6 +5,8 @@ import { ventraDatabases, ventraVentas } from '@/lib/warehouse'
 import { emparejarConVentra } from '@/lib/emparejarVentra'
 import { cotejar, type LineaFactura, type LineaPedido } from '@/lib/cotejarFactura'
 
+import { avisarCambio } from '@/lib/avisarCambio'
+
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
@@ -158,6 +160,9 @@ export async function POST(req: NextRequest) {
       resultado.push({ sucursal: s.name, lineas: 0, cotejados: 0, igual: 0, cambiado: 0, sinFactura: 0, error: (e as Error).message })
     }
   }
+
+  // El cotejo cambia qué pedidos se pueden repartir: se avisa.
+  if (resultado.some((r) => r.cotejados > 0)) await avisarCambio('facturacion')
 
   return NextResponse.json({
     desde: soloFecha(desde),

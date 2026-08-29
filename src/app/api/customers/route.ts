@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
+import { almacenesDeSucursal } from '@/lib/almacenes'
+import { distanciaHaversineKm } from '@/lib/domicilioEntrega'
 import { resolveScope } from '@/lib/scope'
 
 export const dynamic = 'force-dynamic'
@@ -20,7 +22,14 @@ export const dynamic = 'force-dynamic'
  * servidor. Se devuelve además cuántos hay en total, para que la pantalla pueda decir
  * "500 de 2.480" en vez de dar a entender que ésos son todos.
  */
-const TOPE = 200
+/**
+ * Cincuenta por página, no doscientos.
+ *
+ * Con doscientas filas los botones de página quedaban al final de un desplazamiento
+ * larguísimo: la gente daba por hecho que no había paginación. Cincuenta caben en dos
+ * pantallazos.
+ */
+const TOPE = 50
 
 export async function GET(req: NextRequest) {
   const user = getUserFromRequest(req)
@@ -37,6 +46,14 @@ export async function GET(req: NextRequest) {
   const vendedor = params.get('vendedor')?.trim() || ''
   /** `1` sólo los que tienen teléfono, `0` sólo los que no. Sin él, los dos. */
   const telefono = params.get('telefono')?.trim() || ''
+  /**
+   * A cuántos kilómetros del ALMACÉN como mucho.
+   *
+   * Es filtrar por geolocalización de verdad: «los clientes que caen a menos de 10 km»
+   * es con lo que se decide a quién meter en la ruta de hoy. Se mide en línea recta desde
+   * el almacén principal de la sucursal, igual que el domicilio.
+   */
+  const kmMax = Number(params.get('kmMax'))
   const pagina = Math.max(1, Number(params.get('pagina')) || 1)
 
   /**
@@ -48,6 +65,8 @@ export async function GET(req: NextRequest) {
    */
   const scope = await resolveScope(req, user)
   let porSucursal: Record<string, unknown> = {}
+  /** El código de la sucursal que se está mirando: hace falta para medir desde su almacén. */
+  let sucursalDelAlcance: string | null = sucursal || null
 
   if (scope.branchId) {
     const b = await prisma.branch.findUnique({
@@ -57,6 +76,7 @@ export async function GET(req: NextRequest) {
 
     if (b?.externalId) {
       porSucursal = { OR: [{ sucursalCodigo: b.externalId }, { sucursalCodigo: null }] }
+      sucursalDelAlcance = b.externalId
     }
   }
 
@@ -75,6 +95,32 @@ export async function GET(req: NextRequest) {
       }
     : {}
 
+  /**
+   * El almacén desde el que se mide, y la caja que lo rodea.
+   *
+   * Un grado de latitud son ~111 km en cualquier sitio; uno de longitud se encoge con el
+   * coseno de la latitud. Con eso se saca un cuadrado que contiene con seguridad al
+   * círculo de `kmMax`, y lo que sobra se descarta midiendo de verdad.
+   */
+  let caja: { lat: { gte: number; lte: number }; lng: { gte: number; lte: number } } | null = null
+  let almacen: { latitud: number; longitud: number } | null = null
+
+  if (Number.isFinite(kmMax) && kmMax > 0 && sucursalDelAlcance) {
+    const lista = await almacenesDeSucursal(sucursalDelAlcance).catch(() => [])
+    const bueno = lista.find((a) => a.principal && a.latitud != null) ?? lista.find((a) => a.latitud != null)
+
+    if (bueno?.latitud != null && bueno.longitud != null) {
+      almacen = { latitud: bueno.latitud, longitud: bueno.longitud }
+      const gradosLat = kmMax / 111
+      const gradosLng = kmMax / (111 * Math.max(0.1, Math.cos((bueno.latitud * Math.PI) / 180)))
+
+      caja = {
+        lat: { gte: bueno.latitud - gradosLat, lte: bueno.latitud + gradosLat },
+        lng: { gte: bueno.longitud - gradosLng, lte: bueno.longitud + gradosLng },
+      }
+    }
+  }
+
   const where = {
     AND: [
       porSucursal,
@@ -89,6 +135,15 @@ export async function GET(req: NextRequest) {
       // por eso se puede listar.
       telefono === '1' ? { phone: { not: null } } : {},
       telefono === '0' ? { OR: [{ phone: null }, { phone: '' }] } : {},
+      /**
+       * Y por distancia al almacén, con una CAJA antes de medir.
+       *
+       * Medir la distancia exacta de siete mil clientes en cada consulta es trabajo que
+       * la base no puede hacer con un índice. Se acota primero con un cuadrado de
+       * latitudes y longitudes —eso sí lo resuelve el índice— y la distancia exacta se
+       * comprueba después, sobre las pocas que quedan.
+       */
+      ...(caja ? [caja] : []),
     ].filter((x) => Object.keys(x).length > 0),
   }
 
@@ -154,14 +209,33 @@ export async function GET(req: NextRequest) {
     prisma.customer.count({ where: { ...porSucursal, OR: [{ phone: null }, { phone: '' }] } }),
   ])
 
+  /**
+   * La distancia exacta, sobre lo que la caja dejó pasar.
+   *
+   * La caja mete de más en las esquinas del cuadrado; medir aquí lo quita. Se mide sólo
+   * sobre una página, así que cuesta nada.
+   */
+  const conDistancia = almacen
+    ? customers
+        .map((c) => ({
+          ...c,
+          kmDelAlmacen: Number(
+            distanciaHaversineKm(almacen.latitud, almacen.longitud, c.lat, c.lng).toFixed(2),
+          ),
+        }))
+        .filter((c) => c.kmDelAlmacen <= kmMax)
+    : customers
+
   return NextResponse.json({
-    count: customers.length,
+    count: conDistancia.length,
     total,
     pagina,
     porPagina: TOPE,
     paginas: Math.max(1, Math.ceil(total / TOPE)),
     truncated: total > customers.length,
-    customers,
+    customers: conDistancia,
+    // Se dice desde dónde se midió: «a 10 km» de un almacén y de otro no es lo mismo.
+    almacenDeReferencia: almacen,
     municipios: municipios.map((m) => ({ valor: m.municipio as string, clientes: m._count._all })),
     sucursales: sucursales.map((s) => ({ valor: s.sucursalCodigo as string, clientes: s._count._all })),
     zonas: zonas.map((z) => ({ valor: z.zona as string, clientes: z._count._all })),

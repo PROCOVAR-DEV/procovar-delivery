@@ -22,6 +22,8 @@ interface Customer {
   codigo?: string | null
   /** Quién lo atiende. */
   vendedor?: string | null
+  /** A cuántos km del almacén, cuando se filtró por distancia. */
+  kmDelAlmacen?: number | null
   lat: number
   lng: number
   sucursalCodigo?: string | null
@@ -35,6 +37,8 @@ export default function CustomersPage() {
   const [zona, setZona] = useState('')
   const [vendedor, setVendedor] = useState('')
   const [telefono, setTelefono] = useState('')
+  /** A cuántos km del almacén como mucho: es con lo que se arma la ruta de hoy. */
+  const [kmMax, setKmMax] = useState('')
   const [origen, setOrigen] = useState('')
   const [pagina, setPagina] = useState(1)
   const [showForm, setShowForm] = useState(false)
@@ -58,10 +62,10 @@ export default function CustomersPage() {
 
   // Cualquier cambio de filtro vuelve a la página 1: quedarse en la 7 de una lista que
   // ahora tiene 2 enseña un vacío que parece un fallo.
-  useEffect(() => { setPagina(1) }, [buscado, municipio, zona, origen, vendedor, telefono])
+  useEffect(() => { setPagina(1) }, [buscado, municipio, zona, origen, vendedor, telefono, kmMax])
 
   const { data, isLoading } = useQuery({
-    queryKey: ['customers', { buscado, municipio, zona, origen, vendedor, telefono, pagina }],
+    queryKey: ['customers', { buscado, municipio, zona, origen, vendedor, telefono, kmMax, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/customers', {
         params: {
@@ -70,6 +74,7 @@ export default function CustomersPage() {
           ...(zona ? { zona } : {}),
           ...(vendedor ? { vendedor } : {}),
           ...(telefono ? { telefono } : {}),
+          ...(kmMax ? { kmMax } : {}),
           ...(origen ? { origen } : {}),
           pagina,
         },
@@ -115,6 +120,30 @@ export default function CustomersPage() {
               Clientes de PEDIDO (sincronizados, sólo con geo) + los manuales de delivery.{' '}
               {total.toLocaleString()} en total{paginas > 1 ? ` · página ${pagina} de ${paginas}` : ''}.
             </p>
+
+            {/* Los botones de página, TAMBIÉN arriba: estaban sólo al final de la lista,
+                así que había que recorrerla entera para descubrir que existían. */}
+            {paginas > 1 && (
+              <div className="mt-1 flex items-center gap-2 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setPagina((p) => Math.max(1, p - 1))}
+                  disabled={pagina <= 1}
+                  className="rounded-xl border border-line px-2 py-1 disabled:opacity-40 hover:bg-ink/[0.03]"
+                >
+                  <Icon icon="mdi:chevron-left" />
+                </button>
+                <span className="text-ink-soft/70">{pagina} / {paginas}</span>
+                <button
+                  type="button"
+                  onClick={() => setPagina((p) => Math.min(paginas, p + 1))}
+                  disabled={pagina >= paginas}
+                  className="rounded-xl border border-line px-2 py-1 disabled:opacity-40 hover:bg-ink/[0.03]"
+                >
+                  <Icon icon="mdi:chevron-right" />
+                </button>
+              </div>
+            )}
           </div>
           <button
             onClick={() => setShowForm(true)}
@@ -177,6 +206,27 @@ export default function CustomersPage() {
               opciones={vendedores.map((v) => ({ valor: v.valor, etiqueta: v.valor, nota: v.clientes.toLocaleString() }))}
             />
           )}
+
+          {/*
+            POR DISTANCIA AL ALMACÉN.
+            
+            Es filtrar por geolocalización de verdad: «los que caen a menos de 10 km» es
+            con lo que se decide a quién meter en la ruta de hoy. Se mide en línea recta
+            desde el almacén principal de la sucursal, igual que el domicilio.
+          */}
+          <Selector
+            titulo="A qué distancia del almacén"
+            icono="mdi:map-marker-radius-outline"
+            valor={kmMax}
+            todos="A cualquier distancia"
+            onCambio={setKmMax}
+            opciones={[
+              { valor: '5', etiqueta: 'Hasta 5 km' },
+              { valor: '10', etiqueta: 'Hasta 10 km' },
+              { valor: '20', etiqueta: 'Hasta 20 km' },
+              { valor: '50', etiqueta: 'Hasta 50 km' },
+            ]}
+          />
 
           <Selector
             titulo="Si tiene teléfono"
@@ -268,7 +318,13 @@ export default function CustomersPage() {
                     <td className="px-4 py-2 text-ink-soft/80">
                       {[c.address, c.municipio].filter(Boolean).join(' · ') || '—'}
                     </td>
-                    <td className="px-4 py-2 text-xs text-ink-soft/80">{c.vendedor || '—'}</td>
+                    <td className="px-4 py-2 text-xs text-ink-soft/80">
+                      {c.vendedor || '—'}
+                      {/* A cuánto está del almacén: es lo que decide si entra en la ruta. */}
+                      {c.kmDelAlmacen != null && (
+                        <span className="block font-mono text-[11px] text-ink-soft/60">{c.kmDelAlmacen} km</span>
+                      )}
+                    </td>
                     <td className="px-4 py-2">
                       {c.source === 'pedido' ? (
                         <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 text-[11px] font-semibold">PEDIDO</span>

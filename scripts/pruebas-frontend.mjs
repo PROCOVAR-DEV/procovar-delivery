@@ -665,9 +665,16 @@ test('con una sucursal guardada, NINGUNA consulta sale sin la cabecera al recarg
   page.on('request', (r) => {
     const u = new URL(r.url())
 
-    // `/api/branches` es la comprobación misma: ésa sí sale sin cabecera, y tiene que
-    // hacerlo — si esperara a sí misma no saldría nunca.
-    if (!u.pathname.startsWith('/api/') || u.pathname === '/api/branches') return
+    /**
+     * Dos excepciones, las dos a propósito:
+     *
+     *   /api/branches — es la comprobación misma. Si esperara a sí misma no saldría nunca.
+     *   /api/eventos  — el flujo de avisos en vivo. `EventSource` no puede mandar
+     *                   cabeceras, y tampoco hace falta: sólo dice «algo cambió», no trae
+     *                   datos de ninguna sucursal.
+     */
+    if (!u.pathname.startsWith('/api/')) return
+    if (u.pathname === '/api/branches' || u.pathname === '/api/eventos') return
     if (!r.headers()['x-sucursal-id']) desnudas.push(u.pathname)
   })
 

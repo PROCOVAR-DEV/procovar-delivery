@@ -1166,6 +1166,32 @@ test('sin Ventra delante, el cotejo lo DICE y no marca nada', async () => {
   }
 })
 
+test('los clientes se filtran por DISTANCIA al almacén', async () => {
+  const r = await pedir('/api/customers?kmMax=10', { cabeceras: { 'x-sucursal-id': habana.id } })
+
+  assert.equal(r.status, 200)
+
+  /**
+   * Sin almacén con punto no se puede medir: se devuelven todos y se dice que no hubo
+   * referencia, en vez de una lista vacía que se leería como «no hay clientes cerca».
+   */
+  if (!r.json.almacenDeReferencia) {
+    assert.ok(Array.isArray(r.json.customers))
+    return
+  }
+
+  for (const c of r.json.customers) {
+    assert.ok(c.kmDelAlmacen <= 10, `${c.name} está a ${c.kmDelAlmacen} km y salió en «hasta 10»`)
+  }
+})
+
+test('la página de clientes es de 50, para que los botones se vean', async () => {
+  const r = await pedir('/api/customers')
+
+  assert.equal(r.status, 200)
+  assert.ok(r.json.porPagina <= 50, `${r.json.porPagina} por página deja los botones al final de un scroll larguísimo`)
+})
+
 /**
  * Las pruebas recogen lo suyo.
  *

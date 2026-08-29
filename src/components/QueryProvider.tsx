@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ProveedorDeAvisos } from '@/components/Avisos'
 import { useState } from 'react'
+import AvisosEnVivo from '@/components/AvisosEnVivo'
 
 export default function QueryProvider({ children }: { children: React.ReactNode }) {
   /**
@@ -38,6 +39,8 @@ export default function QueryProvider({ children }: { children: React.ReactNode 
   )
   return (
     <QueryClientProvider client={queryClient}>
+      {/* Lo que cambia fuera de esta pantalla, en vivo. Ver `AvisosEnVivo`. */}
+      <AvisosEnVivo />
       {/* Los avisos, por encima de todo: tienen que poder salir sobre un modal. */}
       <ProveedorDeAvisos>{children}</ProveedorDeAvisos>
     </QueryClientProvider>

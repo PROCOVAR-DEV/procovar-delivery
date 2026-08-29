@@ -13,6 +13,16 @@ export const PREFIX = 'procovar-delivery'
 /** Cache del catálogo de pesos del warehouse (se baja por VPN, es caro y repetido). */
 export const K_WAREHOUSE_WEIGHTS = `${PREFIX}:warehouse:weights`
 
+/**
+ * El canal por el que se avisa de que ALGO CAMBIÓ.
+ *
+ * Lo que cambia no lo cambia esta pantalla: el espejo trae pedidos cada minuto, el
+ * repartidor pone el costo desde Entrega, Ventra factura. Sin un aviso, la pantalla se
+ * entera cuando le toca refrescar —o cuando alguien recarga—, y mientras tanto enseña
+ * algo que ya no es verdad.
+ */
+export const CANAL_CAMBIOS = `${PREFIX}:cambios`
+
 const COMMON: RedisOptions = {
   maxRetriesPerRequest: null,
   retryStrategy: (times) => Math.min(times * 200, 3000),
