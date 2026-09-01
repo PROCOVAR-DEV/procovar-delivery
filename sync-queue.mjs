@@ -328,6 +328,21 @@ async function quoteBatch(pedidos) {
       // traen el dato) se importan igual —hacen falta para las rutas y la capacidad del
       // camión— pero SIN precio de domicilio.
       requiereDomicilio: pedido.requiereDomicilio === true,
+      /**
+       * El cotejo contra la FACTURA, tal como lo dejó PEDIDO.
+       *
+       * Lo hace PEDIDO —el pedido es suyo, y es allí donde se corrige cuando la factura
+       * dice otra cosa—. Aquí se copia para poder FILTRAR: el armador de rutas ofrece por
+       * defecto los que cuadran, porque cargar el camión con un pedido que la factura
+       * cambió es descuadrar la caja.
+       *
+       * Cuando PEDIDO corrige un pedido, sus líneas YA son las de la factura: por eso el
+       * pre-despacho cuadra sin hacer nada aquí.
+       */
+      facturaEstado: pedido.facturaEstado ?? null,
+      facturaNumero: pedido.facturaNumero ?? null,
+      facturaAt: pedido.facturaAt ?? null,
+      facturaDomicilio: pedido.facturaDomicilio ?? null,
       meta: pedido,
     })),
   };
@@ -588,32 +603,7 @@ async function cycle() {
   }
 
   /**
-   * 1.a La FACTURACIÓN de Ventra, y el cotejo con los pedidos.
-   *
-   * Es lo que decide qué se puede repartir: el cliente cambia lo que pidió antes de que
-   * se le facture, y la ruta se arma con lo facturado. Va en cada vuelta porque la
-   * facturación del día se mueve todo el rato.
-   */
-  try {
-    const res = await fetch(`${DELIVERY_URL}/api/facturacion/sync`, {
-      method: 'POST',
-      headers: { 'x-api-key': KEY, 'Content-Type': 'application/json' },
-    });
-
-    if (res.ok) {
-      const r = await res.json();
-
-      if (r.lineas) log(`facturación de Ventra: ${r.lineas} líneas, ${r.cotejados} pedidos cotejados`);
-      for (const s of r.sucursales || []) if (s.error) log(`  ${s.sucursal}: ${s.error}`);
-    } else {
-      log(`la facturación no se pudo traer: ${res.status}`);
-    }
-  } catch (e) {
-    log('la facturación de Ventra falló:', e.message);
-  }
-
-  /**
-   * 1.b Los recién cotizados. Es lo que se está mirando en pantalla.
+   * 1.a Los recién cotizados. Es lo que se está mirando en pantalla.
    */
   try {
     const n = await cotizadosRecientes();

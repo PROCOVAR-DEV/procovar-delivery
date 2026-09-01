@@ -37,6 +37,18 @@ export interface OrderQuoteInput {
   fechaComprometida?: string | null
   /** El costo que la APK puso EN PEDIDO. No es `deliveryPrice`, que es el reparto de carga. */
   pedidoCosto?: number | null
+  /**
+   * El cotejo contra la FACTURA, tal como lo dejó PEDIDO.
+   *
+   * Lo hace PEDIDO —el pedido es suyo, y allí se corrige cuando la factura dice otra
+   * cosa—. Aquí llega copiado para poder filtrar: el armador de rutas ofrece por defecto
+   * los que cuadran, porque cargar el camión con un pedido que la factura cambió es
+   * descuadrar la caja.
+   */
+  facturaEstado?: string | null
+  facturaNumero?: string | null
+  facturaAt?: string | Date | null
+  facturaDomicilio?: number | null
   municipio?: string | null
   vendedor?: string | null
   sucursalCodigo?: string | null
@@ -243,6 +255,10 @@ export function buildOrderData(
     fechaComprometida: input.fechaComprometida ? new Date(input.fechaComprometida) : null,
     requiereDomicilio: input.requiereDomicilio ?? null,
     pedidoCosto: input.pedidoCosto ?? null,
+    facturaEstado: input.facturaEstado ?? null,
+    facturaNumero: input.facturaNumero ?? null,
+    facturaAt: input.facturaAt ? new Date(input.facturaAt) : null,
+    facturaDomicilio: input.facturaDomicilio ?? null,
     municipio: input.municipio ?? null,
     vendedor: input.vendedor ?? null,
     sucursalCodigo: input.sucursalCodigo ?? null,

@@ -52,8 +52,8 @@ interface OrderRow {
   /** Cómo quedó contra la factura de Ventra: `igual` | `cambiado` | `sin_factura`. */
   facturaEstado?: string | null
   facturaNumero?: string | null
-  /** Lo que pesa la FACTURA. Es lo que sube al camión cuando no coincide con el pedido. */
-  pesoFacturado?: number | null
+  /** Lo que la factura cobró por el reparto, si trae la línea de «ENTREGA A DOMICILIO». */
+  facturaDomicilio?: number | null
   items?: OrderItem[]
   /** La fecha del pedido EN PEDIDO. `createdAt` es cuándo lo copió el espejo. */
   orderDate?: string | null
@@ -87,7 +87,7 @@ export default function OrdersPage() {
   const [archivado, setArchivado] = useState('')
   const [domicilio, setDomicilio] = useState('')
   const [cotizado, setCotizado] = useState('')
-  /** Cómo quedó frente a la factura de Ventra. Ver `lib/cotejarFactura`. */
+  /** Cómo quedó frente a la factura de Ventra. Lo coteja PEDIDO; aquí llega copiado. */
   const [factura, setFactura] = useState('')
   // Rango de fechas del PEDIDO (no de cuándo lo copió el espejo).
   const [desde, setDesde] = useState('')
@@ -875,18 +875,16 @@ export default function OrdersPage() {
                   )}
 
                   {/*
-                    Y CUÁNTO PESA lo facturado.
+                    Y lo que la factura COBRÓ por el reparto.
 
-                    El domicilio se cobra por peso, así que cuando la factura cambia el
-                    pedido cambia también lo que hay que cobrar. Delivery lo recalcula con
-                    la fórmula de Entrega y se lo manda a PEDIDO, que es donde vive ese
-                    precio; aquí se enseñan los dos números para que se vea de dónde sale.
+                    Es la señal de que ese pedido va a domicilio de verdad: sale de lo que
+                    se cobró en el mostrador, no de una casilla que alguien marcó al
+                    tomarlo. Cuando el pedido se corrige contra la factura, las líneas de
+                    arriba ya son las facturadas.
                   */}
-                  {detail.pesoFacturado != null && (
+                  {detail.facturaDomicilio != null && (
                     <p className="mt-1 text-xs">
-                      Pedido <b className="font-mono">{detail.weight?.toFixed(2) ?? '—'} kg</b>
-                      {' · '}
-                      facturado <b className="font-mono">{detail.pesoFacturado.toFixed(2)} kg</b>
+                      La factura cobró <b className="font-mono">{detail.facturaDomicilio.toFixed(2)} USD</b> de domicilio.
                     </p>
                   )}
                 </div>

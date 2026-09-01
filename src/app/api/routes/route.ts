@@ -10,6 +10,7 @@ import {
 import { resolveScope, scopeWhere } from '@/lib/scope'
 
 import { avisarCambio } from '@/lib/avisarCambio'
+import { avisarEstadoDeFondo } from '@/lib/avisarEstadoAPedido'
 
 export const dynamic = 'force-dynamic'
 
@@ -196,6 +197,19 @@ async function createRouteFromExistingOrders(
   // Una ruta nueva se lleva pedidos de la lista de disponibles: hay que enterarse.
   await avisarCambio('rutas')
 
+  /**
+   * Y en PEDIDO, esos pedidos pasan a DESPACHADOS.
+   *
+   * Es la primera noticia que tiene el vendedor de que su pedido se movió. Va de fondo: si
+   * PEDIDO no contesta, la ruta se crea igual — lo que no puede pasar es que no se pueda
+   * armar una ruta porque otra aplicación esté caída.
+   */
+  avisarEstadoDeFondo(
+    (full?.orders ?? [])
+      .filter((o) => o.source === 'pedido' && o.externalId)
+      .map((o) => ({ pedidoId: o.externalId as string, estado: 'despachado' as const })),
+  )
+
   return NextResponse.json(full, { status: 201 })
 }
 
@@ -237,6 +251,11 @@ export async function GET(req: NextRequest) {
           stopOrder: true,
           tripLeg: true,
           items: true,
+          // Cómo acabó la parada al volver el camión. De esto sale el post-despacho: lo
+          // que queda arriba es lo que no se entregó.
+          resultado: true,
+          resultadoNota: true,
+          municipio: true,
         }
       }
     }

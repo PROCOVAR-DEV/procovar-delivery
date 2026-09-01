@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
 import { resolveScope, scopeWhere } from '@/lib/scope'
+import { avisarEstadoDeFondo, type EstadoEntrega } from '@/lib/avisarEstadoAPedido'
 import {
   greedyRouteOptimization,
   calculateRouteSegments,
@@ -257,6 +258,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       ...horas,
     }
   })
+
+  /**
+   * Y se le cuenta a PEDIDO: el camión salió.
+   *
+   * Es lo que el vendedor necesita saber para poder decirle al cliente «va en camino» sin
+   * llamar a nadie. Sólo al ARRANCAR: al completar la ruta cada pedido ya tiene su propio
+   * resultado —entregado, devuelto o cancelado—, puesto una por una al cerrarla, y
+   * pisarlos todos con un estado de la ruta borraría justo eso.
+   */
+  if (data.status === 'in_progress') {
+    const pedidos = await prisma.order.findMany({
+      where: { routeId: id, source: 'pedido', externalId: { not: null } },
+      select: { externalId: true },
+    })
+
+    avisarEstadoDeFondo(
+      pedidos.map((o) => ({ pedidoId: o.externalId as string, estado: 'en_transito' as EstadoEntrega })),
+    )
+  }
 
   return NextResponse.json(updated)
 }

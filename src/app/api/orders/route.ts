@@ -84,9 +84,9 @@ export async function GET(req: NextRequest) {
         pedidoCosto: true,
         facturaEstado: true,
         facturaNumero: true,
-        // Lo que pesa la FACTURA, que no siempre es lo que pesa el pedido. Es lo que de
-        // verdad sube al camión, así que es lo que hay que ver al cargar.
-        pesoFacturado: true,
+        // Lo que la factura cobró por el reparto. Copiado de PEDIDO: es la señal de que
+        // ese pedido va a domicilio, y sale de lo que se cobró, no de una casilla.
+        facturaDomicilio: true,
         municipio: true,
         vendedor: true,
         sucursalCodigo: true,

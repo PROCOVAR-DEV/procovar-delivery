@@ -12,7 +12,7 @@
 
 import { CANAL_CAMBIOS, publishJSON, redisEnabled } from '@/lib/redis'
 
-export type TipoCambio = 'pedidos' | 'facturacion' | 'catalogo' | 'rutas' | 'clientes'
+export type TipoCambio = 'pedidos' | 'catalogo' | 'rutas' | 'clientes'
 
 /**
  * Cuándo se avisó por última vez de cada cosa.

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
 import { resolveScope, scopeWhere, sucursalDeLaPersona } from '@/lib/scope'
+import { esServicio } from '@/lib/servicios'
 
 export const dynamic = 'force-dynamic'
 
@@ -85,8 +86,18 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  /**
+   * Fuera los SERVICIOS.
+   *
+   * En el catálogo de Ventra viene «ENTREGA A DOMICILIO» —categoría SERV, peso cero— como
+   * un producto más, y salía en el buscador al meter un pedido a mano. No es algo que se
+   * carga en un camión: es el cobro del reparto. Metido en un pedido, no pesa nada y cobra
+   * el reparto dos veces, una en la línea y otra en el domicilio.
+   */
   return NextResponse.json(
-    products.map((p) => ({ ...p, usageCount: usage[p.id] || usage[p.sku ?? ''] || 0 })),
+    products
+      .filter((p) => !esServicio(p))
+      .map((p) => ({ ...p, usageCount: usage[p.id] || usage[p.sku ?? ''] || 0 })),
   )
 }
 

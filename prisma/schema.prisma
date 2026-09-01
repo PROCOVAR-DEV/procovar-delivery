@@ -234,7 +234,13 @@ model Order {
   /// no se puede buscar «malta» sin leerse los cincuenta mil pedidos. Es la pregunta del
   /// despacho —«¿qué pedidos llevan malta?»— y hasta ahora había que abrirlos uno a uno.
   productosTexto  String?
-  /// Cómo quedó este pedido frente a la FACTURA de Ventra:
+  /// Cómo quedó este pedido frente a la FACTURA de Ventra. COPIADO de PEDIDO.
+  ///
+  /// El cotejo lo hace PEDIDO —es suyo el pedido, y es allí donde se corrige cuando la
+  /// factura dice otra cosa—. Aquí sólo se guarda para poder FILTRAR: el armador de rutas
+  /// ofrece por defecto los que cuadran, porque cargar el camión con un pedido que la
+  /// factura cambió es descuadrar la caja.
+  ///
   ///   `igual`       — lo facturado coincide con lo pedido: se puede repartir tal cual.
   ///   `cambiado`    — se facturó otra cosa (más, menos, distinto).
   ///   `sin_factura` — todavía no se ha facturado.
@@ -243,20 +249,12 @@ model Order {
   /// El número de factura con el que cuadró, para poder ir a buscarla.
   facturaNumero   String?
   facturaAt       DateTime?
-  /// Lo que PESA lo FACTURADO, que no siempre es lo que pesa lo pedido.
+  /// Lo que la factura cobró por el reparto. COPIADO de PEDIDO.
   ///
-  /// Se calcula con los mismos pesos de Ventra, sobre las líneas de la factura. Es lo que
-  /// de verdad va a subir al camión, así que es lo que manda para la carga y para lo que
-  /// cuesta el domicilio. Vacío cuando no hay factura o cuando ningún producto facturado
-  /// tenía peso en Ventra — un cero se sumaría y diría que ese pedido no pesa nada.
-  pesoFacturado   Float?
-  /// Lo último que se le dijo a PEDIDO sobre esta factura: `estado|numero`.
-  ///
-  /// Sirve para no repetirse. Escribir en PEDIDO mueve su `updatedAt`, que es la marca de
-  /// agua con la que sincronizan las tablets de los vendedores: reenviar cada minuto el
-  /// mismo estado les haría bajarse el día entero por datos móviles para enterarse de que
-  /// no ha pasado nada.
-  facturaAvisado  String?
+  /// Es la señal más fiable de que un pedido va a domicilio: sale de lo que se cobró en
+  /// el mostrador y no de una casilla marcada al tomar el pedido. Vacío = la factura no
+  /// trae la línea de «ENTREGA A DOMICILIO», o sea que se recogió en el almacén.
+  facturaDomicilio Float?
   vendedor        String?
   sucursalCodigo  String?
   // Id/folio del pedido en PEDIDO. Usado para idempotencia (re-cotizar no duplica).
@@ -272,6 +270,19 @@ model Order {
   updatedAt       DateTime  @updatedAt
   stopOrder       Int?
   deliveredAt     DateTime?
+  /// CÓMO ACABÓ la parada, cuando el camión vuelve: `entregado`, `devuelto` o `cancelado`.
+  ///
+  /// Se marca de una en una al cerrar la ruta, y de aquí sale el post-despacho: lo que
+  /// tiene que quedar en el camión es lo que NO está entregado. Sin esto, lo que baja del
+  /// camión se cuadra de memoria.
+  ///
+  /// Ni `devuelto` ni `cancelado` tocan el inventario: el reintegro lo hace Ventra. Aquí
+  /// se deja constancia, y quien lleva la cuenta de lo que vuelve es el logístico.
+  resultado       String?
+  resultadoAt     DateTime?
+  /// Por qué volvió. Un pedido devuelto sin motivo es un número que nadie sabe explicar
+  /// tres semanas después.
+  resultadoNota   String?
 
   @@index([source, externalId])
   @@index([orderDate])
@@ -283,6 +294,7 @@ model Order {
   @@index([municipio])
   @@index([vendedor])
   @@index([requiereDomicilio])
+  @@index([resultado])
 }
 
 model OrderVehicle {
@@ -331,11 +343,12 @@ model Route {
 
 /// Una línea de FACTURA de Ventra: lo que de verdad se vendió.
 ///
-/// El pedido y la factura no siempre coinciden —el cliente cambia lo que pidió antes de
-/// que se le facture— y la ruta hay que armarla con lo facturado, no con lo pedido: es lo
-/// que va en el camión y es lo que se cobra.
+/// RETIRADA. El cotejo contra la facturación se hace ahora en PEDIDO —el pedido es suyo,
+/// y es allí donde hay que corregirlo cuando la factura dice otra cosa—, así que aquí ya
+/// no se escribe nada. La tabla se queda con lo que llegó a traerse: borrarla es tirar
+/// datos de producción para ahorrar un modelo que no molesta a nadie.
 ///
-/// Es un espejo: se trae de Ventra y no se escribe nunca hacia allá.
+/// Delivery recibe el resultado del cotejo por el espejo, en `Order.facturaEstado`.
 model VentaFacturada {
   id            String   @id @default(cuid())
   /// El id de la línea en Ventra. Por él se reconoce entre pasadas.

@@ -16,6 +16,7 @@ import { useT } from '@/lib/i18n'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
 import Drawer from '@/components/Drawer'
+import CierreDeRuta from '@/components/CierreDeRuta'
 import { duracionDeRuta, enlaceGoogleMaps, horasDeRuta, paradasFueraDelEnlace } from '@/lib/rutaCompartir'
 import { imprimirPreDespacho } from '@/lib/imprimirPreDespacho'
 
@@ -49,6 +50,9 @@ interface RouteOrder {
   municipio?: string | null
   meta?: { cliente?: { municipio?: string | null } | null } | null
   items?: OrderItem[]
+  /** Cómo acabó la parada al volver el camión: entregado | devuelto | cancelado. */
+  resultado?: string | null
+  resultadoNota?: string | null
 }
 
 interface Route {
@@ -130,6 +134,8 @@ export default function RoutesPage() {
   const [selectedVehicleId, setSelectedVehicleId] = useState('')
   const [deliveryDate, setDeliveryDate] = useState('')
   const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null)
+  /** El cajón de cerrar la ruta: marcar cada parada e imprimir el post-despacho. */
+  const [cerrandoRuta, setCerrandoRuta] = useState(false)
   const [enlaceCopiado, setEnlaceCopiado] = useState(false)
   /**
    * Los errores salen como aviso emergente, no dentro del modal.
@@ -995,6 +1001,27 @@ export default function RoutesPage() {
                           <Icon icon="mdi:play-circle-outline" />{startRoute.isPending ? t('routes.starting') : t('routes.start')}
                         </button>
                       )}
+                      {/*
+                        CERRAR LA RUTA: qué se entregó y qué vuelve.
+
+                        Aparece en cuanto el camión sale, y sigue estando después de
+                        completarla: el cierre se hace cuando el camión regresa, que casi
+                        nunca es el mismo momento en que alguien pulsa «completar».
+                      */}
+                      {(selectedRoute.status === 'in_progress' || selectedRoute.status === 'completed') && orderedStops.length > 0 && (
+                        <button
+                          onClick={() => setCerrandoRuta(true)}
+                          className="text-xs px-3 py-1.5 bg-ink text-white rounded-xl font-medium hover:bg-ink/90 whitespace-nowrap inline-flex items-center gap-1"
+                        >
+                          <Icon icon="mdi:clipboard-check-outline" />
+                          Cierre
+                          {orderedStops.some((o) => !o.resultado) && (
+                            <span className="ml-0.5 rounded-full bg-white/20 px-1.5 py-0.5 text-[10px]">
+                              {orderedStops.filter((o) => !o.resultado).length}
+                            </span>
+                          )}
+                        </button>
+                      )}
                       {selectedRoute.status === 'in_progress' && (
                         <button
                           onClick={() => completeRoute.mutate(selectedRoute.id)}
@@ -1832,6 +1859,21 @@ export default function RoutesPage() {
             </div>
         </div>
       </Drawer>
+
+      {/* El cierre de la ruta, en su propio cajón: se hace cuando el camión vuelve. */}
+      {selectedRoute && (
+        <CierreDeRuta
+          abierto={cerrandoRuta}
+          alCerrar={() => setCerrandoRuta(false)}
+          paradas={orderedStops}
+          regreso={selectedRoute.finishedAt}
+          rutaId={selectedRoute.id}
+          salida={selectedRoute.startedAt}
+          sucursal={selectedRoute.branch?.name ?? ''}
+          titulo={selectedRoute.routeCode || selectedRoute.name || 'Ruta'}
+          vehiculo={selectedRoute.vehicle?.name ?? ''}
+        />
+      )}
     </div>
   )
 }

@@ -1153,16 +1153,51 @@ test('los pedidos se filtran por cómo quedaron contra la FACTURA', async () => 
   assert.ok(cliente)
 })
 
-test('sin Ventra delante, el cotejo lo DICE y no marca nada', async () => {
-  const antes = await prisma.order.count({ where: { facturaEstado: { not: null } } })
-  const r = await pedir('/api/facturacion/sync', { metodo: 'POST' })
+test('el cotizador del domicilio pide la clave de servicio', async () => {
+  /**
+   * Lo llama PEDIDO cuando la factura cambia el peso de un pedido. Es un endpoint que
+   * decide lo que se le cobra a alguien: abierto, cualquiera podría preguntar precios de
+   * la empresa entera.
+   */
+  const r = await fetch(`${BASE}/api/quote/home-delivery`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursalCodigo: 'HAB', lat: 23.1, lng: -82.3, pesoKg: 10 }),
+  })
 
-  assert.ok([200, 502].includes(r.status), `status inesperado ${r.status}`)
-  if (r.status === 502) {
-    assert.match(r.json.error, /Ventra/)
-    // Y sobre todo: no puede dejar los pedidos «sin cotejar» porque se cayó la red. Un
-    // pedido que pasa de «igual» a nada se leería como que su factura cambió.
-    assert.equal(await prisma.order.count({ where: { facturaEstado: { not: null } } }), antes)
+  assert.equal(r.status, 401)
+})
+
+test('el cotizador NO devuelve cero cuando le faltan datos: lo dice', async () => {
+  const llave = { 'Content-Type': 'application/json', 'x-api-key': process.env.SERVICE_API_KEY || 'clave-de-pruebas' }
+  const cotizar = async (cuerpo) => {
+    const r = await fetch(`${BASE}/api/quote/home-delivery`, {
+      method: 'POST', headers: llave, body: JSON.stringify(cuerpo),
+    })
+
+    return { status: r.status, json: await r.json().catch(() => null) }
+  }
+
+  // Sin peso no hay precio. Cero kilos saldría gratis, y un domicilio gratis no parece
+  // un dato que falta: parece una decisión.
+  assert.equal((await cotizar({ sucursalCodigo: 'HAB', lat: 23.1, lng: -82.3, pesoKg: 0 })).status, 400)
+  // Sin ubicación tampoco: no hay distancia que medir.
+  assert.equal((await cotizar({ sucursalCodigo: 'HAB', pesoKg: 10 })).status, 400)
+  // Y una sucursal que no existe se dice, no se sustituye por otra.
+  assert.equal((await cotizar({ sucursalCodigo: 'NOEXISTE', lat: 23.1, lng: -82.3, pesoKg: 10 })).status, 404)
+
+  /**
+   * Con todo bien sale un número, o un 409 con el motivo —falta la tarifa, la tasa o el
+   * almacén—. Lo que NO puede pasar nunca es contestar 200 con cero.
+   */
+  const r = await cotizar({ sucursalCodigo: 'HAB', lat: 23.062691, lng: -82.290024, pesoKg: 42 })
+
+  assert.ok([200, 409].includes(r.status), `status inesperado ${r.status}`)
+  if (r.status === 200) {
+    assert.ok(r.json.usd > 0, `salió ${r.json.usd}`)
+    assert.ok(r.json.distanciaKm > 0)
+  } else {
+    assert.ok(r.json.error, 'un 409 tiene que decir qué falta')
   }
 })
 

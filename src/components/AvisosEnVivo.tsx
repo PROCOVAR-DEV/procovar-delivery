@@ -19,7 +19,6 @@ import { useAppStore } from '@/store/useAppStore'
 /** Qué se vuelve a pedir según lo que cambió. */
 const AFECTA: Record<string, string[]> = {
   pedidos: ['orders', 'orders-resumen', 'orders-available', 'orders-available-opciones', 'orders-facetas', 'dashboard'],
-  facturacion: ['orders', 'orders-available', 'orders-available-opciones'],
   catalogo: ['products'],
   rutas: ['routes', 'orders', 'orders-available', 'vehicles'],
   clientes: ['customers'],
