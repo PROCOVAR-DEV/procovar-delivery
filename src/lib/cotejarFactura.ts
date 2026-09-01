@@ -31,6 +31,8 @@ export interface LineaPedido {
 export interface LineaFactura {
   operNumber: string
   clienteNombre: string
+  /** El código de Ventra. Es el mismo `sku` del catálogo: sirve para pesar la factura. */
+  productoCodigo?: string | null
   productoNombre: string
   cantidad: number
 }
@@ -41,7 +43,7 @@ export interface Cotejo {
   estado: EstadoFactura
   numero: string | null
   /** Lo que la factura dice, por producto. Sirve para poder corregir el pedido. */
-  lineas: Array<{ producto: string; cantidad: number }>
+  lineas: Array<{ producto: string; codigo: string | null; cantidad: number }>
   /** En qué se diferencian, en palabras. Vacío cuando cuadra. */
   diferencias: string[]
 }
@@ -178,13 +180,20 @@ export function cotejar(
    * «cambiado» siempre, y la mitad de los pedidos se quedarían fuera de la ruta.
    */
   const numero = [...new Set(suyas.map((f) => f.operNumber))].sort().join(', ')
-  const facturado = new Map<string, number>()
+  const facturado = new Map<string, { codigo: string | null; cantidad: number }>()
 
   for (const f of suyas) {
-    facturado.set(f.productoNombre, (facturado.get(f.productoNombre) ?? 0) + f.cantidad)
+    const previo = facturado.get(f.productoNombre)
+
+    facturado.set(f.productoNombre, {
+      // El código se guarda para poder pesar la factura por sku, que es exacto; el
+      // nombre queda para lo que Ventra no codifica.
+      codigo: previo?.codigo ?? f.productoCodigo ?? null,
+      cantidad: (previo?.cantidad ?? 0) + f.cantidad,
+    })
   }
 
-  const lineas = [...facturado.entries()].map(([producto, cantidad]) => ({ producto, cantidad }))
+  const lineas = [...facturado.entries()].map(([producto, v]) => ({ producto, codigo: v.codigo, cantidad: v.cantidad }))
   const diferencias: string[] = []
   const usadas = new Set<string>()
 

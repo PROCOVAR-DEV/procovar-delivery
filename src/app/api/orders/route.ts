@@ -84,6 +84,9 @@ export async function GET(req: NextRequest) {
         pedidoCosto: true,
         facturaEstado: true,
         facturaNumero: true,
+        // Lo que pesa la FACTURA, que no siempre es lo que pesa el pedido. Es lo que de
+        // verdad sube al camión, así que es lo que hay que ver al cargar.
+        pesoFacturado: true,
         municipio: true,
         vendedor: true,
         sucursalCodigo: true,

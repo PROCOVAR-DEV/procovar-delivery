@@ -52,6 +52,8 @@ interface OrderRow {
   /** Cómo quedó contra la factura de Ventra: `igual` | `cambiado` | `sin_factura`. */
   facturaEstado?: string | null
   facturaNumero?: string | null
+  /** Lo que pesa la FACTURA. Es lo que sube al camión cuando no coincide con el pedido. */
+  pesoFacturado?: number | null
   items?: OrderItem[]
   /** La fecha del pedido EN PEDIDO. `createdAt` es cuándo lo copió el espejo. */
   orderDate?: string | null
@@ -870,6 +872,22 @@ export default function OrdersPage() {
                   )}
                   {detail.facturaEstado === 'sin_factura' && (
                     <>Todavía no aparece facturado en Ventra.</>
+                  )}
+
+                  {/*
+                    Y CUÁNTO PESA lo facturado.
+
+                    El domicilio se cobra por peso, así que cuando la factura cambia el
+                    pedido cambia también lo que hay que cobrar. Delivery lo recalcula con
+                    la fórmula de Entrega y se lo manda a PEDIDO, que es donde vive ese
+                    precio; aquí se enseñan los dos números para que se vea de dónde sale.
+                  */}
+                  {detail.pesoFacturado != null && (
+                    <p className="mt-1 text-xs">
+                      Pedido <b className="font-mono">{detail.weight?.toFixed(2) ?? '—'} kg</b>
+                      {' · '}
+                      facturado <b className="font-mono">{detail.pesoFacturado.toFixed(2)} kg</b>
+                    </p>
                   )}
                 </div>
               )}

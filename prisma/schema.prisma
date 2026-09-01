@@ -243,6 +243,20 @@ model Order {
   /// El número de factura con el que cuadró, para poder ir a buscarla.
   facturaNumero   String?
   facturaAt       DateTime?
+  /// Lo que PESA lo FACTURADO, que no siempre es lo que pesa lo pedido.
+  ///
+  /// Se calcula con los mismos pesos de Ventra, sobre las líneas de la factura. Es lo que
+  /// de verdad va a subir al camión, así que es lo que manda para la carga y para lo que
+  /// cuesta el domicilio. Vacío cuando no hay factura o cuando ningún producto facturado
+  /// tenía peso en Ventra — un cero se sumaría y diría que ese pedido no pesa nada.
+  pesoFacturado   Float?
+  /// Lo último que se le dijo a PEDIDO sobre esta factura: `estado|numero`.
+  ///
+  /// Sirve para no repetirse. Escribir en PEDIDO mueve su `updatedAt`, que es la marca de
+  /// agua con la que sincronizan las tablets de los vendedores: reenviar cada minuto el
+  /// mismo estado les haría bajarse el día entero por datos móviles para enterarse de que
+  /// no ha pasado nada.
+  facturaAvisado  String?
   vendedor        String?
   sucursalCodigo  String?
   // Id/folio del pedido en PEDIDO. Usado para idempotencia (re-cotizar no duplica).
