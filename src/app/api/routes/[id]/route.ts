@@ -128,105 +128,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json(simpleUpdate)
   }
 
-  // --- Add new client stops (inline order creation) with full re-optimization ---
-  const newStops: StopInput[] = Array.isArray(data.stops) ? data.stops : []
-
-  if (newStops.length > 0) {
-    for (const s of newStops) {
-      if (!s.customerName || s.lat == null || s.lng == null) {
-        return NextResponse.json({ error: 'Cada pedido requiere nombre de cliente y ubicación' }, { status: 400 })
-      }
-    }
-
-    const origin = { lat: route.originLat ?? 0, lng: route.originLng ?? 0 }
-
-    // Capacity validation (existing + new)
-    if (route.vehicleId && route.vehicle) {
-      const existingWeight = route.orders.reduce((sum, o) => sum + o.weight, 0)
-      const newWeight = newStops.reduce((sum, s) => sum + weightFromItems(s.items, s.weight), 0)
-      const totalWeight = existingWeight + newWeight
-      if (totalWeight > route.vehicle.capacity) {
-        return NextResponse.json({
-          error: `Peso total (${totalWeight.toFixed(1)} kg) supera la capacidad del vehículo (${route.vehicle.capacity} kg)`
-        }, { status: 400 })
-      }
-    }
-
-    // Create the new orders
-    await Promise.all(
-      newStops.map((s) =>
-        prisma.order.create({
-          data: {
-            customerName: s.customerName,
-            operationNumber: s.operationNumber || null,
-            address: s.address || s.customerName,
-            endAddress: s.address || null,
-            endLat: s.lat,
-            endLng: s.lng,
-            lat: s.lat,
-            lng: s.lng,
-            weight: weightFromItems(s.items, s.weight),
-            price: Number(s.price) || 0, // costo de domicilio del pedido (no se recalcula)
-            items: (Array.isArray(s.items) ? s.items : []) as unknown as Prisma.InputJsonValue,
-            tripLeg: 'outbound',
-            routeId: id,
-            userId: scope.actorId,
-            ...(scope.branchId ? { branchId: scope.branchId } : {}),
-          }
-        })
-      )
-    )
-
-    // Re-optimize and re-price the full stop list
-    const allOrders = await prisma.order.findMany({ where: { routeId: id } })
-    const stopsForOpt = allOrders.map((o) => ({ id: o.id, lat: (o.endLat ?? o.lat)!, lng: (o.endLng ?? o.lng)! }))
-    const optimizedIds =
-      stopsForOpt.length > 1 ? greedyRouteOptimization(origin, stopsForOpt) : stopsForOpt.map((s) => s.id)
-
-    const ordersMap = Object.fromEntries(allOrders.map((o) => [o.id, o]))
-    const orderedStops = optimizedIds.map((oid) => {
-      const o = ordersMap[oid]
-      return { id: o.id, lat: (o.endLat ?? o.lat)!, lng: (o.endLng ?? o.lng)! }
-    })
-
-    // Distancia real del recorrido (informativa). El precio NO se recalcula: el total
-    // de la ruta es la suma de los costos de domicilio de sus pedidos.
-    const segs = calculateRouteSegments(origin, orderedStops)
-    let totalDistance = segs.reduce((a, b) => a + b, 0)
-    if (orderedStops.length > 0) {
-      const last = orderedStops[orderedStops.length - 1]
-      totalDistance += haversineDistance(last.lat, last.lng, origin.lat, origin.lng)
-    }
-
-    let totalWeight = 0
-    let totalPrice = 0
-
-    for (let i = 0; i < optimizedIds.length; i++) {
-      const oid = optimizedIds[i]
-      const order = ordersMap[oid]
-      const distKm = haversineDistance(origin.lat, origin.lng, (order.endLat ?? order.lat)!, (order.endLng ?? order.lng)!)
-      totalWeight += order.weight
-      totalPrice += order.price || 0
-
-      await prisma.order.update({
-        where: { id: oid },
-        data: { stopOrder: i + 1, tripLeg: 'outbound', segmentKm: distKm }
-      })
-    }
-
-    const updated = await prisma.route.update({
-      where: { id },
-      data: {
-        totalDistance,
-        totalWeight,
-        totalPrice,
-        ...(data.name !== undefined && { name: data.name }),
-        ...(data.status !== undefined && { status: data.status }),
-        ...horasDelEstado(route, data.status),
-      }
-    })
-    return NextResponse.json(updated)
-  }
+  /**
+   * Aquí se podían AÑADIR paradas tecleadas a una ruta ya creada, y con ellas se creaban
+   * pedidos nuevos.
+   *
+   * Se quitó el 03/09/2026, igual que en la creación de la ruta y por lo mismo: un pedido
+   * nacido aquí no tiene folio de PEDIDO, no se le puede atar una factura, no pasa por el
+   * cotejo, y en un camión sólo sube lo facturado y que cuadra. Se creaba algo que después
+   * no se podía repartir.
+   *
+   * Para meter un pedido más en una ruta se elige de los que ya existen.
+   */
 
   const horas = horasDelEstado(route, data.status)
 

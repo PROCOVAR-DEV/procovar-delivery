@@ -1,25 +1,19 @@
-export interface PricingConfig {
-  baseFee: number
-  costPerKm: number
-  costPerKg: number
-}
-
-export function calculateOrderPrice(
-  segmentKm: number,
-  weightKg: number,
-  config: PricingConfig
-): number {
-  return config.baseFee + segmentKm * 2 * config.costPerKm + weightKg * config.costPerKg
-}
-
-export interface HomeDeliveryConfig {
-  domBaseFee: number
-  domCostPerKm: number
-  domCostPerKg: number
-  domIncludedKm: number
-  domMinFee: number
-  domRoundTo: number
-}
+/**
+ * Aquí vivían CUATRO fórmulas de precio y sólo una se usaba.
+ *
+ * `calculateOrderPrice` (base + km + kg), `calculateShareDeliveryPrice` (la fracción de
+ * peso de la carga) y `computeRoutePricing` (el reparto por tramos) no las llamaba nadie:
+ * eran restos de tres intentos distintos de cobrar el reparto. Estaban a un `import` de
+ * volver a usarse, y quien abría el fichero no podía saber cuál era la buena.
+ *
+ * Y `calculateDomicilioOficial` (C = CKK x D x PP) sí se usaba, pero era la SEGUNDA: el
+ * mismo pedido costaba una cosa entrando por el espejo y otra entrando a mano, porque el
+ * otro camino usaba la fórmula de Entrega. Se fue también.
+ *
+ * **El precio del domicilio lo pone la APK de Entrega y nadie más.** Aquí no se calcula:
+ * se muestra. Lo único que queda de esto es la geometría —distancias y orden de visita—,
+ * que sí es de delivery porque es lo que arma el recorrido del camión.
+ */
 
 export interface HomeDeliveryQuote {
   distanceKm: number
@@ -40,69 +34,6 @@ export interface HomeDeliveryQuote {
     beforeMin: number | null
     beforeRound: number | null
   }
-}
-
-/**
- * La fórmula del "domicilio individual" se fue.
- *
- * Era `precio = base + 2·km·costo_km + kg·costo_kg`, con mínimo y redondeo, y convivía con
- * la oficial (`calculateDomicilioOficial`, C = CKK × D × PP). Las dos vivas y aplicándose
- * según por qué endpoint entrara el pedido: el mismo domicilio costaba dos cosas y la
- * pantalla de Configuración decía que la fórmula era una sola.
- *
- * La usaba `/api/quote`, que se retiró: el costo lo pone Entrega. Queda UNA fórmula.
- */
-
-/**
- * Precio de domicilio de UN pedido como su FRACCIÓN DE PESO del costo de transporte.
- *
- *   precio = 2 · distancia · peso_pedido · costo_km / peso_carga
- *
- * - distancia   = km del almacén (punto de partida) al cliente de ese pedido.
- * - 2·          = ida y vuelta.
- * - peso_pedido = peso total de los productos del pedido (kg).
- * - costo_km    = tarifa por km (domCostPerKm).
- * - peso_carga  = suma del peso de TODOS los pedidos del envío (kg) → cada pedido paga
- *                 su parte proporcional al peso. Si peso_carga es 0, el precio es 0.
- */
-export function calculateShareDeliveryPrice(
-  distanceKm: number,
-  orderWeightKg: number,
-  costPerKm: number,
-  pesoCargaKg: number,
-): number {
-  if (!pesoCargaKg || pesoCargaKg <= 0) return 0
-  return (2 * distanceKm * orderWeightKg * (costPerKm || 0)) / pesoCargaKg
-}
-
-/**
- * Fórmula OFICIAL del domicilio (William):  C = CKK × D × PP   (en CUP)
- *   CKK = (costo_km_USD × tipoCambio) / (0.5 × capacidad_kg)   → CUP por kg·km
- *   D   = 2 × distancia(almacén→cliente)  (ida y vuelta)
- *   PP  = peso del pedido (kg)
- * Devuelve el costo en CUP y en USD (÷ tipoCambio). El CKK usa el 50% de la capacidad
- * (el camión no siempre va lleno). costo_km y capacidad salen del vehículo de referencia.
- */
-export function calculateDomicilioOficial(
-  distanceKm: number,
-  pesoKg: number,
-  costoKmUsd: number,
-  capacidadKg: number,
-  tipoCambio: number,
-  baseUsd = 0,
-  factorCapacidad = 0.5,
-): { cup: number; usd: number; ckk: number } {
-  if (!capacidadKg || capacidadKg <= 0 || !tipoCambio || tipoCambio <= 0) {
-    return { cup: 0, usd: 0, ckk: 0 }
-  }
-  const f = factorCapacidad && factorCapacidad > 0 ? factorCapacidad : 0.5
-  const ckk = (costoKmUsd * tipoCambio) / (f * capacidadKg)
-  // La app es en USD: se calcula el costo por la fórmula (CUP) y se pasa a USD. La BASE se
-  // SUMA al costo real (para que nunca salga gratis y mantenga variación). El CUP es solo
-  // para mostrarlo.  precio = base + (CKK × D × PP) ÷ tasa
-  const formulaUsd = (ckk * (2 * distanceKm) * pesoKg) / tipoCambio
-  const usd = formulaUsd + (baseUsd || 0)
-  return { cup: usd * tipoCambio, usd, ckk }
 }
 
 export function haversineDistance(
@@ -170,56 +101,4 @@ export function calculateRouteSegments(
     prev = stop
   }
   return segments
-}
-
-/**
- * Returns the distance from the origin to each stop individually (not cumulative).
- * Used for per-client pricing: each client pays based on how far they are from the depot,
- * regardless of route order.
- */
-export function calculateClientDistances(
-  origin: { lat: number; lng: number },
-  stops: Array<{ lat: number; lng: number }>
-): number[] {
-  return stops.map((stop) => haversineDistance(origin.lat, origin.lng, stop.lat, stop.lng))
-}
-
-/**
- * Segment-based fare allocation.
- *
- * The whole trip's distance cost is split equally among all clients (so no single
- * client pays for the entire transport). On top of that equal share, each stop pays
- * for the inter-stop legs accumulated to reach it — so the first stop pays only the
- * equal share and each later stop pays progressively more.
- *
- *   totalDistance = depot→s1→…→sN→depot (km, incl. return)
- *   base          = totalDistance × costPerKm / N
- *   cumKm[i]      = Σ legs from s1 to s_i (0 for the first stop)
- *   price[i]      = base + cumKm[i] × costPerKm
- */
-export function computeRoutePricing(
-  origin: { lat: number; lng: number },
-  orderedStops: Array<{ lat: number; lng: number }>,
-  costPerKm: number
-): { totalDistance: number; cumKm: number[]; prices: number[] } {
-  const n = orderedStops.length
-  const segments = calculateRouteSegments(origin, orderedStops) // [depot→s1, s1→s2, …]
-
-  let totalDistance = segments.reduce((a, b) => a + b, 0)
-  if (n > 0) {
-    const last = orderedStops[n - 1]
-    totalDistance += haversineDistance(last.lat, last.lng, origin.lat, origin.lng)
-  }
-
-  const cumKm: number[] = []
-  let acc = 0
-  for (let i = 0; i < n; i++) {
-    if (i >= 1) acc += segments[i] // inter-stop leg s_{i-1}→s_i
-    cumKm.push(acc)
-  }
-
-  const base = n > 0 ? (totalDistance * costPerKm) / n : 0
-  const prices = cumKm.map((km) => base + km * costPerKm)
-
-  return { totalDistance, cumKm, prices }
 }

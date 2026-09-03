@@ -15,7 +15,6 @@ import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
 import Drawer from '@/components/Drawer'
 import { imprimirPreDespacho } from '@/lib/imprimirPreDespacho'
-import NuevoPedido from '@/components/NuevoPedido'
 
 interface OrderItem {
   name?: string
@@ -60,6 +59,8 @@ interface OrderRow {
   createdAt: string
   status?: string | null
   deliveredAt?: string | null
+  /** Cómo acabó la parada: `entregado`, `devuelto` o `cancelado`. Manda sobre la ruta. */
+  resultado?: string | null
   routeId?: string | null
   branch?: { id: string; name: string; lat: number; lng: number } | null
   route?: {
@@ -74,7 +75,6 @@ interface OrderRow {
 
 export default function OrdersPage() {
   const { token, sucursalId } = useAppStore()
-  const [nuevo, setNuevo] = useState(false)
   const { format } = useCurrency()
   const t = useT()
   const [search, setSearch] = useState('')
@@ -93,6 +93,28 @@ export default function OrdersPage() {
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
   const [pagina, setPagina] = useState(1)
+  /**
+   * Los pedidos ELEGIDOS, para sumar su pre-despacho en el momento.
+   *
+   * El pre-despacho de «lo filtrado» contesta cuánto sacar del almacén para todo lo que
+   * cuadra con los filtros, y eso es lo que se quiere casi siempre. Pero al armar el
+   * despacho de un camión hace falta la otra pregunta: cuánto sacar para ESTOS ocho
+   * pedidos. Se sacaba a mano.
+   *
+   * Se guardan los ids y no los pedidos: la ficha se busca en la página que se está
+   * viendo. Elegir, cambiar de página y volver conserva la marca.
+   */
+  const [elegidos, setElegidos] = useState<Set<string>>(new Set())
+
+  const alternar = (id: string) =>
+    setElegidos((prev) => {
+      const siguiente = new Set(prev)
+
+      if (siguiente.has(id)) siguiente.delete(id)
+      else siguiente.add(id)
+      return siguiente
+    })
+
   const [detail, setDetail] = useState<OrderRow | null>(null)
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
@@ -168,6 +190,42 @@ export default function OrdersPage() {
   })
 
   const orders = data?.orders ?? []
+  /**
+   * El pre-despacho de LO ELEGIDO, sumado aquí mismo.
+   *
+   * No se le pide al servidor: son los pedidos que están en pantalla y sus líneas ya
+   * vinieron con ellos. Sumarlas en el navegador es instantáneo, y el sentido de esto es
+   * ver el total cambiar según se van marcando.
+   */
+  const preDespachoElegido = (() => {
+    if (elegidos.size === 0) return null
+
+    const porProducto = new Map<string, { producto: string; formatos: number; unidades: number; pesoKg: number }>()
+    let kg = 0
+
+    for (const o of orders) {
+      if (!elegidos.has(o.id)) continue
+      for (const it of o.items ?? []) {
+        const nombre = (it.name || it.description || '').trim()
+
+        if (!nombre) continue
+        const linea = porProducto.get(nombre) ?? { producto: nombre, formatos: 0, unidades: 0, pesoKg: 0 }
+        // Los formatos son la unidad con la que se carga un camión. Sin ellos, las
+        // unidades: es lo que hay, y un cero sería mentira.
+        linea.formatos += Number(it.packs) > 0 ? Number(it.packs) : Number(it.quantity) || 0
+        linea.unidades += Number(it.quantity) || 0
+        linea.pesoKg += Number(it.weightKg) || 0
+        porProducto.set(nombre, linea)
+      }
+      kg += Number(o.weight) || 0
+    }
+
+    return {
+      lineas: [...porProducto.values()].sort((a, b) => b.formatos - a.formatos),
+      pesoKg: kg,
+      pedidos: orders.filter((o) => elegidos.has(o.id)).length,
+    }
+  })()
   const total = data?.total ?? 0
   const paginas = data?.paginas ?? 1
   /**
@@ -228,14 +286,29 @@ export default function OrdersPage() {
   const municipios = facetas?.municipios ?? []
   const vendedores = facetas?.vendedores ?? []
 
-  // Estado de entrega del pedido (para el badge y el filtro):
-  //  - Entregado: ya se entregó (deliveredAt) o su ruta está completada.
-  //  - En reparto: está en una ruta (asignado, saliendo) pero aún no entregado.
-  //  - Pendiente: todavía no está en ninguna ruta.
+  /**
+   * El estado de REPARTO. Manda el RESULTADO de la parada, no el estado de la ruta.
+   *
+   *   Entregado    — se le dio al cliente.
+   *   Devuelto     — volvió al almacén. Ya bajó del camión: se puede repartir otra vez.
+   *   En ruta      — el camión salió con él.
+   *   En despacho  — asignado a una ruta que todavía no ha salido.
+   *   Sin entregar — no está en ningún camión.
+   *
+   * «Entregado» era `deliveredAt` **o que la ruta estuviera completada**, y con eso todo
+   * lo que iba en una ruta cerrada salía entregado — incluido lo que el propio cierre
+   * había grabado como devuelto. Delivery guardaba «devuelto», se lo contaba a PEDIDO, y
+   * a continuación lo pintaba «entregado». Pasó con un pedido real el 2 de septiembre.
+   *
+   * Una ruta completada no dice nada de cada parada; lo dice `resultado`.
+   */
   const deliveryStatus = (o: OrderRow) => {
-    if (o.deliveredAt || o.route?.status === 'completed') return { key: 'entregado', label: 'Entregado', cls: 'bg-green-100 text-green-700' }
-    if (o.routeId || o.route?.id) return { key: 'reparto', label: 'En reparto', cls: 'bg-blue-100 text-blue-700' }
-    return { key: 'pendiente', label: 'Pendiente', cls: 'bg-gray-100 text-gray-600' }
+    if (o.resultado === 'devuelto') return { key: 'devuelto', label: 'Devuelto', cls: 'bg-amber-100 text-amber-700' }
+    if (o.resultado === 'cancelado') return { key: 'devuelto', label: 'Cancelado', cls: 'bg-amber-100 text-amber-700' }
+    if (o.resultado === 'entregado' || o.deliveredAt) return { key: 'entregado', label: 'Entregado', cls: 'bg-green-100 text-green-700' }
+    if (o.route?.status === 'in_progress') return { key: 'en_ruta', label: 'En ruta', cls: 'bg-blue-100 text-blue-700' }
+    if (o.routeId || o.route?.id) return { key: 'en_despacho', label: 'En despacho', cls: 'bg-indigo-100 text-indigo-700' }
+    return { key: 'sin_entregar', label: 'Sin entregar', cls: 'bg-gray-100 text-gray-600' }
   }
 
   /**
@@ -315,20 +388,10 @@ export default function OrdersPage() {
               <p className="text-sm text-gray-500">{t('ord.subtitle')}</p>
             </div>
             {/*
-              El alta MANUAL.
-
-              Casi todos entran solos desde PEDIDO, pero no todos: un cliente que llama,
-              una entrega que se arma en el momento. Quitarlo dejó a la gente sin forma de
-              meter ésos.
+              Aquí estaba «Nuevo pedido». Se quitó el 03/09/2026: un pedido nace en
+              PEDIDO. Uno metido aquí no tiene folio, no se le puede atar la factura, no
+              pasa por el cotejo y por tanto no se puede repartir.
             */}
-            <button
-              type="button"
-              onClick={() => setNuevo(true)}
-              className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              <Icon icon="mdi:plus" />
-              Nuevo pedido
-            </button>
           </div>
           {/*
             El conteo, en su PROPIA línea.
@@ -438,17 +501,19 @@ export default function OrdersPage() {
               ]}
             />
 
-            {/* El estado de REPARTO es de delivery, no de PEDIDO: se calcula de la ruta y
-                se filtra sobre la página. Son dos cosas distintas a propósito. */}
+            {/* El estado de REPARTO es de delivery, y no tiene nada que ver con el del
+                pedido ni con el de la factura: las tres cosas se dicen por separado. */}
             <Selector
               titulo="Estado de reparto en delivery"
               valor={statusFilter === 'todos' ? '' : statusFilter}
               todos="Cualquier reparto"
               onCambio={(v) => setStatusFilter(v || 'todos')}
               opciones={[
-                { valor: 'pendiente', etiqueta: 'Sin ruta' },
-                { valor: 'reparto', etiqueta: 'En reparto' },
+                { valor: 'sin_entregar', etiqueta: 'Sin entregar' },
+                { valor: 'en_despacho', etiqueta: 'En despacho' },
+                { valor: 'en_ruta', etiqueta: 'En ruta' },
                 { valor: 'entregado', etiqueta: 'Entregado' },
+                { valor: 'devuelto', etiqueta: 'Devuelto o cancelado' },
               ]}
             />
 
@@ -555,6 +620,82 @@ export default function OrdersPage() {
           decirle CUÁNTO SACAR: empaques y unidades de cada producto. Se sacaba a mano
           abriendo pedido por pedido.
         */}
+        {/*
+          EL PRE-DESPACHO DE LO ELEGIDO, en vivo.
+
+          El de abajo suma todo lo que cuadra con los filtros, que es lo que se quiere para
+          preparar el día. Éste contesta la otra pregunta —cuánto sacar para ESTOS ocho
+          pedidos— y se actualiza según se van marcando, sin pedirle nada al servidor: las
+          líneas ya vinieron con los pedidos que están en pantalla.
+        */}
+        {preDespachoElegido && (
+          <div className="bg-white rounded-2xl shadow-md p-4 border-l-4 border-primary">
+            <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-700">
+              <Icon icon="mdi:checkbox-marked-outline" className="text-primary" />
+              {elegidos.size} pedido(s) elegidos
+              <span className="font-normal text-gray-500">
+                · {preDespachoElegido.lineas.length} producto(s) ·{' '}
+                {preDespachoElegido.lineas.reduce((t, l) => t + l.formatos, 0)} empaques ·{' '}
+                {preDespachoElegido.pesoKg.toFixed(1)} kg
+              </span>
+              {/* Los elegidos que no están en esta página siguen contando, pero sus
+                  líneas no se pueden sumar sin traerlos: se dice, en vez de dar un
+                  total corto que parece bueno. */}
+              {elegidos.size > preDespachoElegido.pedidos && (
+                <span className="text-xs text-amber-600">
+                  ({elegidos.size - preDespachoElegido.pedidos} en otras páginas, sin sumar)
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  imprimirPreDespacho({
+                    sucursal: sucursalId ? (orders[0]?.branch?.name ?? '') : 'Todas las sucursales',
+                    vehiculo: '',
+                    dia: desde && desde === hasta ? desde : undefined,
+                    pedidos: preDespachoElegido.pedidos,
+                    pesoKg: preDespachoElegido.pesoKg,
+                    lineas: preDespachoElegido.lineas,
+                  })
+                }
+                className="ml-auto flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <Icon icon="mdi:file-eye-outline" />Ver e imprimir
+              </button>
+              <button
+                type="button"
+                onClick={() => setElegidos(new Set())}
+                className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
+              >
+                <Icon icon="mdi:close" />Quitar la marca
+              </button>
+            </div>
+
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-xs uppercase tracking-wide text-gray-500">
+                  <tr>
+                    <th className="text-left py-1">Producto</th>
+                    <th className="text-right py-1">Empaques</th>
+                    <th className="text-right py-1">Unidades</th>
+                    <th className="text-right py-1">kg</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {preDespachoElegido.lineas.map((l) => (
+                    <tr key={l.producto} className="border-t">
+                      <td className="py-1.5 pr-3">{l.producto}</td>
+                      <td className="py-1.5 text-right font-mono font-semibold">{l.formatos}</td>
+                      <td className="py-1.5 text-right font-mono text-gray-600">{l.unidades}</td>
+                      <td className="py-1.5 text-right font-mono text-gray-600">{l.pesoKg ? l.pesoKg.toFixed(1) : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         <details
           className="bg-white rounded-2xl shadow-md p-4"
           onToggle={(e) => setVerResumen((e.currentTarget as HTMLDetailsElement).open)}
@@ -657,6 +798,29 @@ export default function OrdersPage() {
             <table className="w-full table-fixed text-sm">
               <thead>
                 <tr className="border-b text-left text-gray-600">
+                  {/* Elegir para el pre-despacho. La de la cabecera marca o desmarca
+                      TODA la página, que es lo que se hace al armar un camión. */}
+                  <th className="px-3 py-3 w-9">
+                    <input
+                      type="checkbox"
+                      aria-label="Elegir todos los de esta página"
+                      className="h-4 w-4 cursor-pointer accent-blue-600"
+                      checked={sorted.length > 0 && sorted.every((o) => elegidos.has(o.id))}
+                      onChange={(e) => {
+                        const marcar = e.currentTarget.checked
+
+                        setElegidos((prev) => {
+                          const siguiente = new Set(prev)
+
+                          for (const o of sorted) {
+                            if (marcar) siguiente.add(o.id)
+                            else siguiente.delete(o.id)
+                          }
+                          return siguiente
+                        })
+                      }}
+                    />
+                  </th>
                   <th className="px-3 py-3 font-semibold w-[6.5rem]">Fecha</th>
                   {!sucursalId && <th className="px-3 py-3 font-semibold w-[7rem] hidden 2xl:table-cell">Sucursal</th>}
                   <th className="px-3 py-3 font-semibold w-[7.5rem]">Pedido</th>
@@ -667,6 +831,10 @@ export default function OrdersPage() {
                   <th className="px-3 py-3 font-semibold">{t('ord.colAddress')}</th>
                   <th className="px-3 py-3 font-semibold text-right w-[5.5rem]">{t('common.weight')}</th>
                   <th className="px-3 py-3 font-semibold text-right w-[6rem]">{t('common.price')}</th>
+                  {/* LA FACTURA, en la lista y no sólo en el detalle. Quien carga el
+                      camión tiene que poder decir con qué factura sale cada pedido, sin
+                      abrirlos de uno en uno. */}
+                  <th className="px-3 py-3 font-semibold w-[7rem] hidden lg:table-cell">Factura</th>
                   <th className="px-3 py-3 font-semibold w-[6.5rem] hidden md:table-cell">{t('ord.colDelivery')}</th>
                   <th className="px-2 py-3 w-8"></th>
                 </tr>
@@ -678,6 +846,16 @@ export default function OrdersPage() {
                     className="border-b hover:bg-blue-50/40 align-middle cursor-pointer"
                     onClick={() => setDetail(o)}
                   >
+                    {/* La casilla no abre el pedido: se para el clic aquí. */}
+                    <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Elegir el pedido ${o.operationNumber ?? o.customerName}`}
+                        className="h-4 w-4 cursor-pointer accent-blue-600"
+                        checked={elegidos.has(o.id)}
+                        onChange={() => alternar(o.id)}
+                      />
+                    </td>
                     <td className="px-3 py-3 text-gray-600 text-xs whitespace-nowrap">
                       {fmtDate(fechaDe(o))}
                       {/* Sin `orderDate` la fecha es la de copiado, no la del pedido: se
@@ -756,6 +934,29 @@ export default function OrdersPage() {
                     <td className="px-3 py-3 text-right font-semibold text-green-700 font-mono whitespace-nowrap">
                       {o.pedidoCosto != null ? format(o.pedidoCosto) : <span className="text-gray-300 font-normal">sin cotizar</span>}
                     </td>
+                    {/* LA FACTURA. El número es lo que se busca en Ventra, y el color
+                        dice si se puede cargar: sólo lo que cuadra sube al camión. */}
+                    <td className="px-3 py-3 hidden lg:table-cell">
+                      {o.facturaEstado === 'igual' ? (
+                        <span
+                          className="font-mono text-[11px] bg-green-50 text-green-700 px-2 py-0.5 rounded-lg"
+                          title="Cuadra con lo pedido: se puede repartir tal cual."
+                        >
+                          {o.facturaNumero ?? 'cuadra'}
+                        </span>
+                      ) : o.facturaEstado === 'cambiado' ? (
+                        <span
+                          className="font-mono text-[11px] bg-amber-50 text-amber-700 px-2 py-0.5 rounded-lg"
+                          title="Se facturó algo distinto de lo pedido. No puede ir en una ruta hasta que se corrija."
+                        >
+                          {o.facturaNumero ?? '—'} ⚠
+                        </span>
+                      ) : o.facturaEstado === 'sin_factura' ? (
+                        <span className="text-[11px] text-gray-400">sin facturar</span>
+                      ) : (
+                        <span className="text-[11px] text-gray-300 italic" title="El cotejo contra Ventra no ha pasado por este pedido todavía.">sin cotejar</span>
+                      )}
+                    </td>
                     <td className="px-3 py-3 hidden md:table-cell">
                       {(() => { const s = deliveryStatus(o); return (
                         <span className={`inline-block text-[11px] font-medium px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>
@@ -790,7 +991,6 @@ export default function OrdersPage() {
         Era un cuadro centrado de ancho de tarjeta, y aquí dentro hay un mapa, la lista de
         productos y el domicilio: todo salía apretado y con su propia barra de desplazamiento.
       */}
-      <NuevoPedido abierto={nuevo} alCerrar={() => setNuevo(false)} />
 
       {mounted && (
         <Drawer

@@ -49,13 +49,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   /**
-   * Sólo se tocan los pedidos DE ESTA RUTA.
+   * Sólo se tocan los pedidos que VIAJARON EN ESTA RUTA.
    *
    * Se comprueba contra la lista de la ruta y no sólo por el id que venga: un id de otra
    * ruta —o de otra sucursal— marcaría como entregado un pedido que nadie llevó.
+   *
+   * Va por `ultimaRutaId` y no por `routeId` porque uno ya marcado como devuelto soltó su
+   * `routeId` para poder repartirse otra vez. Con `routeId` no se le podía corregir el
+   * resultado: contestaba «ese pedido no va en esta ruta» al que acababa de bajar de ella.
    */
   const suyos = await prisma.order.findMany({
-    where: { routeId: id },
+    where: { ultimaRutaId: id },
     select: { id: true, externalId: true, source: true, customerName: true },
   })
   const porId = new Map(suyos.map((o) => [o.id, o]))
@@ -78,6 +82,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const nota = e.nota?.trim() ? e.nota.trim().slice(0, 500) : null
 
+    const entregado = e.resultado === 'entregado'
+
     await prisma.order.update({
       where: { id: orden.id },
       data: {
@@ -86,8 +92,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         resultadoNota: nota,
         // `deliveredAt` se queda con lo que siempre significó: cuándo se entregó. Un
         // pedido que vuelve lo pierde, porque no se entregó.
-        deliveredAt: e.resultado === 'entregado' ? new Date() : null,
-        status: e.resultado === 'entregado' ? 'delivered' : 'pending',
+        deliveredAt: entregado ? new Date() : null,
+        status: entregado ? 'delivered' : 'pending',
+        /**
+         * Y lo que VUELVE, baja del camión.
+         *
+         * Un devuelto o un cancelado siguen atados a la ruta y por eso no se podían
+         * volver a repartir: `routeId` los daba por ocupados y no aparecían en el armador.
+         * Se sueltan, así que vuelven a la lista como «sin entregar» y pueden ir en la
+         * ruta de mañana.
+         *
+         * `ultimaRutaId` NO se toca: viajaron en este camión, y de ahí sale el
+         * post-despacho y el histórico de la ruta. Soltar los dos campos a la vez era lo
+         * que borraba al devuelto de la hoja de cierre.
+         *
+         * `stopOrder` se queda: es el orden en que se visitó, y en la hoja de cierre hace
+         * falta para leerla en el mismo orden en que se hizo el recorrido.
+         */
+        ...(entregado ? {} : { routeId: null }),
       },
     })
 
