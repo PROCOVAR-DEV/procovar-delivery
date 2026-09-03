@@ -69,10 +69,23 @@ export async function GET(req: NextRequest) {
          * nunca en el armador: se podía crear y no se podía repartir, que es todo lo que
          * había que poder hacer con él.
          */
-        source: { in: ['pedido', 'manual'] },
+        // Sólo los de PEDIDO. El alta a mano en delivery se quitó el 03/09/2026.
+        source: 'pedido',
         routeId: null,
         endLat: { not: null },
         endLng: { not: null },
+        /**
+         * SÓLO lo facturado y que cuadra. Aquí no se negocia.
+         *
+         * Era un filtro que la pantalla mandaba y se podía quitar, y así entró en una ruta
+         * un pedido sin facturar el 2 de septiembre. Lo que sube al camión tiene que ser
+         * lo que se cobró: si no, no cuadra la caja y nadie sabe después qué salió.
+         *
+         *   `cambiado`    — se facturó otra cosa. Se corrige en PEDIDO y entonces cuadra.
+         *   `sin_factura` — todavía no se facturó. No hay nada que repartir.
+         *   `null`        — no se ha cotejado: NO SE SABE, y lo que no se sabe no sube.
+         */
+        facturaEstado: 'igual',
       },
       /**
        * Por la fecha DEL PEDIDO, no por la de copiado.

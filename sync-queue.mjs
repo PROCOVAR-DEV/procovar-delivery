@@ -343,6 +343,9 @@ async function quoteBatch(pedidos) {
       facturaNumero: pedido.facturaNumero ?? null,
       facturaAt: pedido.facturaAt ?? null,
       facturaDomicilio: pedido.facturaDomicilio ?? null,
+      // Si cuadra porque se corrigió o porque vino bien: no es lo mismo, y quien carga
+      // el camión tiene que poder verlo.
+      facturaCorregidoAt: pedido.facturaCorregidoAt ?? null,
       meta: pedido,
     })),
   };
@@ -375,26 +378,13 @@ const ESPERA = new Set(['sucursal-no-mapeada', 'sucursal-sin-punto-de-partida', 
  */
 
 
-// La FÓRMULA (settings.domConfigured) es GLOBAL: sin ella no se calcula nada, en
-// ninguna sucursal. El PUNTO DE PARTIDA ya NO se chequea aquí: es por-sucursal y lo
-// valida la cotización (cada pedido usa el almacén de SU sucursal; si esa sucursal no
-// tiene punto de partida, ese pedido queda en espera, sin frenar a las demás).
+// Ya no hay ninguna fórmula que configurar: el precio del domicilio lo pone la APK de
+// Entrega. Esto sólo se asegura de que exista la fila de Settings, que es de donde salen
+// la moneda y los tipos de vehículo.
 async function checkFormula() {
-  /**
-   * Ya no se espera a que nadie configure nada.
-   *
-   * Esto frenaba el espejo entero hasta que alguien marcaba la fórmula como configurada
-   * en la pantalla de Configuración — que ya no existe: el costo que se le cobra al
-   * cliente lo pone el repartidor desde Entrega, y lo que se calcula aquí es el reparto
-   * de la carga del camión, una cuenta interna.
-   *
-   * Dejar el guard sería que el día que alguien reinicie con la base limpia, el espejo
-   * no traiga NADA y no haya pantalla donde arreglarlo.
-   */
   const settings = await prisma.settings.findFirst();
 
-  if (!settings) await prisma.settings.create({ data: { domConfigured: true } });
-  else if (!settings.domConfigured) await prisma.settings.update({ where: { id: settings.id }, data: { domConfigured: true } });
+  if (!settings) await prisma.settings.create({ data: {} });
 
   return true;
 }

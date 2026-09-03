@@ -177,14 +177,28 @@ export default function RoutesPage() {
   const [filtroEstado, setFiltroEstado] = useState('')
   const [filtroCotizado, setFiltroCotizado] = useState('')
   /**
-   * Contra la FACTURA, y por defecto sólo los que cuadran.
+   * Si el pedido lleva entrega a domicilio. Por defecto, SÓLO los que la llevan.
    *
-   * Lo que se reparte es lo facturado: el cliente cambia lo que pidió antes de que se le
-   * facture, y meter en el camión un pedido que cambió es llevar algo distinto de lo que
-   * se cobró. Se puede quitar el filtro —a veces hace falta ver los demás— pero no es lo
-   * que sale por defecto.
+   * Este filtro existía en la lista de pedidos y el armador nunca lo mandaba, así que se
+   * podían meter en una ruta pedidos que el cliente iba a recoger en el almacén. Pasó el
+   * 2 de septiembre. Se puede quitar —hay repartos que se arman sin la casilla puesta—
+   * pero no es lo que sale por defecto.
    */
-  const [filtroFactura, setFiltroFactura] = useState('cuadra')
+  const [filtroDomicilio, setFiltroDomicilio] = useState('1')
+  /**
+   * En una ruta SÓLO entra lo facturado y que cuadra. No se puede elegir otra cosa.
+   *
+   * Era un filtro con «cuadra» por defecto y se podía quitar. Así se armó una ruta con un
+   * pedido sin facturar el 2 de septiembre, y con eso el camión sale cargado con algo
+   * distinto de lo que se cobró: no cuadra la caja y no hay forma de saber después qué
+   * pasó. No es una preferencia de quien despacha, es la regla.
+   *
+   * Lo que cambió en la factura se corrige —eso es de PEDIDO— y entonces cuadra y se
+   * puede repartir. Lo que no se ha cotejado no se sabe, y lo que no se sabe no sube al
+   * camión. El servidor lo comprueba otra vez al generar la ruta: esto de aquí es la
+   * pantalla, y una pantalla no es una garantía.
+   */
+  const FACTURA_PARA_RUTA = 'cuadra'
 
   // Existing available orders to pick for the route
   const [orderSearch, setOrderSearch] = useState('')
@@ -262,7 +276,7 @@ export default function RoutesPage() {
   const { data: disponibles, isLoading: loadingAvailable } = useQuery({
     // La sucursal y el día entran en la clave: si no, al cambiarlos se seguiría viendo
     // la lista anterior en cache y parecería que el filtro no hace nada.
-    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos, filtroVendedor, kmMax, costoMin, filtroEstado, filtroCotizado, filtroFactura],
+    queryKey: ['orders-available', orderSearch, sucursalRuta, diaPedidos, filtroVendedor, kmMax, costoMin, filtroEstado, filtroCotizado, filtroDomicilio],
     queryFn: async () => {
       const res = await axios.get('/api/orders/available', {
         params: {
@@ -274,7 +288,8 @@ export default function RoutesPage() {
           ...(costoMin ? { costoMin } : {}),
           ...(filtroEstado ? { estado: filtroEstado } : {}),
           ...(filtroCotizado ? { cotizado: filtroCotizado } : {}),
-          ...(filtroFactura ? { factura: filtroFactura } : {}),
+          ...(filtroDomicilio ? { domicilio: filtroDomicilio } : {}),
+          factura: FACTURA_PARA_RUTA,
         },
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -314,7 +329,7 @@ export default function RoutesPage() {
    * los otros filtros.
    */
   const { data: paraFiltros } = useQuery({
-    queryKey: ['orders-available-opciones', sucursalRuta, diaPedidos, filtroEstado, filtroCotizado, filtroFactura],
+    queryKey: ['orders-available-opciones', sucursalRuta, diaPedidos, filtroEstado, filtroCotizado, filtroDomicilio],
     queryFn: async () => {
       const res = await axios.get('/api/orders/available', {
         params: {
@@ -322,7 +337,8 @@ export default function RoutesPage() {
           ...(diaPedidos ? { fecha: diaPedidos } : {}),
           ...(filtroEstado ? { estado: filtroEstado } : {}),
           ...(filtroCotizado ? { cotizado: filtroCotizado } : {}),
-          ...(filtroFactura ? { factura: filtroFactura } : {}),
+          ...(filtroDomicilio ? { domicilio: filtroDomicilio } : {}),
+          factura: FACTURA_PARA_RUTA,
         },
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -1568,20 +1584,10 @@ export default function RoutesPage() {
                           className="w-28 px-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                           aria-label="Costo mínimo del domicilio"
                         />
-                        {/* Contra la FACTURA. Por defecto, sólo lo que cuadra: es lo que
-                            se puede repartir sin llevar algo distinto de lo cobrado. */}
-                        <Selector
-                          titulo="Cuadre con la factura de Ventra"
-                          icono="mdi:file-check-outline"
-                          valor={filtroFactura}
-                          todos="Cuadre: todos"
-                          onCambio={setFiltroFactura}
-                          opciones={[
-                            { valor: 'cuadra', etiqueta: 'Sólo los que cuadran' },
-                            { valor: 'cambiado', etiqueta: 'Cambió en la factura' },
-                            { valor: 'sin_factura', etiqueta: 'Sin facturar todavía' },
-                          ]}
-                        />
+                        {/* El cuadre con la factura NO es un filtro que se pueda tocar:
+                            en una ruta sólo entra lo facturado y que cuadra. Ver el
+                            comentario de `FACTURA_PARA_RUTA`. Lo demás se mira en la lista
+                            de pedidos, que es para mirar y no para cargar el camión. */}
                         <Selector
                           titulo="Estado del pedido en PEDIDO"
                           valor={filtroEstado}
@@ -1596,6 +1602,19 @@ export default function RoutesPage() {
                         {/* Sin costo de Entrega el pedido se puede meter igual en la ruta,
                             pero no se sabe lo que se cobra por llevarlo: conviene poder
                             separarlos. */}
+                        {/* Si el pedido LLEVA entrega a domicilio. Por defecto sólo
+                            los que la llevan: lo demás lo recoge el cliente. */}
+                        <Selector
+                          titulo="Si el pedido lleva entrega a domicilio"
+                          icono="mdi:home-map-marker"
+                          valor={filtroDomicilio}
+                          todos="Con y sin domicilio"
+                          onCambio={setFiltroDomicilio}
+                          opciones={[
+                            { valor: '1', etiqueta: 'Sólo con domicilio' },
+                            { valor: '0', etiqueta: 'Sólo sin domicilio' },
+                          ]}
+                        />
                         <Selector
                           titulo="Si Entrega ya le puso costo de domicilio"
                           valor={filtroCotizado}
@@ -1606,10 +1625,10 @@ export default function RoutesPage() {
                             { valor: '0', etiqueta: 'Sin cotizar' },
                           ]}
                         />
-                        {(filtroVendedor || kmMax || costoMin || filtroEstado || filtroCotizado) && (
+                        {(filtroVendedor || kmMax || costoMin || filtroEstado || filtroCotizado || filtroDomicilio !== '1') && (
                           <button
                             type="button"
-                            onClick={() => { setFiltroVendedor(''); setKmMax(''); setCostoMin(''); setFiltroEstado(''); setFiltroCotizado('') }}
+                            onClick={() => { setFiltroVendedor(''); setKmMax(''); setCostoMin(''); setFiltroEstado(''); setFiltroCotizado(''); setFiltroDomicilio('1') }}
                             className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700"
                           >
                             Limpiar

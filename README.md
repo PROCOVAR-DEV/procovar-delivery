@@ -94,16 +94,20 @@ prisma/
 
 ---
 
-## 💰 Pricing Formula
+## 💰 El precio del domicilio
 
-```
-price = base_fee + (distance_km × cost_per_km) + (weight_kg × cost_per_kg)
-```
+**Delivery no calcula precios.** El precio del domicilio lo pone la **APK de Entrega**, y
+llega a cada pedido en `pedidoCosto`. Aquí sólo se muestra.
 
-Default values:
-- `base_fee` = $5.00
-- `cost_per_km` = $1.50/km
-- `cost_per_kg` = $0.50/kg
+Hubo hasta cinco fórmulas escritas en este repo —`base + km + kg`, la fracción de peso de
+la carga, el reparto por tramos, `C = CKK × D × PP`— y varias vivas a la vez: el mismo
+pedido costaba una cosa u otra según por qué endpoint entrara. Se quitaron todas el
+03/09/2026. Si hace falta cambiar cómo se cobra un domicilio, se cambia en Entrega.
+
+Lo que sí calcula delivery, porque es suyo:
+
+- **El peso** de cada pedido, para saber si la carga cabe en el camión.
+- **La distancia** del almacén al cliente y el orden de visita, que es el recorrido.
 
 ---
 

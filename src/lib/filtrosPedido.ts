@@ -27,8 +27,17 @@ export interface FiltrosPedido {
   /** Id de la sucursal. Acota ADEMÁS del alcance, nunca en su lugar. */
   branchId: string
   /**
-   * El estado de REPARTO, que es de delivery y no de PEDIDO:
-   * `pendiente` (sin ruta) | `reparto` (en una) | `entregado`.
+   * El estado de REPARTO, que es de delivery y no de PEDIDO. Son cuatro, y no tienen nada
+   * que ver con el estado del pedido —en proceso, completado, expirado— ni con el de la
+   * factura. Las tres cosas se dicen por separado y ninguna manda sobre las otras:
+   *
+   *   `sin_entregar` — no está en ningún camión. Es donde empieza y donde vuelve lo devuelto.
+   *   `en_despacho`  — asignado a una ruta que todavía no ha salido.
+   *   `en_ruta`      — el camión salió con él.
+   *   `entregado`    — se le dio al cliente.
+   *
+   * Y `devuelto`, que no es un estado sino el RESULTADO de la parada: el pedido baja del
+   * camión y vuelve a `sin_entregar`, listo para la ruta de mañana.
    *
    * Se filtraba sobre la página que se estaba viendo, así que el conteo decía 358 y la
    * tabla salía vacía: los de esa página no estaban en ninguna ruta, y los que sí lo
@@ -37,7 +46,7 @@ export interface FiltrosPedido {
   reparto: string
   /**
    * Cómo quedó frente a la FACTURA de Ventra:
-   * `igual` | `cambiado` | `sin_factura`, o `cuadra` (igual + sin cotejar todavía).
+   * `igual` | `cambiado` | `sin_factura` | `sin_cotejar`, o `cuadra` (sólo `igual`).
    *
    * Lo que se reparte es lo facturado: un pedido que cambió y no se ha corregido no
    * puede salir en el camión, porque va a llevar otra cosa de la que se cobró.
@@ -185,29 +194,56 @@ export function whereDeFiltros(f: FiltrosPedido): Prisma.OrderWhereInput {
    * diciendo 358: los de esa página no estaban en ninguna ruta, y los que sí estaban
    * vivían en otra que nunca se llegaba a mirar.
    */
-  if (f.reparto === 'pendiente') condiciones.push({ routeId: null, deliveredAt: null })
-  if (f.reparto === 'reparto') {
+  /**
+   * Manda el RESULTADO de la parada, no el estado de la ruta.
+   *
+   * «Entregado» era `deliveredAt` **o que la ruta estuviera completada**, y eso convertía
+   * en entregado a todo lo que iba en una ruta cerrada — incluido lo que el propio cierre
+   * había grabado como DEVUELTO. Delivery se contradecía a sí mismo: guardaba «devuelto»,
+   * se lo contaba a PEDIDO, y luego lo pintaba «entregado». Pasó con un pedido real de La
+   * Habana el 2 de septiembre.
+   *
+   * Una ruta completada no dice nada de cada parada. Lo que lo dice es `resultado`.
+   */
+  if (f.reparto === 'sin_entregar') {
     condiciones.push({
-      routeId: { not: null },
+      routeId: null,
       deliveredAt: null,
-      route: { is: { status: { not: 'completed' } } },
+      OR: [{ resultado: null }, { resultado: { not: 'entregado' } }],
     })
   }
+  if (f.reparto === 'en_despacho') {
+    condiciones.push({ routeId: { not: null }, route: { is: { status: 'planned' } } })
+  }
+  if (f.reparto === 'en_ruta') {
+    condiciones.push({ routeId: { not: null }, route: { is: { status: 'in_progress' } } })
+  }
   if (f.reparto === 'entregado') {
-    condiciones.push({
-      OR: [{ deliveredAt: { not: null } }, { route: { is: { status: 'completed' } } }],
-    })
+    condiciones.push({ OR: [{ resultado: 'entregado' }, { deliveredAt: { not: null } }] })
+  }
+  if (f.reparto === 'devuelto') {
+    condiciones.push({ resultado: { in: ['devuelto', 'cancelado'] } })
   }
 
   /**
    * Y el cotejo con la facturación.
    *
-   * `cuadra` es el que se usa para armar rutas: lo que coincide con la factura MÁS lo que
-   * todavía no se ha cotejado (no hay facturación de ese día traída). Lo que se sabe que
-   * cambió se deja fuera: repartirlo es llevar algo distinto de lo que se cobró.
+   * `cuadra` es el que se usa para armar rutas, y es SÓLO lo que se comprobó contra la
+   * factura y coincide.
+   *
+   * Antes incluía además lo que tenía `facturaEstado` nulo, con la idea de que «todavía
+   * no se ha cotejado» era casi lo mismo que «cuadra». No lo es. Nulo quiere decir que
+   * NO SE SABE: que la VPN a Ventra estaba caída, que el pedido cae fuera de los días que
+   * se repasan, o que su sucursal no cuadra con ninguna base de Ventra. Con eso, un
+   * pedido que nadie comprobó entraba en la ruta como si estuviera comprobado, y así se
+   * armó una ruta con un pedido sin facturar el 2 de septiembre.
+   *
+   * Ahora lo nulo tiene su propia opción, `sin_cotejar`, y hay que pedirlo a propósito.
    */
   if (f.factura === 'cuadra') {
-    condiciones.push({ OR: [{ facturaEstado: 'igual' }, { facturaEstado: null }] })
+    condiciones.push({ facturaEstado: 'igual' })
+  } else if (f.factura === 'sin_cotejar') {
+    condiciones.push({ facturaEstado: null })
   } else if (f.factura) {
     condiciones.push({ facturaEstado: f.factura })
   }

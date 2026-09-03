@@ -97,9 +97,6 @@ async function main() {
 
   await prisma.settings.create({
     data: {
-      domConfigured: true,
-      domMinFee: 1,
-      domFactorCapacidad: 0.5,
       currencies: [{ code: 'CUP', rate: 700 }],
     },
   })

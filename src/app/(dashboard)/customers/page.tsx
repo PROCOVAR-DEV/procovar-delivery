@@ -7,8 +7,6 @@ import axios from 'axios'
 import { useAppStore } from '@/store/useAppStore'
 import { Icon } from '@iconify/react'
 import Selector from '@/components/Selector'
-import Drawer from '@/components/Drawer'
-import ClienteNuevo from '@/components/ClienteNuevo'
 
 interface Customer {
   id: string
@@ -41,7 +39,6 @@ export default function CustomersPage() {
   const [kmMax, setKmMax] = useState('')
   const [origen, setOrigen] = useState('')
   const [pagina, setPagina] = useState(1)
-  const [showForm, setShowForm] = useState(false)
 
   /**
    * La búsqueda la hace el servidor, no esta pantalla.
@@ -145,33 +142,13 @@ export default function CustomersPage() {
               </div>
             )}
           </div>
-          <button
-            onClick={() => setShowForm(true)}
-            className="px-4 py-2 bg-primary text-white rounded-xl text-sm font-medium hover:bg-primary/90 flex items-center gap-1"
-          >
-            <Icon icon="mdi:account-plus-outline" />
-            Nuevo cliente manual
-          </button>
+          {/*
+            Aquí estaba «Nuevo cliente manual». Se quitó el 03/09/2026 con el alta de
+            pedidos a mano: los clientes son de PEDIDO y llegan solos por el espejo. Uno
+            creado aquí no existía allí, así que ningún pedido podía apuntarle y acababa
+            duplicando al que ya estaba escrito de otra forma.
+          */}
         </div>
-
-        {/*
-          El alta, en CAJÓN.
-
-          Se abría empujando la lista hacia abajo: el mapa ocupa media pantalla, así que al
-          pulsar «nuevo» desaparecía de la vista lo que se estaba mirando y había que
-          desplazarse para volver. Un cajón deja la lista donde estaba.
-        */}
-        <Drawer
-          abierto={showForm}
-          alCerrar={() => setShowForm(false)}
-          titulo="Nuevo cliente"
-          subtitulo="Local de delivery: los de PEDIDO llegan solos"
-          ancho="lg"
-        >
-          {/* El mismo formulario que se usa dentro del pedido a mano: uno solo, para
-              que no haya dos formas distintas de que falte un dato. */}
-          <ClienteNuevo alGuardar={() => setShowForm(false)} alCancelar={() => setShowForm(false)} />
-        </Drawer>
 
         {/* Los mismos filtros que en Pedidos, con lo que un cliente tiene. Los aplica la
             base: son siete mil, y filtrar en la pantalla obliga a traérselos todos. */}

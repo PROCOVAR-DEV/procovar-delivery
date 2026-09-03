@@ -14,48 +14,11 @@ import { avisarEstadoDeFondo } from '@/lib/avisarEstadoAPedido'
 
 export const dynamic = 'force-dynamic'
 
-interface OrderItem {
-  productId?: string
-  name?: string
-  description?: string
-  weight?: number
-  /** Peso de la LÍNEA ya resuelto (packs x peso por unidad de venta). Ver homeDeliveryQuote. */
-  weightKg?: number | null
-  packaging?: string | null
-  category?: string | null
-  quantity: number
-}
-
 /**
- * El peso de una parada.
- *
- * Las líneas que vienen de PEDIDO traen `weightKg`: el peso de la línea ENTERA, ya
- * resuelto contra Ventra. Esto sólo miraba `weight x quantity` —que en esas líneas no
- * existe—, así que daba cero y se caía al respaldo: la ruta se planificaba con el peso
- * que hubiera mandado la pantalla y no con el de los productos.
+ * Aquí vivían `OrderItem`, `StopInput` y `weightFromItems`: las paradas que se TECLEABAN
+ * dentro de una ruta. Se fueron el 03/09/2026 — una ruta se arma con pedidos que ya
+ * existen, y el peso lo trae cada pedido ya resuelto desde el espejo.
  */
-function weightFromItems(items: OrderItem[] | undefined, fallback: number): number {
-  if (!Array.isArray(items) || items.length === 0) return fallback || 1
-  const w = items.reduce((a, it) => {
-    const linea = Number(it.weightKg)
-    if (Number.isFinite(linea) && linea > 0) return a + linea
-    return a + (Number(it.weight) || 0) * (Number(it.quantity) || 0)
-  }, 0)
-  return w > 0 ? w : (fallback || 1)
-}
-
-interface StopInput {
-  customerName: string
-  weight: number
-  address: string
-  lat: number
-  lng: number
-  operationNumber?: string | null
-  items?: OrderItem[]
-  // Costo de domicilio del pedido (ya calculado por PEDIDO). El generador de rutas NO
-  // lo calcula: solo lo lleva para sumarlo en el total de la ruta.
-  price?: number | null
-}
 
 async function generateRouteCode(): Promise<string> {
   const today = new Date()
@@ -102,7 +65,9 @@ async function createRouteFromExistingOrders(
       // Los de PEDIDO y los metidos a mano: los dos se reparten igual. Pedía sólo
       // `'pedido'`, así que un pedido manual se podía elegir en la lista y al generar la
       // ruta contestaba «ya no están disponibles» — sin decir que el motivo era su origen.
-      id: { in: orderIds }, source: { in: ['pedido', 'manual'] }, routeId: null,
+      // Sólo los de PEDIDO: el alta a mano se quitó y no quedan pedidos que no vengan
+      // de allí. Ver el comentario donde estaba `POST /api/orders`.
+      id: { in: orderIds }, source: 'pedido', routeId: null,
       endLat: { not: null }, endLng: { not: null },
       ...(opts.branchId ? { branchId: opts.branchId } : {}),
     },
@@ -120,6 +85,38 @@ async function createRouteFromExistingOrders(
 
     return NextResponse.json(
       { error: `${faltan} de los ${orderIds.length} pedidos ya están en otra ruta. Vuelve a elegirlos.` },
+      { status: 409 },
+    )
+  }
+
+  /**
+   * Y NADA que no esté facturado y cuadre sube al camión.
+   *
+   * Se comprueba aquí, aunque la pantalla ya sólo ofrezca los que cuadran, porque una
+   * pantalla no es una garantía: basta con que alguien mande los ids a mano, o con que un
+   * pedido se coteje otra vez entre que se eligió y se generó la ruta. Lo que se carga
+   * tiene que ser lo que se cobró.
+   *
+   * Se dice CUÁLES y en qué estado están. Un «no se pudo» a secas obliga a adivinar cuál
+   * de los quince pedidos es el que sobra.
+   */
+  const noFacturados = orders.filter((o) => o.facturaEstado !== 'igual')
+
+  if (noFacturados.length > 0) {
+    const motivo = (e: string | null) =>
+      e === 'cambiado' ? 'cambió en la factura' : e === 'sin_factura' ? 'sin facturar' : 'sin cotejar'
+    const detalle = noFacturados
+      .slice(0, 5)
+      .map((o) => `${o.operationNumber || o.customerName} (${motivo(o.facturaEstado)})`)
+      .join(', ')
+
+    return NextResponse.json(
+      {
+        error:
+          `En una ruta sólo entra lo facturado y que cuadre. ${noFacturados.length} no cumplen: ` +
+          detalle +
+          (noFacturados.length > 5 ? ` y ${noFacturados.length - 5} más.` : '.'),
+      },
       { status: 409 },
     )
   }
@@ -170,7 +167,8 @@ async function createRouteFromExistingOrders(
     totalPrice += o.pedidoCosto || 0
     await prisma.order.update({
       where: { id: o.id },
-      data: { routeId: route.id, stopOrder: i + 1, tripLeg: 'outbound', segmentKm: distKm, price: o.pedidoCosto || 0 },
+      // `ultimaRutaId` va junto a `routeId` y no se suelta nunca: es en qué camión viajó.
+      data: { routeId: route.id, ultimaRutaId: route.id, stopOrder: i + 1, tripLeg: 'outbound', segmentKm: distKm, price: o.pedidoCosto || 0 },
     })
   }
 
@@ -275,7 +273,6 @@ export async function POST(req: NextRequest) {
     originLat,
     originLng,
     deliveryDate,
-    stops = [],
     orderIds = [],
     branchId,
   }: {
@@ -285,7 +282,6 @@ export async function POST(req: NextRequest) {
     originLat?: number
     originLng?: number
     deliveryDate?: string
-    stops?: StopInput[]
     orderIds?: string[]
     branchId?: string
   } = await req.json()
@@ -320,138 +316,20 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  if (!Array.isArray(stops) || stops.length === 0) {
-    return NextResponse.json({ error: 'Se requiere al menos un pedido de cliente' }, { status: 400 })
-  }
-
-  // Validate each stop
-  for (const s of stops) {
-    if (!s.customerName || s.lat == null || s.lng == null) {
-      return NextResponse.json({ error: 'Cada pedido requiere nombre de cliente y ubicación' }, { status: 400 })
-    }
-  }
-
-  // El generador de rutas NO calcula precio: solo agrupa pedidos y valida capacidad
-  // por peso. El costo de cada pedido ya viene calculado (domicilio) y el total de la
-  // ruta es la suma de esos costos.
-
-  // Validate vehicle capacity against total stop weight
-  const totalStopWeight = stops.reduce((sum, s) => sum + weightFromItems(s.items, s.weight), 0)
-  if (vehicleId) {
-    const vehicle = await prisma.vehicle.findFirst({ where: { id: vehicleId } })
-    if (vehicle && totalStopWeight > vehicle.capacity) {
-      return NextResponse.json({
-        error: `Peso total (${totalStopWeight.toFixed(1)} kg) supera la capacidad del vehículo (${vehicle.capacity} kg)`
-      }, { status: 400 })
-    }
-  }
-
-  const origin = { lat: originLat, lng: originLng }
-
-  const routeCode = await generateRouteCode()
-
-  const route = await prisma.route.create({
-    data: {
-      name: name || null,
-      routeCode,
-      userId: scope.actorId,
-      ...(scope.branchId ? { branchId: scope.branchId } : {}),
-      ...(vehicleId && { vehicleId }),
-      originAddress: originAddress ?? null,
-      originLat,
-      originLng,
-      deliveryDate: deliveryDate ? new Date(deliveryDate) : null,
-    }
-  })
-
-  // Create the orders inline from the stop inputs
-  const createdOrders = await Promise.all(
-    stops.map((s) =>
-      prisma.order.create({
-        data: {
-          customerName: s.customerName,
-          operationNumber: s.operationNumber || null,
-          address: s.address || s.customerName,
-          endAddress: s.address || null,
-          endLat: s.lat,
-          endLng: s.lng,
-          lat: s.lat,
-          lng: s.lng,
-          weight: weightFromItems(s.items, s.weight),
-          // Costo de domicilio ya calculado (viene del pedido). No se recalcula aquí.
-          price: Number(s.price) || 0,
-          items: (Array.isArray(s.items) ? s.items : []) as unknown as Prisma.InputJsonValue,
-          tripLeg: 'outbound',
-          routeId: route.id,
-          userId: scope.actorId,
-          ...(scope.branchId ? { branchId: scope.branchId } : {}),
-        }
-      })
-    )
+  /**
+   * Y no hay otro camino.
+   *
+   * Aquí se podían TECLEAR las paradas —cliente, dirección, coordenadas, productos— y la
+   * ruta creaba pedidos nuevos con ellas. Eso creaba pedidos sin folio de PEDIDO: sin
+   * factura que atarles, sin cotejo, y por tanto imposibles de repartir bajo la regla de
+   * que en un camión sólo sube lo facturado. Una puerta para crear algo que no servía.
+   *
+   * Se quitó el 03/09/2026, con el alta de pedidos y clientes a mano. Una ruta se arma
+   * eligiendo pedidos que ya existen.
+   */
+  return NextResponse.json(
+    { error: 'Una ruta se arma eligiendo pedidos ya existentes. Manda `orderIds`.' },
+    { status: 400 },
   )
-
-  // Optimize visiting order from the depot
-  const stopsForOpt = createdOrders.map((o) => ({ id: o.id, lat: o.endLat!, lng: o.endLng! }))
-  const optimizedIds =
-    stopsForOpt.length > 1 ? greedyRouteOptimization(origin, stopsForOpt) : stopsForOpt.map((s) => s.id)
-
-  const ordersMap = Object.fromEntries(createdOrders.map((o) => [o.id, o]))
-  const orderedStops = optimizedIds.map((id) => {
-    const o = ordersMap[id]
-    return { id: o.id, lat: o.endLat!, lng: o.endLng! }
-  })
-
-  // Distancia REAL del recorrido del camión (depósito→s1→…→sN→depósito), solo informativa.
-  const segs = calculateRouteSegments(origin, orderedStops)
-  let totalDistance = segs.reduce((a, b) => a + b, 0)
-  if (orderedStops.length > 0) {
-    const last = orderedStops[orderedStops.length - 1]
-    totalDistance += haversineDistance(last.lat, last.lng, origin.lat, origin.lng)
-  }
-
-  // Total de la ruta = SUMA de los costos de domicilio de sus pedidos (ya calculados).
-  // El peso total valida la capacidad del camión. No se calcula ningún precio aquí.
-  let totalWeight = 0
-  let totalPrice = 0
-
-  for (let i = 0; i < optimizedIds.length; i++) {
-    const orderId = optimizedIds[i]
-    const order = ordersMap[orderId]
-    const distKm = haversineDistance(origin.lat, origin.lng, order.endLat!, order.endLng!)
-    totalWeight += order.weight
-    totalPrice += order.price || 0
-
-    // Solo el orden de visita y la distancia (informativa); el precio no se toca.
-    await prisma.order.update({
-      where: { id: orderId },
-      data: { stopOrder: i + 1, segmentKm: distKm },
-    })
-  }
-
-  await prisma.route.update({
-    where: { id: route.id },
-    data: {
-      totalDistance,
-      totalWeight,
-      totalPrice,
-      optimized: true,
-    }
-  })
-
-  if (vehicleId) {
-    await prisma.vehicle.update({
-      where: { id: vehicleId },
-      data: { status: 'in_use' },
-    })
-  }
-
-  const fullRoute = await prisma.route.findUnique({
-    where: { id: route.id },
-    include: {
-      vehicle: { select: { id: true, name: true, type: true, plate: true, capacity: true } },
-      orders: { orderBy: { stopOrder: 'asc' } }
-    }
-  })
-
-  return NextResponse.json(fullRoute, { status: 201 })
 }
+

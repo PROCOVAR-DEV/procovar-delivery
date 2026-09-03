@@ -21,47 +21,28 @@ export async function PUT(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const {
-    baseFee, costPerKm, costPerKg, currency, cupRate, currencies,
-    domBaseFee, domCostPerKm, domCostPerKg, domIncludedKm, domMinFee, domRoundTo, domTipoCambio,
-    domFactorCapacidad, tiposVehiculo,
+    currency, cupRate, currencies, tiposVehiculo,
   } = await req.json()
 
   let settings = await prisma.settings.findFirst()
 
-  // Guardar cualquier campo de la fórmula del domicilio marca la fórmula como
-  // CONFIGURADA (habilita el cálculo, junto con el punto de partida).
-  const domProvided = [domBaseFee, domCostPerKm, domCostPerKg, domIncludedKm, domMinFee, domRoundTo, domTipoCambio]
-    .some((v) => v !== undefined)
-
+  /**
+   * Aquí ya no se configura ningún precio.
+   *
+   * Quedan la moneda en la que se muestran los importes y los tipos de vehículo, que son
+   * el costo de la FLOTA. Lo que se le cobra al cliente por un domicilio lo pone la APK de
+   * Entrega, y esta pantalla llegó a tener doce campos que no leía nadie.
+   */
   const updateData = {
-    ...(baseFee !== undefined && { baseFee }),
-    ...(costPerKm !== undefined && { costPerKm }),
-    ...(costPerKg !== undefined && { costPerKg }),
     ...(currency !== undefined && { currency }),
     ...(cupRate !== undefined && { cupRate, cupRateUpdatedAt: new Date() }),
     ...(currencies !== undefined && { currencies }),
-    ...(domBaseFee !== undefined && { domBaseFee }),
-    ...(domCostPerKm !== undefined && { domCostPerKm }),
-    ...(domCostPerKg !== undefined && { domCostPerKg }),
-    ...(domIncludedKm !== undefined && { domIncludedKm }),
-    ...(domMinFee !== undefined && { domMinFee }),
-    ...(domRoundTo !== undefined && { domRoundTo }),
-    ...(domTipoCambio !== undefined && { domTipoCambio }),
-    ...(domFactorCapacidad !== undefined && { domFactorCapacidad }),
-    ...(domProvided && { domConfigured: true }),
     ...(tiposVehiculo !== undefined && { tiposVehiculo }),
   }
 
-  if (settings) {
-    settings = await prisma.settings.update({
-      where: { id: settings.id },
-      data: updateData,
-    })
-  } else {
-    settings = await prisma.settings.create({
-      data: { baseFee, costPerKm, costPerKg, currency, cupRate },
-    })
-  }
+  settings = settings
+    ? await prisma.settings.update({ where: { id: settings.id }, data: updateData })
+    : await prisma.settings.create({ data: updateData })
 
   return NextResponse.json(settings)
 }

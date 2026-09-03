@@ -7,9 +7,8 @@ import {
   buildOrderData,
   BranchOrigin,
 } from '@/lib/homeDeliveryQuote'
-import { haversineDistance, calculateDomicilioOficial } from '@/lib/pricing'
+import { haversineDistance } from '@/lib/pricing'
 import { fetchWeightCatalog } from '@/lib/warehouse'
-import { tasaDeSucursal } from '@/lib/tasaCambio'
 import type { WeightCatalog } from '@/lib/productMatch'
 
 import { avisarCambio } from '@/lib/avisarCambio'
@@ -17,14 +16,19 @@ import { avisarCambio } from '@/lib/avisarCambio'
 export const dynamic = 'force-dynamic'
 
 /**
- * POST /api/quote/batch — Calcula el precio de domicilio de MUCHOS pedidos de una
- * vez (los que ya tenemos extraídos de PEDIDO). Auth: header `x-api-key`.
+ * POST /api/quote/batch — el ESPEJO: trae de PEDIDO los pedidos y los deja aquí con su
+ * peso y su distancia listos para armar rutas. Auth: header `x-api-key`.
  *
  * Body: { preview?: boolean, orders: OrderQuoteInput[] }
  *
- * Regla clave: el cálculo se hace SOLO si el pedido trae geolocalización del
- * cliente (lat/lng). Si no la trae, ese pedido se SALTA (no es error) y se
- * reporta como `skipped` con su razón. Igual si su sucursal no está mapeada.
+ * El nombre `quote` se quedó de cuando esto cotizaba. **Ya no cotiza**: el precio del
+ * domicilio lo pone la APK de Entrega y llega en `pedidoCosto`. Lo que sí calcula, porque
+ * es suyo, es el PESO —lo que decide si la carga cabe en el camión— y la DISTANCIA al
+ * almacén, que es lo que arma el recorrido.
+ *
+ * Regla clave: sin geolocalización del cliente no hay distancia, así que ese pedido se
+ * SALTA (no es error) y se dice por qué. Igual si su sucursal no está mapeada o no tiene
+ * punto de partida.
  */
 export async function POST(req: NextRequest) {
   if (!isValidServiceKey(req)) {
@@ -39,7 +43,8 @@ export async function POST(req: NextRequest) {
   const preview: boolean = !!body.preview
   const orders: OrderQuoteInput[] = body.orders
 
-  // Config de pricing (una sola vez).
+  // La moneda en la que la pantalla muestra los importes. Ya no hay nada de precios que
+  // configurar aquí: el domicilio lo cobra Entrega.
   let settings = await prisma.settings.findFirst()
   if (!settings) settings = await prisma.settings.create({ data: {} })
 
@@ -90,61 +95,11 @@ export async function POST(req: NextRequest) {
     return info
   }
 
-  // Vehículo de REFERENCIA por sucursal (el marcado `usarParaDomicilio`, del dueño de la
-  // sucursal). Define capacidad + costo_km para el CKK de la fórmula del jefe. Cache por
-  // creatorId de la sucursal.
-  type RefVehiculo = { costoKmUsd: number; capacidadKg: number } | null
-  const vehiculoCache = new Map<string, RefVehiculo>()
-  async function getVehiculoRef(creatorId: string): Promise<RefVehiculo> {
-    if (vehiculoCache.has(creatorId)) return vehiculoCache.get(creatorId) as RefVehiculo
-    const vs = await prisma.vehicle.findMany({
-      where: { userId: creatorId, costoKmUsd: { not: null }, capacity: { gt: 0 } },
-      select: { costoKmUsd: true, capacity: true, usarParaDomicilio: true },
-    })
-    // Decisión del jefe: UN solo CKK para todos los repartos, el MAYOR (curarse en salud).
-    // CKK ∝ costoKmUsd / capacidad. Si hay vehículos marcados `usarParaDomicilio` (uno por
-    // tipo), se toma el CKK máximo ENTRE LOS MARCADOS; si no hay ninguno marcado, el máximo
-    // de toda la flota.
-    const marcados = vs.filter((v) => v.usarParaDomicilio && v.costoKmUsd != null)
-    const pool = marcados.length ? marcados : vs
-    let best: RefVehiculo = null
-    let bestCkk = -1
-    for (const v of pool) {
-      if (v.costoKmUsd == null) continue
-      const ckk = v.costoKmUsd / v.capacity
-      if (ckk > bestCkk) { bestCkk = ckk; best = { costoKmUsd: v.costoKmUsd, capacidadKg: v.capacity } }
-    }
-    vehiculoCache.set(creatorId, best)
-    return best
-  }
-
-  /**
-   * La tasa CUP la pone ACCESOS, por sucursal. Aquí ya no se teclea ninguna.
-   *
-   * Antes salía del bloque «Monedas» de Configuración: un número escrito a mano, el mismo
-   * para las ocho sucursales y sin nadie que lo refrescara. Con eso, un domicilio de
-   * Santiago se convertía con la tasa de La Habana —creíble, y mal— y encima discrepaba
-   * de PEDIDO, que sí la trae de Entrega.
-   *
-   * Se pide por sucursal y se recuerda unos minutos: cada lote son doscientos pedidos y
-   * sin eso serían doscientas llamadas para cotizar una tanda.
-   */
-  const tasas = new Map<string, number | null>()
-
-  async function tasaDe(codigo: string | null | undefined): Promise<number | null> {
-    const clave = (codigo || '').toUpperCase()
-
-    if (!clave) return null
-    if (!tasas.has(clave)) tasas.set(clave, (await tasaDeSucursal(clave))?.cupPorUsd ?? null)
-    return tasas.get(clave) ?? null
-  }
   const results: Array<Record<string, unknown>> = []
   let quoted = 0
   let persisted = 0
   let skipped = 0
 
-  // FÓRMULA OFICIAL (William) por pedido:  C = CKK × D × PP.
-  // CKK = costo_km · tc / (0.5 · capacidad)  (del vehículo de referencia de la sucursal).
   for (const input of orders) {
     const ref = input.externalId || input.operationNumber || null
 
@@ -169,62 +124,46 @@ export async function POST(req: NextRequest) {
     const branch = info.origin
 
     /**
-     * Sin vehículo de referencia se importa IGUAL, sin precio propio.
+     * DELIVERY YA NO COTIZA. El precio del domicilio lo pone la APK de Entrega.
      *
-     * Antes se saltaba el pedido entero. Y eso es desproporcionado: el precio del
-     * domicilio ya no lo pone delivery —lo pone el repartidor desde Entrega y llega en
-     * `pedidoCosto`—, así que no poder calcular una estimación propia no es motivo para
-     * quedarse sin el pedido. Sin él no hay ruta, no hay peso, no hay nada: la sucursal
-     * entera parece vacía por una casilla de configuración que ya no se usa para cobrar.
-     */
-    const veh = await getVehiculoRef(branch.creatorId)
-
-    /**
-     * Sin tasa de ESA sucursal no se cotiza. No se cae a la de otra.
+     * Hasta aquí había dos fórmulas vivas —la de Entrega y la «oficial» del CKK— y el
+     * mismo pedido costaba una cosa u otra según por dónde entrara. Se quitan las dos: el
+     * precio que se cobra es el que el repartidor pone desde Entrega y que llega en
+     * `pedidoCosto`. Delivery lo muestra, no lo calcula.
      *
-     * Un domicilio convertido con la tasa de otra provincia sale con un número creíble
-     * que nadie cuestiona y que queda mal en la caja. Se salta, se dice cuál falta, y se
-     * arregla poniéndola en Accesos.
+     * `deliveryPrice` se queda en `null` a propósito, y nunca en `0`: un cero es un
+     * precio, se suma y se lee como «este reparto salió gratis».
      */
-    // Un pedido que NO lleva domicilio no se cotiza, así que tampoco necesita tasa: se
-    // importa igual —hace falta para las rutas y la capacidad del camión— pero sin precio.
     const sinDomicilio = input.requiereDomicilio === false
 
     /**
-     * El peso y la distancia se calculan ANTES de mirar la tasa.
+     * Un pedido SIN DOMICILIO y SIN FACTURA no entra en delivery. Ni se guarda.
      *
-     * Un pedido que se salta por falta de tasa sigue teniendo un peso y una distancia, y
-     * son justo lo que hace falta para las rutas y la capacidad del camión. Saltarlo sin
-     * decirlos convierte «no se pudo cotizar» en «no se sabe nada de este pedido», que
-     * son dos cosas muy distintas.
+     * Aquí se traían todos «por si acaso», y con eso la lista de pedidos de delivery
+     * enseñaba miles que no se pueden repartir: sin domicilio no hay nada que llevar, y
+     * sin factura no puede subir a un camión. Ver el pedido es de PEDIDO; esto es la
+     * pantalla del que carga el camión.
+     *
+     * Se piden las DOS condiciones a la vez a propósito. Uno sin domicilio pero facturado
+     * sigue entrando —hace falta para el peso y para saber que existe— y uno con domicilio
+     * que todavía no se ha facturado también, porque se facturará en un rato.
+     */
+    if (sinDomicilio && input.facturaEstado !== 'igual') {
+      skipped++
+      results.push({ ref, status: 'skipped', reason: 'sin-domicilio-y-sin-factura' })
+      continue
+    }
+
+    /**
+     * El peso y la distancia SÍ los calcula delivery: son suyos.
+     *
+     * El peso es lo que decide si la carga cabe en el camión, y la distancia es lo que
+     * arma el recorrido. Nada de eso es un precio.
      */
     const { total: itemsTotal, items: weightedItems } = computeItemsWeights(input.items, catalog)
     const weightKg = itemsTotal > 0 ? itemsTotal : (Number(input.weight) || 0)
     const distanceKm = haversineDistance(branch.lat, branch.lng, input.lat as number, input.lng as number)
-
-    const tc = sinDomicilio ? 0 : await tasaDe(input.sucursalExternalId)
-
-    /**
-     * Y sin tasa, lo mismo: entra sin precio propio.
-     *
-     * Sólo La Habana tiene tasa en Entrega hoy. Con la regla vieja, las otras ocho
-     * sucursales se quedaban sin importar un solo pedido con domicilio —ni peso, ni
-     * distancia, ni rutas— por no poder pasar a CUP una estimación que no se cobra.
-     */
-    const sinPrecioPropio = !veh || (!sinDomicilio && tc == null)
-
-    const dom = sinDomicilio || sinPrecioPropio
-      ? { usd: 0, cup: 0, ckk: 0 }
-      : calculateDomicilioOficial(distanceKm, weightKg, veh!.costoKmUsd, veh!.capacidadKg, tc as number, settings.domMinFee || 0, settings.domFactorCapacidad || 0.5)
-    /**
-     * `null`, no `0`.
-     *
-     * Un cero es un precio: se suma, se ordena y se lee como «este domicilio es gratis».
-     * Que delivery no haya podido estimarlo es otra cosa, y el precio que vale es el de
-     * PEDIDO (`pedidoCosto`) de todas formas.
-     */
-    const price = sinDomicilio || sinPrecioPropio ? null : dom.usd
-    if (!sinDomicilio && !sinPrecioPropio) quoted++
+    const price = null
 
     const base = sinDomicilio
       ? {
@@ -238,15 +177,10 @@ export async function POST(req: NextRequest) {
       : {
           ref,
           status: 'quoted' as const,
+          // Siempre null: el precio es el de Entrega, y llega por `pedidoCosto`.
           price,
-          // Se dice POR QUÉ no hay estimación propia; el pedido se guarda igual.
-          ...(sinPrecioPropio
-            ? { sinEstimacion: !veh ? 'sucursal-sin-vehiculo-de-calculo' : `sin-tasa-de-cambio (${input.sucursalExternalId ?? 'sin sucursal'})` }
-            : {}),
-          priceCup: dom.cup,
           distanceKm,
           weightKg,
-          ckk: dom.ckk,
           branch: { id: branch.id, name: branch.name },
         }
 

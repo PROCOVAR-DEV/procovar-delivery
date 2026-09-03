@@ -1,3 +1,10 @@
+> **HISTÓRICO — no describe el sistema de hoy.** (03/09/2026)
+>
+> La fórmula que sigue —`base + 2·km·costo_km + peso·costo_kg`, con mínimo y redondeo— ya
+> no se usa, y ninguna de las que la sustituyeron tampoco. **Delivery no calcula el precio
+> del domicilio: lo pone la APK de Entrega.** Se deja el documento porque explica cómo se
+> llegó hasta aquí, no cómo funciona ahora. Ver el README.
+
 # Diseño: Cotización de Envío a Domicilio Individual (API para PEDIDO)
 
 **Fecha:** 2026-06-29

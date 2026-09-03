@@ -114,7 +114,9 @@ export default function VehiclesPage() {
     enabled: !!token
   })
 
-  const tipoCambio = Number(settings?.domTipoCambio) || 700
+  // La tasa con la que se muestran los importes. `domTipoCambio` era un número
+  // aparte, escrito a mano y sólo para la fórmula del domicilio, que ya no existe.
+  const tipoCambio = Number(settings?.cupRate) || 320
   const tiposVehiculo: TipoVehiculo[] = (settings?.tiposVehiculo as TipoVehiculo[] | undefined) || []
 
   const saveTiposMutation = useMutation({

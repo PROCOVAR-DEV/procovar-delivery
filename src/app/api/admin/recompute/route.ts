@@ -12,9 +12,8 @@ const DELIVERY_URL = process.env.DELIVERY_URL || 'http://localhost:3002'
 const KEY = process.env.SERVICE_API_KEY
 
 /**
- * POST /api/admin/recompute — Recotiza TODOS los pedidos con la configuración VIGENTE
- * (fórmula, factor, mínimo, tarifa del vehículo, tasa CUP) y reescribe el costo de
- * domicilio en PEDIDO. Úsalo tras cambiar la configuración (ej. el costo mínimo).
+ * POST /api/admin/recompute — vuelve a traer de PEDIDO los pedidos recientes para
+ * refrescar su PESO y su DISTANCIA. No toca precios: el del domicilio lo pone Entrega.
  *
  * Alcance: un admin de sucursal recalcula SOLO su sucursal; el Super Admin, todas
  * (o la elegida en el selector, vía header x-sucursal-id).
@@ -24,11 +23,14 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (!KEY) return NextResponse.json({ error: 'SERVICE_API_KEY no configurada en el servidor' }, { status: 500 })
 
-  // La fórmula es global: sin ella no se calcula nada.
-  const settings = await prisma.settings.findFirst({ select: { domConfigured: true } })
-  if (!settings?.domConfigured) {
-    return NextResponse.json({ error: 'Falta configurar la fórmula del domicilio (Configuración).' }, { status: 400 })
-  }
+  /**
+   * Ya no hay ninguna fórmula que esperar.
+   *
+   * Esto se llamaba «recotizar» y comprobaba que la fórmula del domicilio estuviera
+   * configurada. Delivery ya no cotiza: el precio lo pone la APK de Entrega. Lo que este
+   * botón hace hoy es volver a traer los pedidos recientes de PEDIDO para refrescar su
+   * PESO y su DISTANCIA, que sí son de aquí.
+   */
 
   // Alcance por sucursal: se filtra por el CÓDIGO (externalId) de la sucursal.
   const scope = await resolveScope(req, user)

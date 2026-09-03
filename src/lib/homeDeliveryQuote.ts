@@ -49,6 +49,8 @@ export interface OrderQuoteInput {
   facturaNumero?: string | null
   facturaAt?: string | Date | null
   facturaDomicilio?: number | null
+  /** Cuándo se reescribió el pedido con lo que decía la factura. Null = vino bien. */
+  facturaCorregidoAt?: string | Date | null
   municipio?: string | null
   vendedor?: string | null
   sucursalCodigo?: string | null
@@ -166,16 +168,6 @@ export function weightFromItems(
   return total > 0 ? total : (fallback || 0)
 }
 
-/** Config `dom*` que necesita el cálculo de domicilio. */
-export interface DomSettings {
-  domBaseFee: number
-  domCostPerKm: number
-  domCostPerKg: number
-  domIncludedKm: number
-  domMinFee: number
-  domRoundTo: number
-}
-
 export interface BranchOrigin {
   id: string
   name: string
@@ -259,6 +251,7 @@ export function buildOrderData(
     facturaNumero: input.facturaNumero ?? null,
     facturaAt: input.facturaAt ? new Date(input.facturaAt) : null,
     facturaDomicilio: input.facturaDomicilio ?? null,
+    facturaCorregidoAt: input.facturaCorregidoAt ? new Date(input.facturaCorregidoAt) : null,
     municipio: input.municipio ?? null,
     vendedor: input.vendedor ?? null,
     sucursalCodigo: input.sucursalCodigo ?? null,
