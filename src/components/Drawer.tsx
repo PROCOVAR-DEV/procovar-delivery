@@ -15,7 +15,12 @@
  * La cabecera y el pie se quedan fijos; lo único que se desplaza es el contenido. Es lo
  * que hacía falta en el asistente: el botón de «Generar ruta» estaba al final de todo y
  * había que recorrer la lista de pedidos entera para llegar a él.
- */
+ *
+ * **Y así se queda, también en escritorio.** El 05/09/2026 se decidió que el resto de
+ * las aplicaciones usen modal en escritorio y cajón por debajo de 1024 px; ésta es una
+ * excepción aprobada por Jose ese mismo día, por lo de arriba. No hay que
+ * «armonizarla»: se miró y se dejó a propósito.
+ * */
 
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
