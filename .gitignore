@@ -42,3 +42,4 @@ logs/
 
 # Capturas de las pruebas de navegador: se regeneran corriéndolas.
 /capturas/
+graphify-out/
