@@ -83,7 +83,6 @@ export default function OrdersPage() {
   const [municipioFilter, setMunicipioFilter] = useState('')
   const [vendedorFilter, setVendedorFilter] = useState('')
   // Los filtros del CATÁLOGO, los que aplica el servidor. Vacío = sin filtrar.
-  const [estado, setEstado] = useState('')
   /**
    * ARRANCA ENSEÑANDO LO QUE SE PUEDE REPARTIR, no los 54.000.
    *
@@ -100,8 +99,6 @@ export default function OrdersPage() {
    * lista que miente.
    */
   const [archivado, setArchivado] = useState('0')
-  const [domicilio, setDomicilio] = useState('')
-  const [cotizado, setCotizado] = useState('')
   /** Cómo quedó frente a la factura de Ventra. Lo coteja PEDIDO; aquí llega copiado. */
   const [factura, setFactura] = useState('con_factura')
   // Rango de fechas del PEDIDO (no de cuándo lo copió el espejo).
@@ -159,7 +156,7 @@ export default function OrdersPage() {
   // ahora tiene 2 páginas enseña un vacío que parece un fallo.
   useEffect(() => {
     setPagina(1)
-  }, [buscado, estado, archivado, domicilio, cotizado, factura, municipioFilter, vendedorFilter, statusFilter, desde, hasta])
+  }, [buscado, archivado, factura, municipioFilter, vendedorFilter, statusFilter, desde, hasta])
 
   /**
    * Los pedidos, filtrados y paginados POR EL SERVIDOR.
@@ -168,15 +165,12 @@ export default function OrdersPage() {
    * que la dejaba colgada. Aquí sólo viaja la página que se está mirando.
    */
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['orders', { buscado, estado, archivado, domicilio, cotizado, factura, municipioFilter, vendedorFilter, statusFilter, desde, hasta, pagina }],
+    queryKey: ['orders', { buscado, archivado, factura, municipioFilter, vendedorFilter, statusFilter, desde, hasta, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/orders', {
         params: {
           ...(buscado ? { q: buscado } : {}),
-          ...(estado ? { estado } : {}),
           ...(archivado ? { archivado } : {}),
-          ...(domicilio ? { domicilio } : {}),
-          ...(cotizado ? { cotizado } : {}),
           ...(factura ? { factura } : {}),
           ...(municipioFilter ? { municipio: municipioFilter } : {}),
           ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
@@ -251,17 +245,14 @@ export default function OrdersPage() {
    */
   const [verResumen, setVerResumen] = useState(false)
   const { data: datosResumen, isFetching: cargandoResumen } = useQuery({
-    queryKey: ['orders-resumen', { buscado, estado, archivado, domicilio, cotizado, municipioFilter, vendedorFilter, statusFilter, desde, hasta }],
+    queryKey: ['orders-resumen', { buscado, archivado, municipioFilter, vendedorFilter, statusFilter, desde, hasta }],
     queryFn: async () => {
       const res = await axios.get('/api/orders', {
         params: {
           resumen: 1,
           porPagina: 1,
           ...(buscado ? { q: buscado } : {}),
-          ...(estado ? { estado } : {}),
           ...(archivado ? { archivado } : {}),
-          ...(domicilio ? { domicilio } : {}),
-          ...(cotizado ? { cotizado } : {}),
           ...(municipioFilter ? { municipio: municipioFilter } : {}),
           ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
           ...(statusFilter !== 'todos' ? { reparto: statusFilter } : {}),
@@ -381,7 +372,7 @@ export default function OrdersPage() {
 
   /** ¿Hay algún filtro puesto? Sirve para saber si un cero es «no hay» o «no cuadra». */
   const hayFiltro = Boolean(
-    buscado || estado || archivado || domicilio || cotizado || factura || municipioFilter || vendedorFilter || desde || hasta,
+    buscado || archivado || factura || municipioFilter || vendedorFilter || desde || hasta,
   )
 
   /**
@@ -395,7 +386,7 @@ export default function OrdersPage() {
   const limpiarFiltros = () => {
     // También los del arranque: «quitar todos» tiene que dejar la lista entera, si no
     // quien no encuentra un pedido pulsa esto y sigue sin encontrarlo.
-    setSearch(''); setEstado(''); setArchivado(''); setDomicilio(''); setCotizado(''); setFactura('')
+    setSearch(''); setArchivado(''); setFactura('')
     setMunicipioFilter(''); setVendedorFilter(''); setDesde(''); setHasta('')
   }
 
@@ -474,82 +465,23 @@ export default function OrdersPage() {
             {/* Cada filtro en su sitio fijo: con `flex-wrap` a secas, un texto que crece
                 —«Cotizados y sin cotizar» al elegir— reordenaba la fila entera y el
                 desplegable de al lado se movía debajo del ratón. */}
-            {/* El estado EN PEDIDO. Lo filtra la base, sobre los 50.000, no sobre la
-                página que se está viendo. */}
-            <Selector
-              titulo="Estado del pedido en PEDIDO"
-              valor={estado}
-              todos="Cualquier estado"
-              onCambio={setEstado}
-              opciones={[
-                { valor: 'en_proceso', etiqueta: 'En proceso' },
-                { valor: 'completada', etiqueta: 'Completada' },
-                { valor: 'expirada', etiqueta: 'Expirada' },
-              ]}
-            />
+            {/* AQUÍ SÓLO SE FILTRA POR COSAS DE DELIVERY.
 
-            {/* Archivar en PEDIDO es esconder de su lista, no borrar. Aquí se ven todos
-                por defecto: la mayor parte del histórico está archivada. */}
-            <Selector
-              titulo="Archivados en PEDIDO"
-              valor={archivado}
-              todos="Archivados y activos"
-              onCambio={setArchivado}
-              opciones={[
-                { valor: '0', etiqueta: 'Sólo activos' },
-                { valor: '1', etiqueta: 'Sólo archivados' },
-              ]}
-            />
+                Había cinco filtros que eran de PEDIDO: el estado del pedido, si estaba
+                archivado allí, si llevaba domicilio, si la APK ya lo había cotizado, y
+                cómo quedó contra la factura. Ninguno es asunto de esta pantalla: aquí ya
+                sólo entra lo que puede repartirse —tiene factura y no está archivado—,
+                así que filtrar otra vez por eso era ofrecer combinaciones que devuelven
+                cero y hacer que la gente se perdiera buscando.
 
-            <Selector
-              titulo="Si el pedido lleva domicilio"
-              valor={domicilio}
-              todos="Con y sin domicilio"
-              onCambio={setDomicilio}
-              opciones={[
-                { valor: '1', etiqueta: 'Sólo con domicilio' },
-                { valor: '0', etiqueta: 'Sólo sin domicilio' },
-              ]}
-            />
+                Delivery es otra aplicación y tiene sus propias preguntas: en qué punto
+                del reparto está, en qué ruta va, quién lo lleva, para qué municipio es.
+                Eso es lo que queda.
 
-            {/* El costo lo pone el repartidor desde la APK. Sin él, el pedido no se puede
-                meter en una ruta: no se sabe lo que cuesta llevarlo. */}
-            <Selector
-              titulo="Si la APK de Entrega ya le puso costo de domicilio"
-              valor={cotizado}
-              todos="Cotizados y sin cotizar"
-              onCambio={setCotizado}
-              opciones={[
-                { valor: '1', etiqueta: 'Ya cotizados por Entrega' },
-                { valor: '0', etiqueta: 'Sin cotizar' },
-              ]}
-            />
+                Los de PEDIDO no desaparecen del todo: el buscador y el rango de fechas
+                siguen, y quien necesite mirar el catálogo entero tiene el botón «Ver
+                todos los pedidos» de la franja de arriba, que quita el acote. */}
 
-            {/*
-              Contra la FACTURACIÓN de Ventra.
-
-              El cliente cambia lo que pidió antes de que se le facture, y lo que se
-              reparte es lo facturado: es lo que va en el camión y lo que se cobra. «Cuadra
-              con la factura» es con lo que se arman las rutas.
-            */}
-            <Selector
-              titulo="Cómo quedó frente a la factura de Ventra"
-              icono="mdi:file-check-outline"
-              valor={factura}
-              todos="Cuadre con la factura: todos"
-              onCambio={setFactura}
-              opciones={[
-                // La primera es la que trae la lista al abrir: lo que puede repartirse.
-                { valor: 'con_factura', etiqueta: 'Con factura (se puede repartir)' },
-                { valor: 'igual', etiqueta: 'Igual que la factura' },
-                { valor: 'cambiado', etiqueta: 'Cambió en la factura' },
-                { valor: 'cuadra', etiqueta: 'Sólo los que cuadran exacto' },
-                { valor: 'sin_factura', etiqueta: 'Sin facturar todavía' },
-              ]}
-            />
-
-            {/* El estado de REPARTO es de delivery, y no tiene nada que ver con el del
-                pedido ni con el de la factura: las tres cosas se dicen por separado. */}
             <Selector
               titulo="Estado de reparto en delivery"
               valor={statusFilter === 'todos' ? '' : statusFilter}
