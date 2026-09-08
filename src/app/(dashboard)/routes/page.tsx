@@ -719,28 +719,39 @@ export default function RoutesPage() {
   const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString() : null
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    /* EL ALTO FIJO ES DE ESCRITORIO, NO DE TELÉFONO.
+       Esto era `h-screen overflow-hidden`: un armazón de aplicación, con la pantalla
+       clavada al alto de la ventana y el scroll prohibido, y los paneles desplazándose
+       por dentro. En tres columnas funciona. En un teléfono los paneles se apilan en
+       UNA columna más alta que la pantalla, dentro de un contenedor que no deja
+       desplazarse — así que no se llegaba a los botones de abajo y parecía que la
+       aplicación estaba rota. Debajo de `lg` la página scrollea como cualquier otra. */
+    <div className="flex flex-col min-h-screen lg:h-screen lg:overflow-hidden">
       <Navbar title={t('routes.title')} />
-      <div className="p-3 sm:p-6 flex-1 flex flex-col overflow-hidden min-h-0">
-        <div className="flex justify-between items-center mb-6 shrink-0">
-          <div className="flex items-center gap-3">
+      <div className="p-3 sm:p-6 flex-1 flex flex-col lg:overflow-hidden min-h-0">
+        {/* ENVUELVE. En 400 px esto era una sola fila con el título, las tres pestañas y
+            el botón: el botón salía cortado por el borde derecho y las pestañas partían
+            sus palabras en dos renglones. */}
+        <div className="flex flex-wrap justify-between items-center gap-3 mb-6 shrink-0">
+          <div className="flex items-center gap-3 min-w-0 flex-wrap">
             <h3 className="text-lg font-semibold text-gray-700">{t('routes.planner')}</h3>
-            <div className="flex bg-gray-100 rounded-xl p-1 gap-1">
+            {/* Las pestañas se desplazan de lado si no caben, en vez de partirse. */}
+            <div className="flex bg-gray-100 rounded-xl p-1 gap-1 overflow-x-auto max-w-full">
               <button
                 onClick={() => { setHistoryTab('active'); setSelectedRouteId(null) }}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${historyTab === 'active' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${historyTab === 'active' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 {t('routes.active')} <span className="ml-1 text-xs bg-yellow-100 text-yellow-700 px-1.5 py-0.5 rounded-full">{activeRoutes.length}</span>
               </button>
               <button
                 onClick={() => { setHistoryTab('in_progress'); setSelectedRouteId(null) }}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${historyTab === 'in_progress' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${historyTab === 'in_progress' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 {t('routes.inProgress')} <span className="ml-1 text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">{inProgressRoutes.length}</span>
               </button>
               <button
                 onClick={() => { setHistoryTab('history'); setSelectedRouteId(null) }}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${historyTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap shrink-0 transition-colors ${historyTab === 'history' ? 'bg-white text-primary shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
               >
                 {t('routes.history')} <span className="ml-1 text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">{historyRoutes.length}</span>
               </button>
@@ -748,13 +759,13 @@ export default function RoutesPage() {
           </div>
           <button
             onClick={() => setShowModal(true)}
-            className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700 transition-colors"
+            className="bg-primary text-white px-5 py-2 rounded-xl font-medium whitespace-nowrap shrink-0 hover:bg-blue-700 transition-colors"
           >
             {t('routes.new')}
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-0 lg:overflow-hidden">
           {/* Left: filters (fixed) + route list (internal scroll) */}
           <div className="lg:col-span-1 min-h-0 flex flex-col gap-3">
             <div className="shrink-0 space-y-2">
@@ -810,7 +821,10 @@ export default function RoutesPage() {
                 )}
               </div>
             </div>
-            <div className="space-y-3 overflow-y-auto min-h-0 pr-1">
+            {/* El scroll interno va con el armazón: en móvil scrollea la página, así que
+                aquí no hace falta y encima crea un segundo scroll que se pelea con el
+                de la página —el clásico «se mueve lo de dentro y no lo de fuera». */}
+            <div className="space-y-3 lg:overflow-y-auto min-h-0 pr-1">
             {visibleRoutes.length === 0 ? (
               <div className="bg-white rounded-2xl p-8 text-center text-gray-500 shadow-md">
                 {historyTab === 'active' ? t('routes.noActive') : historyTab === 'history' ? t('routes.noCompleted') : t('routes.noInProgress')}
@@ -1826,7 +1840,10 @@ export default function RoutesPage() {
                           </p>
                         ) : (
                           <>
-                            <div className="max-h-[22rem] overflow-y-auto -mx-1 px-1">
+                            <div className="max-h-[22rem] overflow-auto -mx-1 px-1">
+                              {/* `overflow-auto` y no sólo `-y`: esta tabla tiene columnas
+                                  fijas y en un teléfono se sale de ancho, empujando la
+                                  página entera de lado. */}
                               <table className="w-full text-xs">
                                 <thead className="text-gray-500">
                                   <tr>

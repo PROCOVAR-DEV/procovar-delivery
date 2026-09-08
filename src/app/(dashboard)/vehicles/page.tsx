@@ -318,27 +318,31 @@ export default function VehiclesPage() {
 
         <div className="flex flex-wrap justify-between items-center gap-3 mb-6">
           <p className="text-gray-500 text-sm">{t('veh.manageHint')}</p>
-          <div className="flex items-center gap-3">
-            <div className="relative">
+          {/* El grupo de dentro TAMBIÉN tiene que envolver.
+              La fila de fuera ya lo hacía, pero este bloque —buscador y dos botones— iba
+              en una sola línea rígida: en 400 px el último botón salía cortado por el
+              borde derecho y no se podía pulsar. */}
+          <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+            <div className="relative flex-1 min-w-[10rem] sm:flex-none">
               <Icon icon="mdi:magnify" className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={t('common.search')}
-                className="pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full pl-9 pr-3 py-2 border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <button
               onClick={openTipos}
-              className="bg-white text-gray-700 border px-4 py-2 rounded-xl font-medium hover:bg-gray-50 transition-colors flex items-center gap-2"
+              className="bg-white text-gray-700 border px-4 py-2 rounded-xl font-medium hover:bg-gray-50 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
             >
               <Icon icon="mdi:tag-multiple-outline" className="text-lg" />
               Tipos de vehículo
             </button>
             <button
               onClick={openCreate}
-              className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700 transition-colors flex items-center gap-2"
+              className="bg-primary text-white px-5 py-2 rounded-xl font-medium hover:bg-blue-700 transition-colors flex items-center gap-2 whitespace-nowrap shrink-0"
             >
               <Icon icon="mdi:plus" className="text-lg" />
               {t('veh.add')}
