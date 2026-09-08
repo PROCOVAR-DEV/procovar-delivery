@@ -1,3 +1,19 @@
+/**
+ * La marca de esta version. Se calcula UNA vez, al evaluar este fichero durante el
+ * build, y viaja a dos sitios: al `buildId` de Next y —via `env`— incrustada como
+ * literal tanto en el JavaScript del navegador como en /api/version.
+ *
+ * Eso es exactamente lo que hace falta para avisar de versiones viejas: una pestaña
+ * abierta desde ayer lleva DENTRO de su JavaScript la marca de ayer, mientras que
+ * /api/version, que corre en el contenedor nuevo, devuelve la de hoy. Si no coinciden,
+ * esa pestaña esta usando codigo viejo.
+ *
+ * El Dockerfile puede pasar BUILD_ID (el commit, por ejemplo) para que la marca diga
+ * algo; si no, la hora del build vale igual: lo unico que se le pide es cambiar en cada
+ * despliegue y no cambiar dentro del mismo.
+ */
+const VERSION_APP = process.env.BUILD_ID || String(Date.now())
+
 /** @type {import('next').NextConfig} */
 // `output: standalone` SOLO para la imagen de Docker (produccion futura), donde se
 // arranca con `node server.js`. Bajo PM2 corremos `next start`, y ahi standalone
@@ -6,6 +22,9 @@
 // via BUILD_STANDALONE=1 (el Dockerfile lo setea antes de `npm run build`).
 const nextConfig = {
   ...(process.env.BUILD_STANDALONE === '1' ? { output: 'standalone' } : {}),
+
+  generateBuildId: () => VERSION_APP,
+  env: { VERSION_APP },
 
   /**
    * El HTML NO se guarda en caché. Los ficheros con hash en el nombre, para siempre.
