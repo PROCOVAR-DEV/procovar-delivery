@@ -203,13 +203,32 @@ async function avanzarBarrido(id, dia) {
   await prisma.settings.update({ where: { id }, data: { syncBarridoDia: dia >= HISTORICO_DIAS ? 0 : dia } });
 }
 
+/**
+ * SÓLO LO QUE PUEDE SUBIR A UN CAMIÓN. Encendido por defecto.
+ *
+ * Antes el espejo traía el catálogo entero de PEDIDO —todos los estados, archivados
+ * incluidos, de todo el año— y se filtraba en la pantalla. Los números: 54.077 pedidos
+ * copiados, 49.590 archivados, y de todos ellos **1.277** que podían repartirse. Quien
+ * abría delivery veía el 100 % para trabajar con el 2 %, y se perdía entre filtros.
+ *
+ * El listón es el mismo que el armador de rutas exige y no negocia: la factura cuadra.
+ * Lo que se reparte es lo facturado; lo demás no puede subir al camión de todas formas.
+ *
+ * Se apaga con `SYNC_TODOS=1` si alguna vez hace falta el catálogo entero —para un
+ * informe histórico, o si se decide volver a cotizar desde aquí—. Los pedidos que ya
+ * están copiados NO se borran: dejan de refrescarse y se quedan como historia.
+ */
+const SOLO_REPARTIBLES = process.env.SYNC_TODOS !== '1';
+
 /** Los parámetros que comparten todas las peticiones. */
 function parametrosBase() {
   const q = new URLSearchParams();
+  if (SOLO_REPARTIBLES) q.set('soloRepartibles', '1');
   if (SOLO_DOMICILIO) q.set('soloDomicilio', '1');
   if (SOLO_COTIZADOS) q.set('conCosto', '1');
   if (SUCURSAL_CODIGO) q.set('sucursalCodigo', SUCURSAL_CODIGO);
-  // Los archivados TAMBIÉN: son 51.871 de 56.208 y ahí está casi todo el histórico.
+  // Los archivados también, dentro de lo repartible: un pedido facturado que ya se
+  // archivó en PEDIDO sigue teniendo que poder repartirse.
   return q;
 }
 
