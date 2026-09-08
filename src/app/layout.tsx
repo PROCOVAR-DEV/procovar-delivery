@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Bricolage_Grotesque, Hanken_Grotesk, JetBrains_Mono } from 'next/font/google'
 import './globals.css'
 import QueryProvider from '@/components/QueryProvider'
+import AvisoVersionNueva from '@/components/AvisoVersionNueva'
 
 const display = Bricolage_Grotesque({
   subsets: ['latin'],
@@ -39,9 +40,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
+    <html lang="es" className={`${display.variable} ${sans.variable} ${mono.variable}`}>
       <body className="font-sans antialiased">
         <QueryProvider>{children}</QueryProvider>
+        {/* Fuera del arbol de rutas: el aviso de version vieja sale en todas las pantallas. */}
+        <AvisoVersionNueva />
       </body>
     </html>
   )
