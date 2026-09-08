@@ -84,11 +84,26 @@ export default function OrdersPage() {
   const [vendedorFilter, setVendedorFilter] = useState('')
   // Los filtros del CATÁLOGO, los que aplica el servidor. Vacío = sin filtrar.
   const [estado, setEstado] = useState('')
-  const [archivado, setArchivado] = useState('')
+  /**
+   * ARRANCA ENSEÑANDO LO QUE SE PUEDE REPARTIR, no los 54.000.
+   *
+   * El espejo guarda todo lo que hay en PEDIDO —54.077 pedidos, de los que 49.590 están
+   * archivados— pero delivery sirve para una cosa: montar camiones. Y de esos 54.077,
+   * los que pueden subir a un camión son **1.277**: los que cuadran con su factura.
+   * El armador de rutas ya lo exige y no lo negocia (`facturaEstado: 'igual'`).
+   *
+   * Abriendo la lista con todo, lo que importa es el 2 % y hay que ir a buscarlo con
+   * filtros cada vez. Al revés se abre en lo útil, y quien necesite el resto lo pide.
+   *
+   * No se esconde: la pantalla dice cuántos hay debajo y el botón de quitar los filtros
+   * está a la vista. Un filtro puesto y anunciado es ayuda; uno puesto y callado es una
+   * lista que miente.
+   */
+  const [archivado, setArchivado] = useState('0')
   const [domicilio, setDomicilio] = useState('')
   const [cotizado, setCotizado] = useState('')
   /** Cómo quedó frente a la factura de Ventra. Lo coteja PEDIDO; aquí llega copiado. */
-  const [factura, setFactura] = useState('')
+  const [factura, setFactura] = useState('cuadra')
   // Rango de fechas del PEDIDO (no de cuándo lo copió el espejo).
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
@@ -369,7 +384,17 @@ export default function OrdersPage() {
     buscado || estado || archivado || domicilio || cotizado || factura || municipioFilter || vendedorFilter || desde || hasta,
   )
 
+  /**
+   * ¿Está puesta la vista de reparto tal cual arranca?
+   *
+   * Sólo se avisa cuando son EXACTAMENTE los dos filtros del arranque. Si alguien ya los
+   * cambió, el aviso sobra: sabe lo que está mirando porque lo eligió él.
+   */
+  const esVistaDeReparto = factura === 'cuadra' && archivado === '0'
+
   const limpiarFiltros = () => {
+    // También los del arranque: «quitar todos» tiene que dejar la lista entera, si no
+    // quien no encuentra un pedido pulsa esto y sigue sin encontrarlo.
     setSearch(''); setEstado(''); setArchivado(''); setDomicilio(''); setCotizado(''); setFactura('')
     setMunicipioFilter(''); setVendedorFilter(''); setDesde(''); setHasta('')
   }
@@ -409,6 +434,25 @@ export default function OrdersPage() {
               a más viejo— y eso se lee como que el filtro no se aplicó. Se aplicaba: son
               los del 27 EN ADELANTE. Decirlo aquí cuesta una línea y quita la duda.
             */}
+            {/* SE DICE que la lista arranca acotada, y se sale de ahí de un clic.
+                Un filtro puesto por defecto y no anunciado es una lista que miente:
+                quien busca un pedido archivado lo da por perdido y nadie entiende por
+                qué el número no cuadra con PEDIDO. */}
+            {esVistaDeReparto && (
+              <div className="w-full flex flex-wrap items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">
+                <span>
+                  Enseñando <b>sólo lo que puede subir a un camión</b>: facturado, que
+                  cuadra y sin archivar. Es lo que el armador de rutas admite.
+                </span>
+                <button
+                  className="ml-auto shrink-0 rounded-md border border-blue-300 bg-white px-2.5 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100"
+                  type="button"
+                  onClick={() => { setFactura(''); setArchivado('') }}
+                >
+                  Ver todos los pedidos
+                </button>
+              </div>
+            )}
             <span className="w-full text-sm text-gray-500">
               {total.toLocaleString()} pedidos
               {(desde || hasta) && (

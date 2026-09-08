@@ -187,9 +187,21 @@ export async function canjearCodigo(code: string): Promise<PersonaDeAuth & { ret
  *
  * Se cae hacia `operator`, nunca hacia `admin`: un rol que no conozcamos no
  * puede acabar dando más permisos de los debidos.
+ *
+ * # DESARROLLADOR está POR ENCIMA de Super Admin
+ *
+ * Es quien mantiene la plataforma por dentro, y en el login único está declarado
+ * así: «puede todo lo del Super Admin y además el módulo de Avisos». Faltaba en
+ * esta lista, y como aquí se cae hacia `operator`, quien entraba con ese rol se
+ * quedaba sin las pantallas de admin **sin ningún error**: 200 en todo y la
+ * aplicación medio vacía, que desde dentro parece que no hay datos.
+ *
+ * Ese es el precio de caer hacia el rol de menos permisos, y sigue siendo la
+ * decisión correcta: un rol desconocido no puede dar acceso de más. Lo que hay que
+ * hacer es acordarse de añadirlo aquí cuando se cree uno nuevo en auth.
  */
 export function rolDeDelivery(persona: PersonaDeAuth): 'admin' | 'operator' {
   if (persona.esSuperAdmin) return 'admin'
-  const mandan = new Set(['SUPER ADMIN', 'ADMINISTRADOR'])
+  const mandan = new Set(['SUPER ADMIN', 'DESARROLLADOR', 'ADMINISTRADOR'])
   return persona.roles.some((r) => mandan.has(r.toUpperCase())) ? 'admin' : 'operator'
 }
