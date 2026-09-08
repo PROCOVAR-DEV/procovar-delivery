@@ -75,17 +75,21 @@ export async function GET(req: NextRequest) {
         endLat: { not: null },
         endLng: { not: null },
         /**
-         * SÓLO lo facturado y que cuadra. Aquí no se negocia.
+         * SÓLO lo que TIENE factura. Aquí no se negocia.
          *
          * Era un filtro que la pantalla mandaba y se podía quitar, y así entró en una ruta
          * un pedido sin facturar el 2 de septiembre. Lo que sube al camión tiene que ser
          * lo que se cobró: si no, no cuadra la caja y nadie sabe después qué salió.
          *
-         *   `cambiado`    — se facturó otra cosa. Se corrige en PEDIDO y entonces cuadra.
+         *   `igual`       — se facturó lo mismo que se pidió.
+         *   `cambiado`    — se facturó OTRA COSA, y también sube: lo que se carga son las
+         *                   líneas de la factura, que es lo que PEDIDO manda cuando existen
+         *                   (`itemsOrigen: 'factura'`). Antes se excluía, y con eso se
+         *                   quedaban en tierra pedidos perfectamente repartibles.
          *   `sin_factura` — todavía no se facturó. No hay nada que repartir.
          *   `null`        — no se ha cotejado: NO SE SABE, y lo que no se sabe no sube.
          */
-        facturaEstado: 'igual',
+        facturaEstado: { in: ['igual', 'cambiado'] },
       },
       /**
        * Por la fecha DEL PEDIDO, no por la de copiado.

@@ -240,7 +240,21 @@ export function whereDeFiltros(f: FiltrosPedido): Prisma.OrderWhereInput {
    *
    * Ahora lo nulo tiene su propia opción, `sin_cotejar`, y hay que pedirlo a propósito.
    */
-  if (f.factura === 'cuadra') {
+  if (f.factura === 'con_factura') {
+    /**
+     * LO REPARTIBLE: tiene factura, cuadre o no.
+     *
+     * `cambiado` no es un pedido roto: es uno que se facturó distinto de como se pidió, y
+     * lo que sube al camión son las líneas de la FACTURA —PEDIDO ya las manda así, con
+     * `itemsOrigen: 'factura'`—. Así que se reparte igual de bien que uno que cuadra.
+     *
+     * Lo que queda fuera es `sin_factura` —no hay nada que llevar— y lo nulo, que quiere
+     * decir que NO SE SABE: la VPN a Ventra caída, el pedido fuera de los días que se
+     * repasan, o su sucursal sin base en Ventra. Con eso entró en una ruta un pedido sin
+     * facturar el 2 de septiembre.
+     */
+    condiciones.push({ facturaEstado: { in: ['igual', 'cambiado'] } })
+  } else if (f.factura === 'cuadra') {
     condiciones.push({ facturaEstado: 'igual' })
   } else if (f.factura === 'sin_cotejar') {
     condiciones.push({ facturaEstado: null })

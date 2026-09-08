@@ -88,9 +88,9 @@ export default function OrdersPage() {
    * ARRANCA ENSEÑANDO LO QUE SE PUEDE REPARTIR, no los 54.000.
    *
    * El espejo guarda todo lo que hay en PEDIDO —54.077 pedidos, de los que 49.590 están
-   * archivados— pero delivery sirve para una cosa: montar camiones. Y de esos 54.077,
-   * los que pueden subir a un camión son **1.277**: los que cuadran con su factura.
-   * El armador de rutas ya lo exige y no lo negocia (`facturaEstado: 'igual'`).
+   * archivados— pero delivery sirve para una cosa: montar camiones. Y lo que puede subir a
+   * un camión es lo que TIENE factura, cuadre o no: si cambió, se carga con las líneas de
+   * la factura. El armador de rutas exige lo mismo y no lo negocia.
    *
    * Abriendo la lista con todo, lo que importa es el 2 % y hay que ir a buscarlo con
    * filtros cada vez. Al revés se abre en lo útil, y quien necesite el resto lo pide.
@@ -103,7 +103,7 @@ export default function OrdersPage() {
   const [domicilio, setDomicilio] = useState('')
   const [cotizado, setCotizado] = useState('')
   /** Cómo quedó frente a la factura de Ventra. Lo coteja PEDIDO; aquí llega copiado. */
-  const [factura, setFactura] = useState('cuadra')
+  const [factura, setFactura] = useState('con_factura')
   // Rango de fechas del PEDIDO (no de cuándo lo copió el espejo).
   const [desde, setDesde] = useState('')
   const [hasta, setHasta] = useState('')
@@ -390,7 +390,7 @@ export default function OrdersPage() {
    * Sólo se avisa cuando son EXACTAMENTE los dos filtros del arranque. Si alguien ya los
    * cambió, el aviso sobra: sabe lo que está mirando porque lo eligió él.
    */
-  const esVistaDeReparto = factura === 'cuadra' && archivado === '0'
+  const esVistaDeReparto = factura === 'con_factura' && archivado === '0'
 
   const limpiarFiltros = () => {
     // También los del arranque: «quitar todos» tiene que dejar la lista entera, si no
@@ -441,8 +441,9 @@ export default function OrdersPage() {
             {esVistaDeReparto && (
               <div className="w-full flex flex-wrap items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-900">
                 <span>
-                  Enseñando <b>sólo lo que puede subir a un camión</b>: facturado, que
-                  cuadra y sin archivar. Es lo que el armador de rutas admite.
+                  Enseñando <b>sólo lo que puede subir a un camión</b>: lo que tiene
+                  factura —cuadre o no— y sin archivar. Lo que cambió también sube: se
+                  carga con las líneas de la factura, no con las del pedido.
                 </span>
                 <button
                   className="ml-auto shrink-0 rounded-md border border-blue-300 bg-white px-2.5 py-1 text-xs font-medium text-blue-800 hover:bg-blue-100"
@@ -538,9 +539,11 @@ export default function OrdersPage() {
               todos="Cuadre con la factura: todos"
               onCambio={setFactura}
               opciones={[
-                { valor: 'cuadra', etiqueta: 'Sólo los que cuadran' },
+                // La primera es la que trae la lista al abrir: lo que puede repartirse.
+                { valor: 'con_factura', etiqueta: 'Con factura (se puede repartir)' },
                 { valor: 'igual', etiqueta: 'Igual que la factura' },
                 { valor: 'cambiado', etiqueta: 'Cambió en la factura' },
+                { valor: 'cuadra', etiqueta: 'Sólo los que cuadran exacto' },
                 { valor: 'sin_factura', etiqueta: 'Sin facturar todavía' },
               ]}
             />
