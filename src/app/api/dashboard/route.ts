@@ -1,7 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { getUserFromRequest } from '@/lib/auth'
 import { resolveScope, scopeWhere } from '@/lib/scope'
+
+/**
+ * Lo que de verdad se puede meter en un camión hoy.
+ *
+ * Tres condiciones, y las tres hacen falta:
+ *
+ *   `routeId: null`        no está ya en una ruta.
+ *   `endLat` no nulo       se sabe a dónde llevarlo.
+ *   factura `igual`|`cambiado`   tiene factura. Lo que sube al camión es lo facturado, y
+ *                          si cambió se carga con las líneas de la factura. Sin factura no
+ *                          hay nada que llevar, y sin cotejar no se sabe qué se llevaría.
+ *
+ * Es el mismo listón que el armador de rutas. Si los dos no dicen lo mismo, el panel
+ * promete pedidos que luego no aparecen al armar la ruta.
+ */
+const REPARTIBLE: Prisma.OrderWhereInput = {
+  routeId: null,
+  endLat: { not: null },
+  facturaEstado: { in: ['igual', 'cambiado'] },
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -52,15 +73,20 @@ export async function GET(req: NextRequest) {
     porSucursal,
   ] = await Promise.all([
     prisma.order.count({ where }),
-    // El número que pide acción: pedidos con destino conocido y sin ruta asignada.
-    prisma.order.count({ where: { ...where, routeId: null, endLat: { not: null } } }),
+    // El número que pide acción: pedidos que SE PUEDEN MOVER y no están en ninguna ruta.
+    //
+    // Antes contaba todo lo que tuviera destino, y decía 17.415 con cuatro millones de
+    // kilos «por mover». No eran movibles: el espejo guarda también el histórico de
+    // PEDIDO, y de todo eso sólo se puede cargar lo que tiene factura. Un número que pide
+    // acción tiene que ser sobre lo accionable, o no lo mira nadie.
+    prisma.order.count({ where: { ...where, ...REPARTIBLE } }),
     prisma.route.count({ where: { ...where, status: { notIn: ['completed', 'cancelled'] } } }),
     prisma.order.count({ where: { ...where, deliveredAt: { gte: hoy } } }),
     prisma.vehicle.count({ where }),
     prisma.vehicle.count({ where: { ...where, orders: { some: { route: { status: { notIn: ['completed', 'cancelled'] } } } } } }),
     // El peso que queda por mover. Es lo que dice si hace falta otro camión.
     prisma.order.aggregate({
-      where: { ...where, routeId: null, endLat: { not: null } },
+      where: { ...where, ...REPARTIBLE },
       _sum: { weight: true },
     }),
     // El costo del domicilio SÍ es de delivery. El precio de la mercancía no.
@@ -68,7 +94,7 @@ export async function GET(req: NextRequest) {
     // Dónde está lo pendiente: sin esto, "412 sin ruta" no dice por dónde empezar.
     prisma.order.groupBy({
       by: ['branchId'],
-      where: { ...where, routeId: null, endLat: { not: null } },
+      where: { ...where, ...REPARTIBLE },
       _count: { _all: true },
       _sum: { weight: true },
     }),

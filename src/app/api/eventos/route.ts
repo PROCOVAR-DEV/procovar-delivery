@@ -87,7 +87,19 @@ export async function GET(req: NextRequest) {
     headers: {
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-store, no-transform',
-      connection: 'keep-alive',
+      /*
+       * NADA de `connection: keep-alive` aquí.
+       *
+       * Es una cabecera de HTTP/1.1 y HTTP/2 y HTTP/3 la PROHÍBEN explícitamente —son
+       * cabeceras «de conexión», y en esos protocolos la conexión la gestiona el
+       * transporte—. El sitio sale por Cloudflare, que sirve HTTP/3: mandarla hacía que
+       * cada apertura de este flujo reventara con `ERR_QUIC_PROTOCOL_ERROR`, y la consola
+       * se llenaba de errores rojos con la petición devolviendo 200 al lado, que es lo que
+       * lo hacía tan raro de leer.
+       *
+       * No hace falta para nada: en HTTP/1.1 keep-alive ya es el comportamiento por
+       * defecto, así que quitarla no cambia nada y arregla los otros dos protocolos.
+       */
       // Nginx y Traefik guardan lo que pasa por ellos: sin esto, los avisos llegan a
       // ráfagas de un minuto y el «tiempo real» no lo es.
       'x-accel-buffering': 'no',
