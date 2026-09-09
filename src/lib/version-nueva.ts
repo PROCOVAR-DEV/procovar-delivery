@@ -7,20 +7,30 @@
  * versiones sin enterarse. No se ve como "version vieja": se ve como un filtro que no
  * esta, un boton que no hace nada o un arreglo que no llego.
  *
- * COMO SE MIDE. `VERSION_APP` se calcula en next.config.js durante el build y Next la
- * incrusta como literal en los dos lados: en el JavaScript que baja el navegador y en
- * /api/version. Por eso la de aqui es la del build del que salio ESTA pestaña, y la que
- * contesta /api/version es la del contenedor desplegado ahora. Distintas = version
- * vieja corriendo.
+ * COMO SE MIDE. Se pregunta a /api/version al arrancar y ESA es la referencia; a partir
+ * de ahi, cualquier respuesta distinta significa que el contenedor cambio debajo.
+ *
+ * # Por que no se incrusta la version en el bundle
+ *
+ * Antes se incrustaba `VERSION_APP` en los dos lados via `env` de next.config.js, y no
+ * funcionaba: Next CARGA next.config.js VARIAS VECES en un mismo build —procesos
+ * distintos para el servidor y para el cliente—, y cada evaluacion hacia su propio
+ * `Date.now()`. En produccion el bundle salio con 1788891030150 y el endpoint con
+ * 1788891011255: 19 segundos de diferencia y, por tanto, el aviso de "hay version nueva"
+ * SIEMPRE, en cada cambio de pestaña. Se comprobo el 09/09/2026 leyendo los dos numeros
+ * del contenedor.
+ *
+ * La comprobacion que se hizo al montarlo no lo cazo porque se paso `BUILD_ID` a mano: con
+ * la variable puesta las dos evaluaciones dan lo mismo y todo cuadra. En produccion no hay
+ * `BUILD_ID`. La leccion es que el valor no puede depender de CUANDO se evalua la config.
+ *
+ * Preguntando la referencia no hace falta que el valor signifique nada: basta con que sea
+ * estable mientras el contenedor viva y distinto tras un despliegue. Y de paso el aviso ya
+ * no depende de que nadie configure una variable de build.
  */
-
-/** La version del build que genero el JavaScript que corre esta pestaña. */
-const VERSION_LOCAL = process.env.VERSION_APP ?? ''
 
 /** Cada cuanto se pregunta, con la pestaña a la vista. */
 const CADA = 5 * 60_000
-/** Cuanto se espera antes de la primera pregunta: acabamos de cargar. */
-const PRIMERA = 60_000
 
 /**
  * Marca de la version por la que YA se recargo sola esta pestaña. Es el freno que hace
@@ -67,9 +77,9 @@ async function versionDelServidor(): Promise<string | null> {
  * Se apaga sola al detectar: con el aviso ya puesto no hay nada mas que descubrir.
  */
 export function vigilarVersion(alHaberVersionNueva: (marca: string) => void): () => void {
-  // Sin marca local no se puede comparar nada. Pasa en `next dev`, y ahi el aviso
-  // saldria en cada guardado.
-  if (!VERSION_LOCAL) return () => {}
+  // La referencia: la primera respuesta que se consiga. Hasta tenerla no se compara nada,
+  // porque no habria contra que.
+  let referencia: string | null = null
 
   let vivo = true
   let reloj: ReturnType<typeof setTimeout> | undefined
@@ -88,7 +98,15 @@ export function vigilarVersion(alHaberVersionNueva: (marca: string) => void): ()
     try {
       const remota = await versionDelServidor()
 
-      if (!vivo || !remota || remota === VERSION_LOCAL) return
+      if (!vivo || !remota) return
+
+      if (referencia === null) {
+        // Primera respuesta: es la referencia, no una novedad.
+        referencia = remota
+
+        return
+      }
+      if (remota === referencia) return
 
       // Con la pestaña OCULTA se recarga sola: no hay nadie escribiendo y quien vuelva
       // se encuentra la version buena. Con la pestaña A LA VISTA no se recarga nunca
@@ -114,7 +132,12 @@ export function vigilarVersion(alHaberVersionNueva: (marca: string) => void): ()
     }
   }
 
-  reloj = setTimeout(mirar, PRIMERA)
+  // La referencia se coge YA, no al minuto: si un despliegue cayera en ese minuto se
+  // tomaria como referencia la version nueva y esta pestaña no volveria a avisar nunca.
+  //
+  // Y no se programa nada aqui: `mirar` encadena la siguiente en su `finally`. Poniendo
+  // ademas un setTimeout se pisaba el handle y quedaban DOS relojes preguntando.
+  void mirar()
   // Al volver a la pestaña, porque es cuando se va a usar. Al dejarla, porque es cuando
   // se puede recargar sin molestar. Al recuperar la red, porque los despliegues suelen
   // coincidir con el rato sin enlace.
