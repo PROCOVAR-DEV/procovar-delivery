@@ -82,6 +82,15 @@ export default function OrdersPage() {
   const [statusFilter, setStatusFilter] = useState('todos')
   const [municipioFilter, setMunicipioFilter] = useState('')
   const [vendedorFilter, setVendedorFilter] = useState('')
+  /**
+   * Si la APK de Entrega ya le puso precio al domicilio, o todavía no.
+   *
+   * El filtro existía en el servidor desde el principio —`cotizado`, contra
+   * `pedidoCosto`— y no había forma de tocarlo desde la pantalla. La columna Precio
+   * enseña «sin cotizar» en casi todas las filas, y la pregunta que sigue es siempre
+   * «enséñame sólo esas», que es justo lo que no se podía hacer.
+   */
+  const [cotizadoFilter, setCotizadoFilter] = useState('')
   // Los filtros del CATÁLOGO, los que aplica el servidor. Vacío = sin filtrar.
   /**
    * ARRANCA ENSEÑANDO LO QUE SE PUEDE REPARTIR, no los 54.000.
@@ -156,7 +165,7 @@ export default function OrdersPage() {
   // ahora tiene 2 páginas enseña un vacío que parece un fallo.
   useEffect(() => {
     setPagina(1)
-  }, [buscado, archivado, factura, municipioFilter, vendedorFilter, statusFilter, desde, hasta])
+  }, [buscado, archivado, factura, municipioFilter, vendedorFilter, cotizadoFilter, statusFilter, desde, hasta])
 
   /**
    * Los pedidos, filtrados y paginados POR EL SERVIDOR.
@@ -165,7 +174,7 @@ export default function OrdersPage() {
    * que la dejaba colgada. Aquí sólo viaja la página que se está mirando.
    */
   const { data, isLoading, isFetching } = useQuery({
-    queryKey: ['orders', { buscado, archivado, factura, municipioFilter, vendedorFilter, statusFilter, desde, hasta, pagina }],
+    queryKey: ['orders', { buscado, archivado, factura, municipioFilter, vendedorFilter, cotizadoFilter, statusFilter, desde, hasta, pagina }],
     queryFn: async () => {
       const res = await axios.get('/api/orders', {
         params: {
@@ -174,6 +183,7 @@ export default function OrdersPage() {
           ...(factura ? { factura } : {}),
           ...(municipioFilter ? { municipio: municipioFilter } : {}),
           ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
+          ...(cotizadoFilter ? { cotizado: cotizadoFilter } : {}),
           ...(statusFilter !== 'todos' ? { reparto: statusFilter } : {}),
           ...(desde ? { desde } : {}),
           ...(hasta ? { hasta } : {}),
@@ -245,7 +255,7 @@ export default function OrdersPage() {
    */
   const [verResumen, setVerResumen] = useState(false)
   const { data: datosResumen, isFetching: cargandoResumen } = useQuery({
-    queryKey: ['orders-resumen', { buscado, archivado, municipioFilter, vendedorFilter, statusFilter, desde, hasta }],
+    queryKey: ['orders-resumen', { buscado, archivado, municipioFilter, vendedorFilter, cotizadoFilter, statusFilter, desde, hasta }],
     queryFn: async () => {
       const res = await axios.get('/api/orders', {
         params: {
@@ -255,6 +265,7 @@ export default function OrdersPage() {
           ...(archivado ? { archivado } : {}),
           ...(municipioFilter ? { municipio: municipioFilter } : {}),
           ...(vendedorFilter ? { vendedor: vendedorFilter } : {}),
+          ...(cotizadoFilter ? { cotizado: cotizadoFilter } : {}),
           ...(statusFilter !== 'todos' ? { reparto: statusFilter } : {}),
           ...(desde ? { desde } : {}),
           ...(hasta ? { hasta } : {}),
@@ -502,6 +513,17 @@ export default function OrdersPage() {
               todos="Todos los municipios"
               onCambio={setMunicipioFilter}
               opciones={municipios.map((m) => ({ valor: m.valor, etiqueta: m.valor, nota: String(m.pedidos) }))}
+            />
+
+            <Selector
+              titulo="Precio del domicilio"
+              valor={cotizadoFilter}
+              todos="Cualquier precio"
+              onCambio={setCotizadoFilter}
+              opciones={[
+                { valor: '1', etiqueta: 'Con precio puesto' },
+                { valor: '0', etiqueta: 'Sin cotizar' },
+              ]}
             />
 
             {vendedores.length > 0 && (
