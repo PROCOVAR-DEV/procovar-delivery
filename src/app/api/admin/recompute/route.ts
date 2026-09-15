@@ -63,6 +63,10 @@ export async function POST(req: NextRequest) {
 
   q.set('desde', desde.toISOString().slice(0, 10))
   q.set('limit', '5000')
+  // PEDIDO dejó de exigir geolocalización el 15/09/2026 (la APK de domicilio sí puede
+  // cotizar sin ella: el vendedor ubica al cliente en el momento). Aquí no: esto cotiza
+  // por DISTANCIA, así que sin coordenadas no hay nada que calcular. Se pide explícito.
+  q.set('conGeo', '1')
   if (sucursalCodigo) q.set('sucursalCodigo', sucursalCodigo)
   const pedRes = await fetch(`${PEDIDO_API_URL}/integration/orders?${q}`, { headers: { 'x-api-key': KEY }, cache: 'no-store' })
   if (!pedRes.ok) {
